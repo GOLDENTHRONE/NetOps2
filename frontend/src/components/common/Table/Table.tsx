@@ -23,10 +23,14 @@ import { TableCellProps } from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import { alpha, styled } from '@mui/system';
 import { visuallyHidden } from '@mui/utils';
+import { isEqual } from 'lodash';
 import {
   MRT_BottomToolbar,
   MRT_Cell,
   MRT_ColumnDef as MaterialTableColumn,
+  MRT_ColumnOrderState,
+  MRT_ColumnSizingInfoState,
+  MRT_ColumnSizingState,
   MRT_Header,
   MRT_Localization,
   MRT_TableBodyCell,
@@ -50,9 +54,10 @@ import { MRT_Localization_PT } from 'material-react-table/locales/pt';
 import { MRT_Localization_RU } from 'material-react-table/locales/ru';
 import { MRT_Localization_ZH_HANS } from 'material-react-table/locales/zh-Hans';
 import { MRT_Localization_ZH_HANT } from 'material-react-table/locales/zh-Hant';
-import { memo, ReactNode, useEffect, useMemo, useState } from 'react';
+import { memo, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getTablesRowsPerPage, setTablesRowsPerPage } from '../../../helpers/tablesRowsPerPage';
+import { loadTablePreferences, storeTablePreferences } from '../../../helpers/userPreferences';
 import { useShortcut } from '../../../lib/useShortcut';
 import { useURLState } from '../../../lib/util';
 import { useSettings } from '../../App/Settings/hook';
@@ -93,6 +98,13 @@ export type TableProps<RowItem extends Record<string, any>> = Omit<
   'columns'
 > & {
   columns: TableColumn<RowItem>[];
+  /**
+   * Unique ID for this table. When provided, user layout preferences
+   * (column widths and column order) are persisted to localStorage under
+   * this ID (see helpers/userPreferences.ts) so the table looks the same
+   * after a reload or when the window is reopened.
+   */
+  id?: string;
   /**
    * Message to show when the table is empty
    */
@@ -173,6 +185,44 @@ const tableLocalizationMap: Partial<Record<string, MRT_Localization>> = {
   'zh-TW': MRT_Localization_ZH_HANT,
 };
 
+/**
+ * Merge a persisted column order with the table's current set of column ids.
+ *
+ * - Persisted ids that no longer exist are dropped.
+ * - New columns that are not part of the persisted order are inserted at
+ *   their natural (default) position, so tables stay flexible when columns
+ *   are added or removed between sessions.
+ * - The row-selection column is always kept first and the row-actions column
+ *   last, matching how the table renders them.
+ *
+ * Exported for tests.
+ */
+export function reconcileColumnOrder(
+  savedOrder: string[] | undefined,
+  defaultOrder: string[]
+): string[] {
+  if (!savedOrder || savedOrder.length === 0) {
+    return defaultOrder;
+  }
+
+  const defaultSet = new Set(defaultOrder);
+  const result = savedOrder.filter(id => defaultSet.has(id));
+  defaultOrder.forEach((id, index) => {
+    if (!result.includes(id)) {
+      result.splice(Math.min(index, result.length), 0, id);
+    }
+  });
+
+  // Keep the selection checkbox column first and the actions column last,
+  // regardless of what was persisted.
+  const middle = result.filter(id => id !== 'mrt-row-select' && id !== 'mrt-row-actions');
+  return [
+    ...(defaultSet.has('mrt-row-select') ? ['mrt-row-select'] : []),
+    ...middle,
+    ...(defaultSet.has('mrt-row-actions') ? ['mrt-row-actions'] : []),
+  ];
+}
+
 const StyledHeadRow = styled('tr')(({ theme }) => ({
   display: 'contents',
   background: theme.palette.background.muted,
@@ -191,6 +241,7 @@ const StyledBody = styled('tbody')({ display: 'contents' });
  * @see https://www.material-react-table.com/docs
  */
 export default function Table<RowItem extends Record<string, any>>({
+  id: tableId,
   emptyMessage,
   reflectInURL,
   initialPage = 1,
@@ -261,7 +312,7 @@ export default function Table<RowItem extends Record<string, any>>({
       }
     : undefined;
 
-  const columnOrder = useMemo(() => {
+  const defaultColumnOrder = useMemo(() => {
     const ids: string[] = tableProps.columns.map((it, i) => it.id ?? String(i));
     if (tableProps.enableRowActions) {
       ids.push('mrt-row-actions');
@@ -273,6 +324,59 @@ export default function Table<RowItem extends Record<string, any>>({
     return ids;
   }, [tableProps.columns, tableProps.enableRowActions, tableProps.enableRowSelection]);
 
+  // Column order is stateful so users can drag columns to rearrange them.
+  // It is seeded from (and persisted to) the per-table user preferences.
+  const [columnOrder, setColumnOrder] = useState<MRT_ColumnOrderState>(() =>
+    reconcileColumnOrder(loadTablePreferences(tableId).columnOrder, defaultColumnOrder)
+  );
+
+  // Column widths chosen by the user by dragging the resize handles.
+  // Columns without an entry keep their default (gridTemplate) width.
+  const [columnSizing, setColumnSizing] = useState<MRT_ColumnSizingState>(
+    () => loadTablePreferences(tableId).columnSizing ?? {}
+  );
+
+  // When the set of columns changes (e.g. a conditional column appears),
+  // merge the new set into the user's arrangement instead of discarding it.
+  useEffect(() => {
+    setColumnOrder(currentOrder => {
+      const reconciled = reconcileColumnOrder(currentOrder, defaultColumnOrder);
+      return isEqual(reconciled, currentOrder) ? currentOrder : reconciled;
+    });
+  }, [defaultColumnOrder]);
+
+  // Keep the latest sizing in a ref so we can persist the final value once a
+  // resize gesture ends without re-creating callbacks on every mouse move.
+  const columnSizingRef = useRef(columnSizing);
+  columnSizingRef.current = columnSizing;
+  const columnOrderRef = useRef(columnOrder);
+  columnOrderRef.current = columnOrder;
+
+  // The resize gesture state (start offset, delta, which column is being
+  // resized). Owned here instead of inside MRT so we can detect the start and
+  // end of a gesture. The ref mirror is updated synchronously because
+  // TanStack emits two consecutive updates on mouse-up.
+  const [columnSizingInfo, setColumnSizingInfo] = useState<MRT_ColumnSizingInfoState>({
+    startOffset: null,
+    startSize: null,
+    deltaOffset: null,
+    deltaPercentage: null,
+    isResizingColumn: false,
+    columnSizingStart: [],
+  });
+  const columnSizingInfoRef = useRef(columnSizingInfo);
+
+  // Details about the column currently being resized: TanStack computes new
+  // widths from the column's abstract size (default 180px) rather than the
+  // rendered width of our CSS grid track, so when a not-yet-resized column's
+  // gesture starts we measure its real width and shift the reported sizes by
+  // the difference, making resizing start exactly from the current visual
+  // width instead of jumping.
+  const resizeAdjustRef = useRef<{ columnId: string; startSize: number; measured: number } | null>(
+    null
+  );
+  const tableRef = useRef<MRT_TableInstance<RowItem> | null>(null);
+
   const table = useMaterialReactTable({
     ...tableProps,
     columns: tableColumns ?? [],
@@ -281,6 +385,78 @@ export default function Table<RowItem extends Record<string, any>>({
     enableDensityToggle: tableProps.enableDensityToggle ?? false,
     enableFullScreenToggle: tableProps.enableFullScreenToggle ?? false,
     enableColumnActions: false,
+    enableColumnResizing: tableProps.enableColumnResizing ?? true,
+    columnResizeMode: 'onChange',
+    enableColumnOrdering: tableProps.enableColumnOrdering ?? true,
+    displayColumnDefOptions: {
+      'mrt-row-select': {
+        enableResizing: false,
+        enableColumnOrdering: false,
+        enableColumnDragging: false,
+      },
+      'mrt-row-actions': {
+        enableResizing: false,
+        enableColumnOrdering: false,
+        enableColumnDragging: false,
+      },
+      ...tableProps.displayColumnDefOptions,
+    },
+    onColumnOrderChange: updater => {
+      const next = typeof updater === 'function' ? updater(columnOrderRef.current) : updater;
+      columnOrderRef.current = next;
+      setColumnOrder(next);
+      if (tableId) {
+        storeTablePreferences(tableId, { columnOrder: next });
+      }
+    },
+    onColumnSizingChange: updater => {
+      let next = typeof updater === 'function' ? updater(columnSizingRef.current) : updater;
+      const resizingColumnId = columnSizingInfoRef.current.isResizingColumn;
+      const adjust = resizeAdjustRef.current;
+      if (
+        resizingColumnId &&
+        adjust?.columnId === resizingColumnId &&
+        typeof next[resizingColumnId] === 'number'
+      ) {
+        next = {
+          ...next,
+          [resizingColumnId]: Math.max(
+            40,
+            Math.round(next[resizingColumnId] - adjust.startSize + adjust.measured)
+          ),
+        };
+      }
+      columnSizingRef.current = next;
+      setColumnSizing(next);
+      if (tableId && !resizingColumnId) {
+        // Not mid-gesture (e.g. a double-click width reset): persist now.
+        // Mid-gesture values are persisted once when the gesture ends.
+        storeTablePreferences(tableId, { columnSizing: next });
+      }
+    },
+    onColumnSizingInfoChange: updater => {
+      const old = columnSizingInfoRef.current;
+      const next = typeof updater === 'function' ? updater(old) : updater;
+      if (next.isResizingColumn && next.isResizingColumn !== old.isResizingColumn) {
+        // A resize gesture started: if the column has no explicit width yet,
+        // measure its rendered width so the resize continues from it.
+        const columnId = next.isResizingColumn;
+        const headCell = tableRef.current?.refs?.tableHeadCellRefs?.current?.[columnId];
+        const measured = headCell?.getBoundingClientRect?.().width;
+        resizeAdjustRef.current =
+          measured && columnSizingRef.current[columnId] === undefined
+            ? { columnId, startSize: next.startSize ?? 0, measured }
+            : null;
+      } else if (!next.isResizingColumn && old.isResizingColumn) {
+        // Gesture ended: persist the final widths.
+        resizeAdjustRef.current = null;
+        if (tableId) {
+          storeTablePreferences(tableId, { columnSizing: columnSizingRef.current });
+        }
+      }
+      columnSizingInfoRef.current = next;
+      setColumnSizingInfo(next);
+    },
     localization: tableLocalizationMap[i18n.language],
     autoResetAll: false,
     icons: {
@@ -320,6 +496,8 @@ export default function Table<RowItem extends Record<string, any>>({
       () => ({
         ...(tableProps.state ?? {}),
         columnOrder,
+        columnSizing,
+        columnSizingInfo,
         pagination: {
           pageIndex: page - 1,
           pageSize: pageSize,
@@ -327,7 +505,7 @@ export default function Table<RowItem extends Record<string, any>>({
         globalFilter,
         ...(globalFilter ? { showGlobalFilter: true } : {}),
       }),
-      [tableProps.state, columnOrder, page, pageSize, globalFilter]
+      [tableProps.state, columnOrder, columnSizing, columnSizingInfo, page, pageSize, globalFilter]
     ),
     positionActionsColumn: 'last',
     layoutMode: 'grid',
@@ -395,6 +573,8 @@ export default function Table<RowItem extends Record<string, any>>({
     },
   });
 
+  tableRef.current = table;
+
   useShortcut(
     'TABLE_COLUMN_FILTERS',
     event => {
@@ -421,33 +601,36 @@ export default function Table<RowItem extends Record<string, any>>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table.getState().columnVisibility, tableColumns, table]);
 
+  // Derive the CSS grid tracks from the visible leaf columns so that the
+  // tracks always follow the user's column order and visibility. Columns the
+  // user resized get a fixed pixel track; the rest keep their gridTemplate
+  // default and flex to fill the remaining space.
   const gridTemplateColumns = useMemo(() => {
-    let preGridTemplateColumns = tableProps.columns
-      .filter((it, i) => {
-        const id = it.id ?? String(i);
-        const isHidden =
-          table.getState().columnVisibility?.[id] === false ||
-          tableProps.state?.columnVisibility?.[id] === false;
-        return !isHidden;
-      })
-      .map(it => {
-        if (typeof it.gridTemplate === 'number') {
-          return `${it.gridTemplate}fr`;
+    return table
+      .getVisibleLeafColumns()
+      .map(column => {
+        if (column.id === 'mrt-row-select') {
+          return '44px';
         }
-        return it.gridTemplate ?? '1fr';
+        if (column.id === 'mrt-row-actions') {
+          return '0.05fr';
+        }
+        const userSize = columnSizing[column.id];
+        if (typeof userSize === 'number') {
+          return `${userSize}px`;
+        }
+        const gridTemplate = (column.columnDef as TableColumn<RowItem>).gridTemplate;
+        if (typeof gridTemplate === 'number') {
+          return `${gridTemplate}fr`;
+        }
+        return gridTemplate ?? '1fr';
       })
       .join(' ');
-    if (tableProps.enableRowActions) {
-      preGridTemplateColumns = `${preGridTemplateColumns} 0.05fr`;
-    }
-    if (tableProps.enableRowSelection) {
-      preGridTemplateColumns = `44px ${preGridTemplateColumns}`;
-    }
-
-    return preGridTemplateColumns;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     tableProps.columns,
+    columnSizing,
+    columnOrder,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     table.getState()?.columnVisibility,
     tableProps.state?.columnVisibility,
@@ -533,6 +716,10 @@ export default function Table<RowItem extends Record<string, any>>({
       <>
         <MRT_TopToolbar table={table} />
         <MuiTable
+          // gridTemplateColumns changes on every mouse move during a column
+          // resize, so it goes through `style` instead of `sx` to avoid
+          // generating a new emotion class per frame.
+          style={{ gridTemplateColumns }}
           sx={{
             display: 'grid',
             border: '1px solid',
@@ -541,7 +728,6 @@ export default function Table<RowItem extends Record<string, any>>({
             borderBottom: 'none',
             overflowX: 'auto',
             width: '100%',
-            gridTemplateColumns,
           }}
         >
           <TableHead sx={{ display: 'contents' }}>
@@ -556,6 +742,9 @@ export default function Table<RowItem extends Record<string, any>>({
                   showColumnFilters={table.getState().showColumnFilters}
                   selected={table.getSelectedRowModel().flatRows.length}
                   filterValue={header.column.getFilterValue()}
+                  isResizing={header.column.getIsResizing()}
+                  isDragging={table.getState().draggingColumn?.id === header.column.id}
+                  isHovered={table.getState().hoveredColumn?.id === header.column.id}
                 />
               ))}
             </StyledHeadRow>
@@ -600,6 +789,9 @@ const MemoHeadCell = memo(
     selected: number;
     showColumnFilters: boolean;
     filterValue: any;
+    isResizing: boolean;
+    isDragging: boolean;
+    isHovered: boolean;
   }) => {
     return (
       <MRT_TableHeadCell
@@ -617,7 +809,12 @@ const MemoHeadCell = memo(
     a.isFiltered === b.isFiltered &&
     a.showColumnFilters === b.showColumnFilters &&
     (a.header.column.id === 'mrt-row-select' ? a.selected === b.selected : true) &&
-    a.filterValue === b.filterValue
+    a.filterValue === b.filterValue &&
+    // Repaint during column resize and drag-reorder interactions so the
+    // resize border and the drag/drop indicators stay live.
+    a.isResizing === b.isResizing &&
+    a.isDragging === b.isDragging &&
+    a.isHovered === b.isHovered
 );
 
 const Row = memo(

@@ -28,10 +28,12 @@ import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { useEventWarningList } from '../../../lib/k8s/event';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
+// The Projects tab is currently disabled in favor of the Applications tab.
+// import ProjectList from '../../project/ProjectList';
+import ApplicationList from '../../applications/ApplicationList';
 import { PageGrid } from '../../common/Resource';
 import SectionBox from '../../common/SectionBox';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
-import ProjectList from '../../project/ProjectList';
 import ClusterTable from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
 import { getCustomClusterNames } from './customClusterNames';
@@ -116,10 +118,14 @@ function useWarningSettingsPerCluster(clusterNames: string[]) {
 }
 
 function HomeComponent(props: HomeComponentProps) {
-  const [view, setView] = useLocalStorageState<'clusters' | 'projects'>(
+  const [view, setView] = useLocalStorageState<'clusters' | 'applications'>(
     'home-tab-view',
     'clusters'
   );
+  // Users may still have the removed 'projects' tab (or any other stale
+  // value) persisted from an earlier version; fall back to 'clusters' so the
+  // Tabs component always gets a valid value.
+  const effectiveView = view === 'applications' ? 'applications' : 'clusters';
   const { clusters } = props;
   const [customNameClusters, setCustomNameClusters] = React.useState(
     getCustomClusterNames(clusters)
@@ -197,7 +203,7 @@ function HomeComponent(props: HomeComponentProps) {
     <PageGrid>
       <SectionBox title="Home" headerProps={{ headerStyle: 'main' }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={view} onChange={(_, newView) => setView(() => newView)}>
+          <Tabs value={effectiveView} onChange={(_, newView) => setView(() => newView)}>
             <Tab
               value="clusters"
               label={
@@ -212,7 +218,8 @@ function HomeComponent(props: HomeComponentProps) {
                 fontSize: '1.25rem',
               }}
             />
-            <Tab
+            {/* Projects tab disabled in favor of Applications; code kept for potential re-enablement. */}
+            {/* <Tab
               value="projects"
               label={
                 <>
@@ -225,12 +232,27 @@ function HomeComponent(props: HomeComponentProps) {
                 gap: 1,
                 fontSize: '1.25rem',
               }}
+            /> */}
+            <Tab
+              value="applications"
+              label={
+                <>
+                  <Icon icon="mdi:apps" />
+                  <Typography>{t('Applications')}</Typography>
+                </>
+              }
+              sx={{
+                flexDirection: 'row',
+                gap: 1,
+                fontSize: '1.25rem',
+              }}
             />
           </Tabs>
         </Box>
 
-        {view === 'clusters' && memoizedComponent}
-        {view === 'projects' && <ProjectList />}
+        {effectiveView === 'clusters' && memoizedComponent}
+        {/* {view === 'projects' && <ProjectList />} */}
+        {effectiveView === 'applications' && <ApplicationList />}
       </SectionBox>
     </PageGrid>
   );

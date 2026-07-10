@@ -685,6 +685,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
     <>
       <ClusterGroupErrorMessage errors={errors} />
       <Table<RowItem>
+        id={tableId}
         enableFullScreenToggle={false}
         enableFacetedValues
         enableRowSelection={wrappedEnableRowSelection}
