@@ -706,8 +706,18 @@ export default function Table<RowItem extends Record<string, any>>({
                   selected={table.getSelectedRowModel().flatRows.length}
                   filterValue={header.column.getFilterValue()}
                   isResizing={header.column.getIsResizing()}
-                  isDragging={table.getState().draggingColumn?.id === header.column.id}
-                  isHovered={table.getState().hoveredColumn?.id === header.column.id}
+                  // Broadcast (not per-column) on purpose: MRT's own drag-enter/
+                  // drag-end handlers inside MRT_TableHeadCell close over
+                  // `draggingColumn`/`hoveredColumn` at the time THAT cell last
+                  // rendered. If only the dragged/hovered cell re-rendered, every
+                  // other cell would keep a stale "no drag in progress" closure
+                  // and never call setHoveredColumn on dragenter, so the drop
+                  // would silently no-op. Changing this value for every cell in
+                  // lockstep forces the whole header row to refresh together
+                  // whenever a drag starts, the hover target changes, or the
+                  // drag ends, keeping those closures current.
+                  draggingColumnId={table.getState().draggingColumn?.id ?? null}
+                  hoveredColumnId={table.getState().hoveredColumn?.id ?? null}
                 />
               ))}
             </StyledHeadRow>
@@ -753,8 +763,8 @@ const MemoHeadCell = memo(
     showColumnFilters: boolean;
     filterValue: any;
     isResizing: boolean;
-    isDragging: boolean;
-    isHovered: boolean;
+    draggingColumnId: string | null;
+    hoveredColumnId: string | null;
   }) => {
     return (
       <MRT_TableHeadCell
@@ -773,11 +783,13 @@ const MemoHeadCell = memo(
     a.showColumnFilters === b.showColumnFilters &&
     (a.header.column.id === 'mrt-row-select' ? a.selected === b.selected : true) &&
     a.filterValue === b.filterValue &&
-    // Repaint during column resize and drag-reorder interactions so the
-    // resize border and the drag/drop indicators stay live.
+    // Repaint during column resize so the resize border stays live.
     a.isResizing === b.isResizing &&
-    a.isDragging === b.isDragging &&
-    a.isHovered === b.isHovered
+    // Broadcast values (see call site) so every header cell re-renders in
+    // lockstep on drag start/hover-change/drag-end, keeping MRT's own
+    // dragenter/dragend closures fresh instead of stale.
+    a.draggingColumnId === b.draggingColumnId &&
+    a.hoveredColumnId === b.hoveredColumnId
 );
 
 const Row = memo(

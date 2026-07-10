@@ -218,6 +218,8 @@
   "Kind": "Kind",
   "Age": "Age",
   "Application Name": "Application Name",
+  "{{ count }} selected_one": "{{ count }} selected",
+  "{{ count }} selected_other": "{{ count }} selected",
   "All applications": "All applications",
   "No applications found": "No applications found",
   "Getting auth info: {{ clusterName }}": "Getting auth info: {{ clusterName }}",

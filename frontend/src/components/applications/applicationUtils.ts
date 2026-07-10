@@ -15,9 +15,19 @@
  */
 
 /**
- * An "application" is a namespace: every (non-system) namespace deployed in a
- * cluster represents one application and the application name is the
- * namespace name.
+ * An "application" is a business-application namespace: every namespace
+ * deployed in a cluster represents one application and the application name
+ * is the namespace name. A cluster's namespaces fall into three categories,
+ * and only the third is shown as an application:
+ *
+ *  1. System namespaces (`kube-*`, `openshift-*`, `*-system`, `default`) —
+ *     owned by Kubernetes/OpenShift itself.
+ *  2. Shared platform/service namespaces (e.g. `cert-manager`,
+ *     `quay-registry`, `vault-secrets-operator`) — cluster-wide platform
+ *     tooling shared by every business application, not a business
+ *     application itself. See {@link PLATFORM_NAMESPACES}.
+ *  3. Business application namespaces — everything else. This is what the
+ *     Applications tab lists.
  *
  * Extra application metadata (display name, version, deployment type) is read
  * from `uspe.dev/*` labels or annotations on the namespace — the same pattern
@@ -71,20 +81,56 @@ export interface NamespaceLike {
 }
 
 const SYSTEM_NAMESPACE_PREFIXES = ['kube-', 'openshift-'];
-const SYSTEM_NAMESPACES = new Set([
-  'default',
-  'kube-system',
-  'kube-public',
-  'kube-node-lease',
-  'openshift',
-]);
+const SYSTEM_NAMESPACE_SUFFIXES = ['-system'];
+const SYSTEM_NAMESPACES = new Set(['default', 'openshift']);
 
 /**
- * Whether a namespace is a well-known system namespace that should not be
- * listed as an application.
+ * Whether a namespace is a well-known Kubernetes/OpenShift system namespace
+ * that should not be listed as an application: `kube-*`, `openshift-*`,
+ * `*-system`, and `default`.
  */
 export function isSystemNamespace(name: string): boolean {
-  return SYSTEM_NAMESPACES.has(name) || SYSTEM_NAMESPACE_PREFIXES.some(p => name.startsWith(p));
+  return (
+    SYSTEM_NAMESPACES.has(name) ||
+    SYSTEM_NAMESPACE_PREFIXES.some(p => name.startsWith(p)) ||
+    SYSTEM_NAMESPACE_SUFFIXES.some(s => name.endsWith(s))
+  );
+}
+
+/**
+ * Shared platform/service namespaces: cluster-wide tooling used by every
+ * business application, not a business application itself. This list is
+ * necessarily incomplete — extend it as new shared platform namespaces are
+ * added to the clusters.
+ */
+export const PLATFORM_NAMESPACES = new Set([
+  'cert-manager',
+  'cert-manager-operator',
+  'quay-registry',
+  'vault-secrets-operator',
+  'ldap-group-sync',
+  'cluster-backup',
+  'assisted-installer',
+]);
+
+/** Suffixes that reliably indicate a shared platform/operator namespace. */
+const PLATFORM_NAMESPACE_SUFFIXES = ['-operator'];
+
+/**
+ * Whether a namespace is a shared platform/service namespace (see
+ * {@link PLATFORM_NAMESPACES}) rather than a business application.
+ */
+export function isPlatformNamespace(name: string): boolean {
+  return PLATFORM_NAMESPACES.has(name) || PLATFORM_NAMESPACE_SUFFIXES.some(s => name.endsWith(s));
+}
+
+/**
+ * Whether a namespace represents a business application that should be
+ * listed in the Applications tab, i.e. neither a system nor a shared
+ * platform/service namespace.
+ */
+export function isBusinessApplicationNamespace(name: string): boolean {
+  return !isSystemNamespace(name) && !isPlatformNamespace(name);
 }
 
 /**
@@ -98,12 +144,12 @@ export function getAppMetadataValue(namespace: NamespaceLike, key: string): stri
 
 /**
  * Turn the namespaces fetched from all clusters into application rows: one
- * row per (namespace, cluster) pair, system namespaces excluded, sorted by
- * name and then cluster so the list is stable.
+ * row per (namespace, cluster) pair, system and shared platform namespaces
+ * excluded, sorted by name and then cluster so the list is stable.
  */
 export function buildApplications(namespaces: ReadonlyArray<NamespaceLike>): ApplicationInfo[] {
   return namespaces
-    .filter(ns => !!ns?.metadata?.name && !isSystemNamespace(ns.metadata.name))
+    .filter(ns => !!ns?.metadata?.name && isBusinessApplicationNamespace(ns.metadata.name))
     .map(ns => {
       const nameFromLabel = getAppMetadataValue(ns, APP_NAME_KEY);
       return {

@@ -218,6 +218,7 @@
   "Kind": "",
   "Age": "",
   "Application Name": "",
+  "{{ count }} selected_other": "",
   "All applications": "",
   "No applications found": "",
   "Getting auth info: {{ clusterName }}": "",
