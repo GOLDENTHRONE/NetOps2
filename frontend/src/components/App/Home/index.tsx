@@ -237,7 +237,7 @@ function HomeComponent(props: HomeComponentProps) {
               value="applications"
               label={
                 <>
-                  <Icon icon="mdi:apps" />
+                  <Icon icon="mdi:grid-large" />
                   <Typography>{t('Applications')}</Typography>
                 </>
               }

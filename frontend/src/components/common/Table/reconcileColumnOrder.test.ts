@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { reconcileColumnOrder } from './Table';
+import { reconcileColumnOrder } from './columnOrder';
 
 describe('reconcileColumnOrder', () => {
   it('returns the default order when nothing is saved', () => {

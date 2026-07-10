@@ -64,6 +64,7 @@ import { useSettings } from '../../App/Settings/hook';
 import { useQueryParamsState } from '../../resourceMap/useQueryParamsState';
 import Empty from '../EmptyContent';
 import Loader from '../Loader';
+import { reconcileColumnOrder } from './columnOrder';
 
 /**
  * Column definition
@@ -184,44 +185,6 @@ const tableLocalizationMap: Partial<Record<string, MRT_Localization>> = {
   zh: MRT_Localization_ZH_HANS,
   'zh-TW': MRT_Localization_ZH_HANT,
 };
-
-/**
- * Merge a persisted column order with the table's current set of column ids.
- *
- * - Persisted ids that no longer exist are dropped.
- * - New columns that are not part of the persisted order are inserted at
- *   their natural (default) position, so tables stay flexible when columns
- *   are added or removed between sessions.
- * - The row-selection column is always kept first and the row-actions column
- *   last, matching how the table renders them.
- *
- * Exported for tests.
- */
-export function reconcileColumnOrder(
-  savedOrder: string[] | undefined,
-  defaultOrder: string[]
-): string[] {
-  if (!savedOrder || savedOrder.length === 0) {
-    return defaultOrder;
-  }
-
-  const defaultSet = new Set(defaultOrder);
-  const result = savedOrder.filter(id => defaultSet.has(id));
-  defaultOrder.forEach((id, index) => {
-    if (!result.includes(id)) {
-      result.splice(Math.min(index, result.length), 0, id);
-    }
-  });
-
-  // Keep the selection checkbox column first and the actions column last,
-  // regardless of what was persisted.
-  const middle = result.filter(id => id !== 'mrt-row-select' && id !== 'mrt-row-actions');
-  return [
-    ...(defaultSet.has('mrt-row-select') ? ['mrt-row-select'] : []),
-    ...middle,
-    ...(defaultSet.has('mrt-row-actions') ? ['mrt-row-actions'] : []),
-  ];
-}
 
 const StyledHeadRow = styled('tr')(({ theme }) => ({
   display: 'contents',
