@@ -18,6 +18,12 @@ or in this repo at
 
 There you will see detailed API documentation, examples, and guides on how to develop plugins.
 
+## Shipped plugins
+
+| Folder         | Description                                                                                                          |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| [flux](flux)   | Flux CD dashboard: observe, sync, suspend and debug everything Flux manages. Built into the container image by default. |
+
 ## The example plugins
 
 | Folder                                                 | Description                                   |
