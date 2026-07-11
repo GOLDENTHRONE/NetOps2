@@ -24,6 +24,7 @@ import {
 import { Box, IconButton, Link as MuiLink, Typography } from '@mui/material';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
+import { ICONS } from '../flux/icon';
 import { SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
 
@@ -146,7 +147,7 @@ function WorkloadPods(props: { entry: ManagedEntry }) {
         const phase = pod.jsonData?.status?.phase;
         return (
           <Box key={pod.metadata.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Icon icon="mdi:subdirectory-arrow-right" width="1rem" />
+            <Icon icon={ICONS.arrowRight} width="1rem" />
             <HeadlampLink kubeObject={pod}>{pod.metadata.name}</HeadlampLink>
             <StatusLabel
               status={
@@ -180,7 +181,7 @@ function EntryRow(props: { entry: ManagedEntry }) {
             onClick={() => setExpanded(e => !e)}
             aria-label={expanded ? 'Hide pods' : 'Show pods'}
           >
-            <Icon icon={expanded ? 'mdi:chevron-down' : 'mdi:chevron-right'} width="1.1rem" />
+            <Icon icon={expanded ? ICONS.chevronDown : ICONS.chevronRight} width="1.1rem" />
           </IconButton>
         ) : (
           <Box sx={{ width: '1.85rem' }} />

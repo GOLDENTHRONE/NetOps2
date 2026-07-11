@@ -16,13 +16,15 @@
 
 import { Icon } from '@iconify/react';
 import { K8s } from '@kinvolk/headlamp-plugin/lib';
-import { Loader, StatusLabel } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { Box, Card, CardActionArea, CardContent, Typography } from '@mui/material';
+import { Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { Box, Typography } from '@mui/material';
 import React from 'react';
 import { useHistory } from 'react-router-dom';
+import { FLUX_ICON, ICONS } from '../flux/icon';
 import { FLUX_KINDS, fluxClass } from '../flux/kinds';
 import { getStatusInfo } from '../flux/utils';
 import { InlineError, pickMostRelevantError } from './errors';
+import { EmptyState, Pill, Surface, useAccents } from './ui';
 
 const { ResourceClasses, useClustersConf } = K8s;
 
@@ -71,50 +73,65 @@ function ClusterFluxCard(props: { cluster: string }) {
   const status = useClusterFluxStatus(cluster);
   const history = useHistory();
 
+  const controllersOk =
+    status.controllersTotal === 0 || status.controllersReady >= status.controllersTotal;
+  const accents = useAccents();
+  const accent = !status.installed
+    ? undefined
+    : status.error || status.failed > 0 || !controllersOk
+    ? accents.error
+    : accents.success;
+
   return (
-    <Card variant="outlined" sx={{ minWidth: 260, flex: '1 1 260px' }}>
-      <CardActionArea onClick={() => history.push(`/c/${cluster}/flux`)}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Icon icon="mdi:hexagon-multiple-outline" width="1.2rem" />
-            <Typography variant="h6">{cluster}</Typography>
-          </Box>
-          {status.loading ? (
-            <Typography variant="body2" color="textSecondary">
-              Checking Flux…
-            </Typography>
-          ) : status.error ? (
-            <InlineError error={status.error} what="Flux resources" fluxKind="Flux" />
-          ) : !status.installed ? (
-            <StatusLabel status="">Flux not detected</StatusLabel>
+    <Surface
+      interactive
+      accent={accent}
+      onClick={() => history.push(`/c/${cluster}/flux`)}
+      sx={{ minWidth: 260, flex: '1 1 260px', p: 2 }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+        <Icon icon={ICONS.cluster} width="1.2rem" />
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          {cluster}
+        </Typography>
+      </Box>
+      {status.loading ? (
+        <Typography variant="body2" color="textSecondary">
+          Checking Flux…
+        </Typography>
+      ) : status.error ? (
+        <InlineError error={status.error} what="Flux resources" fluxKind="Flux" />
+      ) : !status.installed ? (
+        <Pill tone="neutral" icon={ICONS.statusUnknown}>
+          Flux not detected
+        </Pill>
+      ) : (
+        <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
+          <Pill tone={controllersOk ? 'success' : 'error'} icon={ICONS.controllers}>
+            {status.controllersTotal > 0
+              ? `${status.controllersReady}/${status.controllersTotal} controllers`
+              : 'controllers unknown'}
+          </Pill>
+          <Pill tone="info" icon={ICONS.resources}>
+            {status.resources} resources
+          </Pill>
+          {status.failed > 0 ? (
+            <Pill tone="error" icon={ICONS.statusError}>
+              {status.failed} failing
+            </Pill>
           ) : (
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-              <StatusLabel
-                status={
-                  status.controllersTotal === 0 ||
-                  status.controllersReady >= status.controllersTotal
-                    ? 'success'
-                    : 'error'
-                }
-              >
-                {status.controllersTotal > 0
-                  ? `${status.controllersReady}/${status.controllersTotal} controllers`
-                  : 'controllers unknown'}
-              </StatusLabel>
-              <StatusLabel status="">{status.resources} resources</StatusLabel>
-              {status.failed > 0 ? (
-                <StatusLabel status="error">{status.failed} failing</StatusLabel>
-              ) : (
-                <StatusLabel status="success">0 failing</StatusLabel>
-              )}
-              {status.suspended > 0 && (
-                <StatusLabel status="">{status.suspended} suspended</StatusLabel>
-              )}
-            </Box>
+            <Pill tone="success" icon={ICONS.statusReady}>
+              0 failing
+            </Pill>
           )}
-        </CardContent>
-      </CardActionArea>
-    </Card>
+          {status.suspended > 0 && (
+            <Pill tone="neutral" icon={ICONS.statusSuspended}>
+              {status.suspended} suspended
+            </Pill>
+          )}
+        </Box>
+      )}
+    </Surface>
   );
 }
 
@@ -133,24 +150,23 @@ export default function FluxHomeTab() {
   }
   if (clusters.length === 0) {
     return (
-      <Box sx={{ textAlign: 'center', py: 6 }}>
-        <Icon icon="mdi:hexagon-multiple-outline" width="2.2rem" />
-        <Typography variant="h6" sx={{ mt: 1 }}>
-          No clusters yet
-        </Typography>
-        <Typography variant="body2" color="textSecondary">
-          Add a cluster to see its Flux status here.
-        </Typography>
-      </Box>
+      <EmptyState
+        icon={ICONS.cluster}
+        title="No clusters yet"
+        description="Add a cluster to see its Flux status here."
+      />
     );
   }
 
   return (
     <Box sx={{ mt: 1 }}>
-      <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-        Flux status across your clusters. Open a cluster to see sources, kustomizations and Helm
-        releases, and to trigger syncs.
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+        <Icon icon={FLUX_ICON} width="1.1rem" />
+        <Typography variant="body2" color="textSecondary">
+          Flux status across your clusters. Open a cluster to see sources, kustomizations and Helm
+          releases, and to trigger syncs.
+        </Typography>
+      </Box>
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         {clusters.map(cluster => (
           <ClusterFluxCard key={cluster} cluster={cluster} />

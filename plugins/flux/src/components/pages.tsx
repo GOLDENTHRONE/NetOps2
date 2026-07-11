@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 
+import { Box } from '@mui/material';
 import React from 'react';
+import { ICONS } from '../flux/icon';
 import { kindByName, kindsInCategory } from '../flux/kinds';
 import { DependencyWavesSection } from './DependencyWaves';
 import { FluxKindListSection } from './FluxKindList';
+import { PageHeader } from './ui';
 
 const TITLES: Record<string, string> = {
   GitRepository: 'Git Repositories',
@@ -35,19 +38,42 @@ const TITLES: Record<string, string> = {
   ImageUpdateAutomation: 'Image Update Automations',
 };
 
-// The page location is already shown in the sidebar/breadcrumb, and each list
-// carries its own section heading, so no redundant page title is rendered.
+const KIND_ICON: Record<string, string> = {
+  GitRepository: ICONS.gitRepository,
+  OCIRepository: ICONS.ociRepository,
+  HelmRepository: ICONS.helmRepository,
+  HelmChart: ICONS.helmChart,
+  Bucket: ICONS.bucket,
+  Kustomization: ICONS.kustomization,
+  HelmRelease: ICONS.helmRelease,
+  Alert: ICONS.alert,
+  Provider: ICONS.provider,
+  Receiver: ICONS.receiver,
+  ImageRepository: ICONS.imageRepository,
+  ImagePolicy: ICONS.imagePolicy,
+  ImageUpdateAutomation: ICONS.imageUpdate,
+};
+
+/** Wraps a page's content with a padded container. */
+function Page(props: { children: React.ReactNode }) {
+  return <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1600, mx: 'auto' }}>{props.children}</Box>;
+}
 
 export function FluxSourcesPage() {
   return (
-    <>
+    <Page>
+      <PageHeader
+        icon={ICONS.sources}
+        title="Sources"
+        description="The repositories, charts and buckets Flux watches for changes."
+        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Sources' }]}
+      />
       {kindsInCategory('sources').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
           kindDef={kindDef}
           title={TITLES[kindDef.kind]}
-          // Helm charts are pulled from the Helm repositories listed above;
-          // the "From repository" column links each chart to its source.
+          icon={KIND_ICON[kindDef.kind]}
           description={
             kindDef.kind === 'HelmChart'
               ? 'Charts pulled from the Helm repositories above — each row links to its source repository.'
@@ -55,46 +81,84 @@ export function FluxSourcesPage() {
           }
         />
       ))}
-    </>
+    </Page>
   );
 }
 
 export function FluxKustomizationsPage() {
   const kindDef = kindByName('Kustomization')!;
   return (
-    <>
+    <Page>
+      <PageHeader
+        icon={ICONS.kustomization}
+        title="Kustomizations"
+        description="Sets of manifests Flux applies to the cluster, in dependency order."
+        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Kustomizations' }]}
+      />
       <DependencyWavesSection kindDef={kindDef} />
-      <FluxKindListSection kindDef={kindDef} title={TITLES.Kustomization} />
-    </>
+      <FluxKindListSection
+        kindDef={kindDef}
+        title={TITLES.Kustomization}
+        icon={ICONS.kustomization}
+      />
+    </Page>
   );
 }
 
 export function FluxHelmReleasesPage() {
   const kindDef = kindByName('HelmRelease')!;
   return (
-    <>
+    <Page>
+      <PageHeader
+        icon={ICONS.helmRelease}
+        title="Helm Releases"
+        description="Helm charts Flux installs and upgrades, in dependency order."
+        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Helm Releases' }]}
+      />
       <DependencyWavesSection kindDef={kindDef} />
-      <FluxKindListSection kindDef={kindDef} title={TITLES.HelmRelease} />
-    </>
+      <FluxKindListSection kindDef={kindDef} title={TITLES.HelmRelease} icon={ICONS.helmRelease} />
+    </Page>
   );
 }
 
 export function FluxNotificationsPage() {
   return (
-    <>
+    <Page>
+      <PageHeader
+        icon={ICONS.notifications}
+        title="Notifications"
+        description="Alerts, providers and receivers that report Flux events to the outside world."
+        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Notifications' }]}
+      />
       {kindsInCategory('notifications').map(kindDef => (
-        <FluxKindListSection key={kindDef.kind} kindDef={kindDef} title={TITLES[kindDef.kind]} />
+        <FluxKindListSection
+          key={kindDef.kind}
+          kindDef={kindDef}
+          title={TITLES[kindDef.kind]}
+          icon={KIND_ICON[kindDef.kind]}
+        />
       ))}
-    </>
+    </Page>
   );
 }
 
 export function FluxImageAutomationPage() {
   return (
-    <>
+    <Page>
+      <PageHeader
+        icon={ICONS.imageAutomation}
+        title="Image Automation"
+        description="Scans container registries for new image versions and updates Git automatically."
+        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Image Automation' }]}
+      />
       {kindsInCategory('imageautomation').map(kindDef => (
-        <FluxKindListSection key={kindDef.kind} kindDef={kindDef} title={TITLES[kindDef.kind]} />
+        <FluxKindListSection
+          key={kindDef.kind}
+          kindDef={kindDef}
+          title={TITLES[kindDef.kind]}
+          icon={KIND_ICON[kindDef.kind]}
+        />
       ))}
-    </>
+    </Page>
   );
 }
