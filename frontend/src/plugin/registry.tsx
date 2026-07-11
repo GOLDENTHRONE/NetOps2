@@ -17,6 +17,7 @@
 import { has } from 'lodash';
 import React, { ReactNode } from 'react';
 import { AppLogoProps, AppLogoType } from '../components/App/AppLogo';
+import { HomeTab, setHomeTab } from '../components/App/Home/homeTabsSlice';
 import { PluginManager } from '../components/App/pluginManager';
 import { runCommand } from '../components/App/runCommand';
 import { setBrandingAppLogoComponent, themeSlice } from '../components/App/themeSlice';
@@ -154,6 +155,7 @@ export type {
   GraphSource,
   IconDefinition,
   OverviewChartsProcessor,
+  HomeTab,
 };
 
 export type { ApiResource } from '../lib/k8s/api/v2/ApiResource';
@@ -308,6 +310,7 @@ export function registerSidebarEntry({
   sidebar,
   entryType,
   sx,
+  insertBefore,
 }: SidebarEntryProps) {
   store.dispatch(
     setSidebarItem({
@@ -320,8 +323,30 @@ export function registerSidebarEntry({
       sidebar,
       entryType,
       sx,
+      insertBefore,
     })
   );
+}
+
+/**
+ * Add a tab to the Home page, next to the built-in "All Clusters" and
+ * "Applications" tabs.
+ *
+ * @example
+ *
+ * ```tsx
+ * import { registerHomeTab } from '@kinvolk/headlamp-plugin/lib';
+ *
+ * registerHomeTab({
+ *   id: 'flux',
+ *   label: 'Flux',
+ *   icon: 'mdi:sync-circle',
+ *   component: () => <MyFluxOverview />,
+ * });
+ * ```
+ */
+export function registerHomeTab(tab: HomeTab) {
+  store.dispatch(setHomeTab(tab));
 }
 
 /**

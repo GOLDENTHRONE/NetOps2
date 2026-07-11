@@ -671,6 +671,7 @@
   "registerGetTokenFunction": [Function],
   "registerHeadlampEventCallback": [Function],
   "registerHomeSidebarEntryFilter": [Function],
+  "registerHomeTab": [Function],
   "registerKindIcon": [Function],
   "registerKubeObjectGlance": [Function],
   "registerMapSource": [Function],

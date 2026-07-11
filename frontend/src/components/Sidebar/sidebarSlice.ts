@@ -63,6 +63,15 @@ export interface SidebarEntry {
    */
   sidebar?: DefaultSidebars | string;
   /**
+   * Name of a sibling entry this entry should be placed before.
+   *
+   * By default custom entries are appended after the built-in ones. Setting
+   * this to the name of a sibling (e.g. 'workloads' for a top-level entry)
+   * inserts the entry right before that sibling instead. If no sibling with
+   * the given name exists, the entry is appended at the end.
+   */
+  insertBefore?: string;
+  /**
    * The type of sidebar entry to render. Defaults to a clickable link item.
    */
   entryType?: 'link' | 'subheader';

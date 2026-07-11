@@ -71,6 +71,15 @@ WORKDIR /tools
 RUN mkdir -p /plugins
 RUN ./fetch-plugins.sh /plugins/
 
+# In-repo shipped plugins (e.g. the Flux dashboard), built from source so they
+# are available out of the box without any extra deployment steps.
+COPY ./plugins/flux /headlamp-plugins/flux
+RUN cd /headlamp-plugins/flux \
+    && npm ci \
+    && npm run build \
+    && mkdir -p /plugins/flux \
+    && cp dist/main.js package.json /plugins/flux/
+
 FROM image-base AS final
 
 RUN if command -v apt-get > /dev/null; then \
