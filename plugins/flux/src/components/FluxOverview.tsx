@@ -23,11 +23,12 @@ import {
   SimpleTable,
   StatusLabel,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { Box, Card, CardActionArea, CardContent, Typography } from '@mui/material';
+import { alpha, Box, Card, CardActionArea, CardContent, Typography, useTheme } from '@mui/material';
 import React from 'react';
 import { useHistory } from 'react-router-dom';
+import { FLUX_ICON } from '../flux/icon';
 import { FLUX_KINDS, FluxCategory, fluxClass, FluxKind } from '../flux/kinds';
-import { getStatusInfo } from '../flux/utils';
+import { FluxHealth, getStatusInfo } from '../flux/utils';
 import { ReadySummary, SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
 
@@ -74,8 +75,195 @@ function useKindList(
   return { items, error };
 }
 
+/** A compact labeled statistic tile used in the overview header. */
+function StatTile(props: {
+  icon: string;
+  label: string;
+  value: React.ReactNode;
+  color?: string;
+  sub?: React.ReactNode;
+}) {
+  const { icon, label, value, color, sub } = props;
+  const theme = useTheme();
+  const c = color ?? theme.palette.text.primary;
+  return (
+    <Card variant="outlined" sx={{ flex: '1 1 180px', minWidth: 170 }}>
+      <CardContent
+        sx={{ display: 'flex', gap: 1.5, alignItems: 'center', '&:last-child': { pb: 2 } }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 2,
+            width: 44,
+            height: 44,
+            backgroundColor: alpha(c, 0.12),
+            flexShrink: 0,
+          }}
+        >
+          <Icon icon={icon} width="1.5rem" color={c} />
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="h5" sx={{ lineHeight: 1.1, fontWeight: 700 }}>
+            {value}
+          </Typography>
+          <Typography variant="body2" color="textSecondary" noWrap>
+            {label}
+          </Typography>
+          {sub}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The at-a-glance health banner: overall state, Flux version, controllers and
+ * a tally of what Flux manages — designed to be understandable without any
+ * prior Flux knowledge.
+ */
+function FluxHealthHero(props: { cluster?: string }) {
+  const theme = useTheme();
+  const [deployments, deploymentsError] = ResourceClasses.Deployment.useList({
+    labelSelector: 'app.kubernetes.io/part-of=flux',
+    ...(props.cluster ? { cluster: props.cluster } : {}),
+  });
+
+  const results = FLUX_KINDS.map(kindDef => useKindList(kindDef, props.cluster));
+  const objects = results.flatMap(r => (r.items ?? []).map((i: any) => i.jsonData));
+
+  const counts: Record<FluxHealth, number> = {
+    Ready: 0,
+    NotReady: 0,
+    Reconciling: 0,
+    Suspended: 0,
+    Unknown: 0,
+  };
+  objects.forEach(o => (counts[getStatusInfo(o).health] += 1));
+
+  const controllersTotal = deployments?.length ?? 0;
+  const controllersReady = (deployments ?? []).filter((d: any) => {
+    const wanted = d.jsonData.spec?.replicas ?? 1;
+    return (d.jsonData.status?.readyReplicas ?? 0) >= wanted;
+  }).length;
+  const version =
+    (deployments ?? [])
+      .map(
+        (d: any) =>
+          d.jsonData.metadata?.labels?.['app.kubernetes.io/version'] ||
+          (d.jsonData.spec?.template?.spec?.containers?.[0]?.image ?? '').split(':')[1]
+      )
+      .find((v: string) => !!v) ?? undefined;
+
+  const controllersHealthy = controllersTotal > 0 && controllersReady === controllersTotal;
+  const nothingFailing = counts.NotReady === 0;
+
+  const loadingControllers = deployments === null && !deploymentsError;
+  const notInstalled = !loadingControllers && controllersTotal === 0 && objects.length === 0;
+
+  let overall: { label: string; color: string; icon: string; detail: string };
+  if (notInstalled) {
+    overall = {
+      label: 'Flux not detected',
+      color: theme.palette.text.disabled,
+      icon: 'mdi:help-circle-outline',
+      detail: 'No Flux controllers or resources were found in this cluster.',
+    };
+  } else if (controllersHealthy && nothingFailing) {
+    overall = {
+      label: 'Healthy',
+      color: theme.palette.success.main,
+      icon: 'mdi:check-circle',
+      detail: 'All controllers are running and every resource is reconciled.',
+    };
+  } else if (!controllersHealthy && controllersTotal > 0) {
+    overall = {
+      label: 'Controllers degraded',
+      color: theme.palette.error.main,
+      icon: 'mdi:alert-circle',
+      detail: `${controllersReady} of ${controllersTotal} Flux controllers are ready.`,
+    };
+  } else if (!nothingFailing) {
+    overall = {
+      label: 'Attention needed',
+      color: theme.palette.error.main,
+      icon: 'mdi:alert-circle',
+      detail: `${counts.NotReady} resource${
+        counts.NotReady === 1 ? '' : 's'
+      } failing to reconcile.`,
+    };
+  } else {
+    overall = {
+      label: 'Reconciling',
+      color: theme.palette.warning.main,
+      icon: 'mdi:progress-clock',
+      detail: 'Flux is applying changes.',
+    };
+  }
+
+  return (
+    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
+      {/* Overall status hero */}
+      <Card
+        variant="outlined"
+        sx={{
+          flex: '2 1 320px',
+          minWidth: 280,
+          borderLeft: `5px solid ${overall.color}`,
+          backgroundColor: alpha(overall.color, 0.05),
+        }}
+      >
+        <CardContent sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          <Icon icon={overall.icon} width="2.6rem" color={overall.color} />
+          <Box>
+            <Typography variant="h5" sx={{ fontWeight: 700 }}>
+              {overall.label}
+            </Typography>
+            <Typography variant="body2" color="textSecondary">
+              {overall.detail}
+            </Typography>
+          </Box>
+        </CardContent>
+      </Card>
+
+      <StatTile
+        icon={FLUX_ICON}
+        label="Flux version"
+        value={loadingControllers ? '…' : version ?? 'unknown'}
+        color={theme.palette.primary.main}
+      />
+      <StatTile
+        icon="mdi:cog-outline"
+        label="Controllers ready"
+        value={loadingControllers ? '…' : `${controllersReady}/${controllersTotal}`}
+        color={controllersHealthy ? theme.palette.success.main : theme.palette.error.main}
+      />
+      <StatTile
+        icon="mdi:cube-outline"
+        label="Managed resources"
+        value={objects.length}
+        color={theme.palette.info.main}
+        sub={
+          counts.NotReady > 0 ? (
+            <Typography variant="caption" color="error">
+              {counts.NotReady} failing
+            </Typography>
+          ) : counts.Suspended > 0 ? (
+            <Typography variant="caption" color="textSecondary">
+              {counts.Suspended} suspended
+            </Typography>
+          ) : null
+        }
+      />
+    </Box>
+  );
+}
+
 function CategoryCard(props: { category: (typeof CATEGORY_PAGES)[number] }) {
   const { category } = props;
+  const theme = useTheme();
   const history = useHistory();
   const kinds = FLUX_KINDS.filter(k => k.category === category.category);
 
@@ -84,13 +272,18 @@ function CategoryCard(props: { category: (typeof CATEGORY_PAGES)[number] }) {
   const loaded = results.filter(r => r.items !== null);
   const objects = loaded.flatMap(r => (r.items ?? []).map((i: any) => i.jsonData));
   const allFailed = results.length > 0 && results.every(r => r.error && r.items === null);
+  const failing = objects.filter(o => getStatusInfo(o).health === 'NotReady').length;
+  const accent = failing > 0 ? theme.palette.error.main : theme.palette.primary.main;
 
   return (
-    <Card variant="outlined" sx={{ minWidth: 230, flex: '1 1 230px' }}>
+    <Card
+      variant="outlined"
+      sx={{ minWidth: 230, flex: '1 1 230px', borderTop: `3px solid ${alpha(accent, 0.6)}` }}
+    >
       <CardActionArea onClick={() => history.push(createRouteURL(category.route))}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Icon icon={category.icon} width="1.5rem" />
+            <Icon icon={category.icon} width="1.5rem" color={accent} />
             <Typography variant="h6">{category.label}</Typography>
           </Box>
           {allFailed ? (
@@ -117,6 +310,15 @@ function CategoryCard(props: { category: (typeof CATEGORY_PAGES)[number] }) {
   );
 }
 
+const CONTROLLER_ICON: Record<string, string> = {
+  'source-controller': 'mdi:source-branch',
+  'kustomize-controller': 'mdi:layers-triple-outline',
+  'helm-controller': 'mdi:ship-wheel',
+  'notification-controller': 'mdi:bell-outline',
+  'image-reflector-controller': 'mdi:image-search-outline',
+  'image-automation-controller': 'mdi:image-sync-outline',
+};
+
 /** Health of the Flux controllers (source-controller, kustomize-controller, ...). */
 export function FluxControllersSection(props: { cluster?: string } = {}) {
   const [deployments, error] = ResourceClasses.Deployment.useList({
@@ -133,11 +335,11 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
       d.jsonData.metadata?.labels?.['app.kubernetes.io/version'] ||
       (spec.template?.spec?.containers?.[0]?.image ?? '').split(':')[1] ||
       '-';
-    return { deployment: d, wanted, ready, version };
+    return { deployment: d, name: d.jsonData.metadata.name, wanted, ready, version };
   });
 
   return (
-    <SectionBox title="Flux Controllers">
+    <SectionBox title="Controllers">
       {error ? (
         <ErrorState error={error} what="the Flux controller deployments" />
       ) : deployments === null ? (
@@ -155,9 +357,10 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
             {
               label: 'Controller',
               getter: (row: any) => (
-                <HeadlampLink kubeObject={row.deployment}>
-                  {row.deployment.metadata.name}
-                </HeadlampLink>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Icon icon={CONTROLLER_ICON[row.name] ?? 'mdi:cog-outline'} width="1.2rem" />
+                  <HeadlampLink kubeObject={row.deployment}>{row.name}</HeadlampLink>
+                </Box>
               ),
             },
             { label: 'Namespace', getter: (row: any) => row.deployment.metadata.namespace },
@@ -186,15 +389,17 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
 export default function FluxOverview() {
   return (
     <>
-      <SectionBox title="Flux" headerProps={{ headerStyle: 'main' }}>
-        <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-          Everything Flux manages in this cluster: sources, kustomizations, Helm releases and
-          automation, with their live status.
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          {CATEGORY_PAGES.map(category => (
-            <CategoryCard key={category.category} category={category} />
-          ))}
+      <SectionBox>
+        <FluxHealthHero />
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 1 }}>
+            What Flux manages
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            {CATEGORY_PAGES.map(category => (
+              <CategoryCard key={category.category} category={category} />
+            ))}
+          </Box>
         </Box>
       </SectionBox>
       <FluxControllersSection />

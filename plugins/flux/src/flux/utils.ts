@@ -275,6 +275,71 @@ export function getCommitWebUrl(repoUrl?: string, hash?: string): string | undef
   return isGitLab ? `${base}/-/commit/${hash}` : `${base}/commit/${hash}`;
 }
 
+/**
+ * Normalizes a git/oci/helm/bucket source URL into a browsable https URL so
+ * it can be opened directly. SSH and scp-style git URLs are rewritten to
+ * their https equivalent; oci:// becomes https://. Returns undefined for
+ * things that are not meaningfully browsable.
+ */
+export function getSourceWebUrl(url?: string): string | undefined {
+  if (!url || typeof url !== 'string') {
+    return undefined;
+  }
+  if (url.startsWith('https://')) {
+    return url.replace(/\.git$/, '');
+  }
+  if (url.startsWith('http://')) {
+    return url.replace(/\.git$/, '');
+  }
+  if (url.startsWith('oci://')) {
+    return 'https://' + url.slice('oci://'.length);
+  }
+  if (url.startsWith('ssh://')) {
+    const m = url.match(/^ssh:\/\/(?:[^@]+@)?([^/:]+)(?::\d+)?\/(.+)$/);
+    if (m) {
+      return `https://${m[1]}/${m[2]}`.replace(/\.git$/, '');
+    }
+    return undefined;
+  }
+  // scp-like: git@host:org/repo(.git)
+  const scp = url.match(/^(?:[^@]+@)([^:]+):(.+)$/);
+  if (scp) {
+    return `https://${scp[1]}/${scp[2]}`.replace(/\.git$/, '');
+  }
+  // s3://, gcs://, etc. are not browsable.
+  return undefined;
+}
+
+export interface CommitInfo {
+  /** Commit author name (and email when available). */
+  author?: string;
+  /** First line of the commit message. */
+  message?: string;
+  /** ISO timestamp of when the source last produced an artifact. */
+  time?: string;
+}
+
+/**
+ * Extracts the commit author / message that Flux records for a source, when
+ * present. source-controller >= v1 exposes these under
+ * `status.artifact.metadata` with the OCI-style annotation keys.
+ */
+export function getCommitInfo(obj: FluxObject): CommitInfo {
+  const meta = obj?.status?.artifact?.metadata ?? {};
+  const author =
+    meta['org.opencontainers.image.authors'] ??
+    meta['org.opencontainers.image.author'] ??
+    meta['author'];
+  const message =
+    meta['org.opencontainers.image.title'] ?? meta['message'] ?? meta['commit.message'];
+  const firstLine = typeof message === 'string' ? message.split('\n')[0] : undefined;
+  return {
+    author: typeof author === 'string' ? author : undefined,
+    message: firstLine,
+    time: obj?.status?.artifact?.lastUpdateTime,
+  };
+}
+
 /** A reference to the source object a Kustomization/HelmRelease pulls from. */
 export interface SourceRef {
   kind: string;

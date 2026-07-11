@@ -27,9 +27,11 @@ import {
   FluxNotificationsPage,
   FluxSourcesPage,
 } from './components/pages';
+import { FLUX_ICON, registerFluxIcon } from './flux/icon';
 import { FLUX_KINDS } from './flux/kinds';
 
-const FLUX_ICON = 'mdi:sync-circle';
+// Make the official Flux logo available offline before it is referenced.
+registerFluxIcon();
 
 // -- Sidebar ----------------------------------------------------------------
 // A top-level "Flux" item placed right above Workloads. `insertBefore` is
