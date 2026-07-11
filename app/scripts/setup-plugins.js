@@ -5,6 +5,7 @@ const glob = require('glob');
 var zlib = require('zlib');
 const os = require('os');
 const https = require('https');
+const { execSync } = require('child_process');
 
 const PLUGIN_FOLDER = path.join(__dirname, '../../.plugins');
 const MANIFEST_FILE = path.join(__dirname, '../app-build-manifest.json');
@@ -134,14 +135,33 @@ async function fetchArchive(name, url) {
   fs.unlinkSync(archivePath);
 }
 
+// Builds a plugin that lives in this repository (npm install + build if its
+// dist/main.js is missing) and copies it into the plugins folder.
+function setupLocalPlugin(name, folder) {
+  const absFolder = path.resolve(path.dirname(MANIFEST_FILE), folder);
+  const distMain = path.join(absFolder, 'dist', 'main.js');
+
+  if (!fs.existsSync(distMain)) {
+    console.log('Building local plugin', name, 'in', absFolder, '...');
+    execSync('npm install --no-audit --no-fund', { cwd: absFolder, stdio: 'inherit' });
+    execSync('npm run build', { cwd: absFolder, stdio: 'inherit' });
+  }
+
+  const pluginFolder = path.join(PLUGIN_FOLDER, name);
+  fs.mkdirSync(pluginFolder, { recursive: true });
+  fs.copyFileSync(distMain, path.join(pluginFolder, 'main.js'));
+  fs.copyFileSync(path.join(absFolder, 'package.json'), path.join(pluginFolder, 'package.json'));
+  console.log('Copied local plugin', name, 'to', pluginFolder);
+}
+
 async function main() {
   const plugins = manifest.plugins;
   // Fetch the plugins from the manifest
   if (!!plugins) {
     for (const plugin of plugins) {
-      const { name, archive, file } = plugin;
+      const { name, archive, file, folder } = plugin;
 
-      console.log('Setting up plugin', name, 'from', archive || file, '...');
+      console.log('Setting up plugin', name, 'from', archive || file || folder, '...');
 
       if (!!archive) {
         await fetchArchive(name, archive);
@@ -150,6 +170,10 @@ async function main() {
       if (!!file) {
         const absPath = path.join(path.dirname(MANIFEST_FILE), file);
         await extractArchive(name, absPath);
+      }
+
+      if (!!folder) {
+        setupLocalPlugin(name, folder);
       }
     }
   }
