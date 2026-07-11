@@ -20,9 +20,12 @@ import {
   APP_VERSION_KEY,
   buildApplications,
   getAppMetadataValue,
+  isBusinessApplicationNamespace,
+  isPlatformNamespace,
   isSystemNamespace,
   NamespaceLike,
   NOT_AVAILABLE,
+  PLATFORM_NAMESPACES,
 } from './applicationUtils';
 
 function makeNamespace(
@@ -47,12 +50,62 @@ describe('isSystemNamespace', () => {
     expect(isSystemNamespace('openshift')).toBe(true);
     expect(isSystemNamespace('openshift-monitoring')).toBe(true);
     expect(isSystemNamespace('kube-whatever')).toBe(true);
+    expect(isSystemNamespace('foo-system')).toBe(true);
   });
 
   it('does not flag application namespaces', () => {
     expect(isSystemNamespace('wnv7a0vbgw0013c')).toBe(false);
     expect(isSystemNamespace('my-app')).toBe(false);
     expect(isSystemNamespace('kubeless')).toBe(false);
+  });
+});
+
+describe('isPlatformNamespace', () => {
+  it('flags every known shared platform/service namespace', () => {
+    for (const name of PLATFORM_NAMESPACES) {
+      expect(isPlatformNamespace(name)).toBe(true);
+    }
+  });
+
+  it('flags namespaces ending in -operator as a platform-namespace convention', () => {
+    expect(isPlatformNamespace('some-future-operator')).toBe(true);
+  });
+
+  it('does not flag business application namespaces', () => {
+    expect(isPlatformNamespace('wnv7a0vbgw0001c')).toBe(false);
+    expect(isPlatformNamespace('wnv7a1psdc0001c')).toBe(false);
+  });
+});
+
+describe('isBusinessApplicationNamespace', () => {
+  it('accepts every business application namespace from the reference cluster layout', () => {
+    const businessNamespaces = [
+      'wnv7a0vbgw0001c',
+      'wnv7a0vbgw0002c',
+      'wnv7a1psdc0001c',
+      'wnv7a0icsf0001c',
+      'wnv7a0cncs0001c',
+    ];
+    for (const name of businessNamespaces) {
+      expect(isBusinessApplicationNamespace(name)).toBe(true);
+    }
+  });
+
+  it('rejects system namespaces', () => {
+    expect(isBusinessApplicationNamespace('kube-system')).toBe(false);
+    expect(isBusinessApplicationNamespace('openshift-monitoring')).toBe(false);
+    expect(isBusinessApplicationNamespace('foo-system')).toBe(false);
+    expect(isBusinessApplicationNamespace('default')).toBe(false);
+  });
+
+  it('rejects shared platform/service namespaces', () => {
+    expect(isBusinessApplicationNamespace('cert-manager')).toBe(false);
+    expect(isBusinessApplicationNamespace('cert-manager-operator')).toBe(false);
+    expect(isBusinessApplicationNamespace('quay-registry')).toBe(false);
+    expect(isBusinessApplicationNamespace('vault-secrets-operator')).toBe(false);
+    expect(isBusinessApplicationNamespace('ldap-group-sync')).toBe(false);
+    expect(isBusinessApplicationNamespace('cluster-backup')).toBe(false);
+    expect(isBusinessApplicationNamespace('assisted-installer')).toBe(false);
   });
 });
 
@@ -94,6 +147,23 @@ describe('buildApplications', () => {
     ]);
 
     expect(apps.map(a => a.id)).toEqual(['cluster-2/app-a', 'cluster-1/app-b']);
+  });
+
+  it('excludes shared platform/service namespaces alongside system namespaces', () => {
+    const apps = buildApplications([
+      makeNamespace('wnv7a0vbgw0001c', 'cluster-1', {}, 'Active'),
+      makeNamespace('cert-manager', 'cluster-1'),
+      makeNamespace('cert-manager-operator', 'cluster-1'),
+      makeNamespace('quay-registry', 'cluster-1'),
+      makeNamespace('vault-secrets-operator', 'cluster-1'),
+      makeNamespace('ldap-group-sync', 'cluster-1'),
+      makeNamespace('cluster-backup', 'cluster-1'),
+      makeNamespace('assisted-installer', 'cluster-1'),
+      makeNamespace('kube-system', 'cluster-1'),
+      makeNamespace('openshift-etcd', 'cluster-1'),
+    ]);
+
+    expect(apps.map(a => a.namespace)).toEqual(['wnv7a0vbgw0001c']);
   });
 
   it('keeps the same namespace in different clusters as separate rows', () => {

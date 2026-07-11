@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
-import { Box } from '@mui/material';
+import { Box, Link as MuiLink } from '@mui/material';
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useHistory } from 'react-router-dom';
+import { formatClusterPathParam, getSelectedClusters } from '../../lib/cluster';
 import DaemonSet from '../../lib/k8s/daemonSet';
 import Deployment from '../../lib/k8s/deployment';
 import { KubeObject } from '../../lib/k8s/KubeObject';
@@ -25,6 +27,8 @@ import Pod from '../../lib/k8s/pod';
 import ResourceQuota from '../../lib/k8s/resourceQuota';
 import Service from '../../lib/k8s/service';
 import StatefulSet from '../../lib/k8s/statefulSet';
+import { createRouteURL } from '../../lib/router/createRouteURL';
+import { Activity, useActivity } from '../activity/Activity';
 import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
 import { DateLabel, StatusLabel } from '../common/Label';
 import Link from '../common/Link';
@@ -63,6 +67,11 @@ export default function ApplicationDetails({
   cluster,
 }: ApplicationDetailsProps) {
   const { t } = useTranslation(['translation', 'glossary']);
+  const history = useHistory();
+  // Content rendered by Activity.launch is wrapped in an ActivityContext, so
+  // this returns the current panel; falls back to an id-less object if this
+  // component is ever rendered outside an Activity (e.g. in a story/test).
+  const [activity] = useActivity();
 
   const [namespaceObj, namespaceError] = Namespace.useGet(namespace, undefined, { cluster });
 
@@ -105,14 +114,38 @@ export default function ApplicationDetails({
 
   const status = namespaceObj?.status?.phase;
 
+  // Unlike the resource links below (which intentionally open in the
+  // split-right drawer, matching the rest of Headlamp), this link is meant to
+  // behave like the cluster row on the Home page: a real navigation to the
+  // namespace's own page, not another drawer swapped on top of this panel.
+  // Bypassing the generic <Link> (which would intercept the click and open
+  // yet another temporary Activity, silently replacing this one) and closing
+  // this temporary panel makes that "redirect" behavior explicit.
+  const goToNamespace = () => {
+    history.push(
+      createRouteURL('namespace', {
+        name: namespace,
+        cluster: formatClusterPathParam(getSelectedClusters(), cluster),
+      })
+    );
+    if (activity.id) {
+      Activity.close(activity.id);
+    }
+  };
+
   const mainRows = [
     { name: t('translation|Application'), value: appName },
     {
       name: t('glossary|Namespace'),
       value: (
-        <Link routeName="namespace" params={{ name: namespace }} activeCluster={cluster}>
+        <MuiLink
+          component="button"
+          variant="body2"
+          sx={{ textAlign: 'left', verticalAlign: 'baseline' }}
+          onClick={goToNamespace}
+        >
           {namespace}
-        </Link>
+        </MuiLink>
       ),
     },
     { name: t('glossary|Cluster'), value: cluster },

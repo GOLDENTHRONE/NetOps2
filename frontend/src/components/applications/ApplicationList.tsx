@@ -14,7 +14,16 @@
  * limitations under the License.
  */
 
-import { Autocomplete, Box, Link as MuiLink, TextField } from '@mui/material';
+import { Icon } from '@iconify/react';
+import {
+  Autocomplete,
+  Box,
+  Checkbox,
+  Link as MuiLink,
+  TextField,
+  Typography,
+  useTheme,
+} from '@mui/material';
 import { uniq } from 'lodash';
 import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -44,8 +53,9 @@ export function launchApplicationDetails(app: ApplicationInfo) {
 
 export default function ApplicationList() {
   const { t } = useTranslation(['translation', 'glossary']);
+  const theme = useTheme();
   const { applications, errors, isLoading } = useApplications();
-  const [selectedApp, setSelectedApp] = useState<string | null>(null);
+  const [selectedApps, setSelectedApps] = useState<string[]>([]);
 
   const applicationNames = useMemo(
     () => uniq(applications.map(app => app.name)).sort((a, b) => a.localeCompare(b)),
@@ -53,8 +63,8 @@ export default function ApplicationList() {
   );
 
   const filterFunction = useCallback(
-    (app: ApplicationInfo) => !selectedApp || app.name === selectedApp,
-    [selectedApp]
+    (app: ApplicationInfo) => selectedApps.length === 0 || selectedApps.includes(app.name),
+    [selectedApps]
   );
 
   const columns = useMemo<TableColumn<ApplicationInfo>[]>(
@@ -76,6 +86,20 @@ export default function ApplicationList() {
         ),
       },
       {
+        id: 'status',
+        header: t('translation|Status'),
+        accessorFn: app => app.status,
+        gridTemplate: 'min-content',
+        Cell: ({ row: { original } }) =>
+          original.status === NOT_AVAILABLE ? (
+            NOT_AVAILABLE
+          ) : (
+            <StatusLabel status={original.status === 'Active' ? 'success' : 'error'}>
+              {original.status}
+            </StatusLabel>
+          ),
+      },
+      {
         id: 'cluster',
         header: t('glossary|Cluster'),
         accessorFn: app => app.cluster,
@@ -90,20 +114,6 @@ export default function ApplicationList() {
         header: t('translation|Deployment Type'),
         accessorFn: app => app.deploymentType,
       },
-      {
-        id: 'status',
-        header: t('translation|Status'),
-        accessorFn: app => app.status,
-        gridTemplate: 'min-content',
-        Cell: ({ row: { original } }) =>
-          original.status === NOT_AVAILABLE ? (
-            NOT_AVAILABLE
-          ) : (
-            <StatusLabel status={original.status === 'Active' ? 'success' : 'error'}>
-              {original.status}
-            </StatusLabel>
-          ),
-      },
     ],
     [t]
   );
@@ -112,16 +122,40 @@ export default function ApplicationList() {
     <>
       <Box sx={{ display: 'flex', justifyContent: 'flex-start', my: 2 }}>
         <Autocomplete
+          multiple
+          disableCloseOnSelect
           options={applicationNames}
-          value={selectedApp}
-          onChange={(_event, newValue) => setSelectedApp(newValue)}
-          sx={{ minWidth: 300 }}
+          value={selectedApps}
+          onChange={(_event, newValue) => setSelectedApps(newValue)}
+          sx={{ minWidth: 320 }}
           size="small"
+          renderOption={(props, option, { selected }) => (
+            <li {...props} key={props.key}>
+              <Checkbox
+                icon={<Icon icon="mdi:checkbox-blank-outline" />}
+                checkedIcon={<Icon icon="mdi:check-box-outline" />}
+                style={{
+                  color: selected ? theme.palette.primary.main : theme.palette.text.primary,
+                }}
+                checked={selected}
+              />
+              {option}
+            </li>
+          )}
+          renderTags={(tags: string[]) =>
+            tags.length === 0 ? null : (
+              <Typography variant="body2" ml={1} noWrap>
+                {tags.length === 1
+                  ? tags[0]
+                  : t('translation|{{ count }} selected', { count: tags.length })}
+              </Typography>
+            )
+          }
           renderInput={params => (
             <TextField
               {...params}
               label={t('translation|Applications')}
-              placeholder={t('translation|All applications')}
+              placeholder={selectedApps.length > 0 ? '' : t('translation|All applications')}
             />
           )}
         />
