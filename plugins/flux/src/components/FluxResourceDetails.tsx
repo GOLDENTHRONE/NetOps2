@@ -37,6 +37,7 @@ import {
   parseRevision,
 } from '../flux/utils';
 import { FluxLink, FluxStatusLabel, healthToStatus, RevisionLabel, SectionEmpty } from './common';
+import { ErrorState, pickMostRelevantError } from './errors';
 import { HelmReleaseInventorySection, KustomizationInventorySection } from './Inventory';
 
 function commonInfoRows(item: any) {
@@ -284,10 +285,15 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
   ];
 
   const found: { kind: string; object: any }[] = [];
+  const errors: any[] = [];
   let loading = false;
   for (const consumer of consumers) {
     // Constant list of kinds, so the hook order is stable.
-    const [objs] = (fluxClass(consumer) as any).useList();
+    const [objs, err] = (fluxClass(consumer) as any).useList();
+    if (err) {
+      errors.push(err);
+      continue;
+    }
     if (objs === null) {
       loading = true;
       continue;
@@ -305,9 +311,13 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
     }
   }
 
+  const allFailed = errors.length === consumers.length;
+
   return (
     <SectionBox title={`Used by (${found.length})`}>
-      {found.length === 0 ? (
+      {allFailed ? (
+        <ErrorState error={pickMostRelevantError(errors)} what="the objects that use this source" />
+      ) : found.length === 0 ? (
         <SectionEmpty
           message={
             loading
@@ -329,7 +339,7 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
 /** dependsOn relations of a Kustomization/HelmRelease, both directions. */
 function DependenciesSection(props: { item: any; kindDef: FluxKind }) {
   const { item, kindDef } = props;
-  const [objs] = (fluxClass(kindDef) as any).useList();
+  const [objs, error] = (fluxClass(kindDef) as any).useList();
 
   const myName = item.metadata?.name;
   const myNamespace = item.metadata?.namespace;
@@ -363,8 +373,13 @@ function DependenciesSection(props: { item: any; kindDef: FluxKind }) {
                   : dependsOn.map(dep => {
                       const id = `${dep.namespace ?? myNamespace}/${dep.name}`;
                       const obj = byId.get(id);
-                      return obj ? (
-                        <ObjectChip key={id} kind={kindDef.kind} object={obj} />
+                      if (obj) {
+                        return <ObjectChip key={id} kind={kindDef.kind} object={obj} />;
+                      }
+                      // Only claim a dependency is missing when we could
+                      // actually list the resources; on error just show it.
+                      return error || objs === null ? (
+                        <Chip key={id} size="small" label={id} variant="outlined" />
                       ) : (
                         <Chip key={id} size="small" label={`${id} (missing)`} color="warning" />
                       );

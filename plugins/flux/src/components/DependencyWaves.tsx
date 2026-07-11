@@ -28,8 +28,8 @@ import {
   getStatusInfo,
   makeDependencyNodes,
 } from '../flux/utils';
-import { FluxLink, healthToStatus } from './common';
-import { SectionEmpty } from './common';
+import { FluxLink, healthToStatus, SectionEmpty } from './common';
+import { ErrorState } from './errors';
 
 function statusColor(theme: any, status: 'success' | 'warning' | 'error' | '') {
   if (status === '') {
@@ -134,7 +134,7 @@ export interface DependencyWavesSectionProps {
  */
 export function DependencyWavesSection(props: DependencyWavesSectionProps) {
   const { kindDef, title } = props;
-  const [items] = (fluxClass(kindDef) as any).useList();
+  const [items, error] = (fluxClass(kindDef) as any).useList();
   const filterFunc = useFilterFunc();
 
   const filtered = React.useMemo(
@@ -158,7 +158,14 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
 
   return (
     <SectionBox title={title ?? 'Deployment order (dependsOn)'}>
-      {items === null ? (
+      {error && !items?.length ? (
+        <ErrorState
+          error={error}
+          what={`${kindDef.kind}s`}
+          fluxKind={kindDef.kind}
+          group={kindDef.group}
+        />
+      ) : items === null ? (
         <Loader title="Loading" />
       ) : filtered.length === 0 ? (
         <SectionEmpty message={`No ${kindDef.kind}s found`} />
