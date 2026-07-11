@@ -14,19 +14,15 @@
  * limitations under the License.
  */
 
-import './index.css';
-// Register the plugins that are built into Headlamp (e.g. Flux).
-import './staticPlugins';
-import React from 'react';
-import { createRoot } from 'react-dom/client';
-import App from './App';
-
-const container = document.getElementById('root');
-const root = createRoot(container!);
-root.render(<App />);
-
 /**
- * We used to have axe a11y check here
- * TODO: Integrate a11y check in e2e tests
- * https://playwright.dev/docs/accessibility-testing
+ * Plugins compiled into Headlamp itself. Unlike regular plugins these are
+ * always present — they don't depend on any plugins folder, cannot be
+ * disabled from the plugin settings, and ship with every build (browser,
+ * desktop app and container image alike).
+ *
+ * Their sources live in the top-level plugins/ folder and keep the regular
+ * plugin API imports; the build aliases '@kinvolk/headlamp-plugin/lib*' to
+ * the in-tree implementations (see vite.config.ts / rsbuild.config.ts and
+ * src/plugin/staticPluginLib.ts).
  */
+import '../../plugins/flux/src/index';

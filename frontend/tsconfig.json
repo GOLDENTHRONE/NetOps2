@@ -15,7 +15,23 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client", "vite-plugin-svgr/client", "vitest/globals"]
+    "types": ["vite/client", "vite-plugin-svgr/client", "vitest/globals"],
+    "paths": {
+      "@kinvolk/headlamp-plugin/lib": ["./src/plugin/staticPluginLib.ts"],
+      "@kinvolk/headlamp-plugin/lib/CommonComponents": ["./src/components/common/index.ts"],
+      "@kinvolk/headlamp-plugin/lib/K8s": ["./src/lib/k8s/index.ts"],
+      "@kinvolk/headlamp-plugin/lib/K8s/crd": ["./src/lib/k8s/crd.ts"],
+      "@kinvolk/headlamp-plugin/lib/ApiProxy": ["./src/lib/k8s/apiProxy.ts"],
+      "@kinvolk/headlamp-plugin/lib/Utils": ["./src/lib/util.ts"],
+      "@kinvolk/headlamp-plugin/lib/Router": ["./src/lib/router/index.tsx"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"],
+      "react-router-dom": ["./node_modules/@types/react-router-dom"],
+      "@mui/material": ["./node_modules/@mui/material"],
+      "@mui/material/*": ["./node_modules/@mui/material/*"],
+      "@iconify/react": ["./node_modules/@iconify/react"],
+      "notistack": ["./node_modules/notistack"]
+    }
   },
   "include": ["src"],
   "typedocOptions": {

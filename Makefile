@@ -279,24 +279,14 @@ frontend-build-rsbuild:
 frontend-build-storybook:
 	cd frontend && npm run build-storybook
 
-# Builds the in-repo Flux plugin into .plugins/flux, where the dev backend
-# (run-backend), the desktop app and the container image all pick it up.
-.plugins/flux/main.js: $(wildcard plugins/flux/src/*.ts*) $(wildcard plugins/flux/src/*/*.ts*) plugins/flux/package.json
-	cd plugins/flux && npm install --no-audit --no-fund && npm run build
-	mkdir -p .plugins/flux
-	cp plugins/flux/dist/main.js plugins/flux/package.json .plugins/flux/
-
-.PHONY: flux-plugin
-flux-plugin: .plugins/flux/main.js
-
-run-backend: flux-plugin
+run-backend:
 	@echo "**** Warning: Running with Helm and dynamic-clusters endpoints enabled. ****"
 
 ifeq ($(UNIXSHELL),true)
-	HEADLAMP_BACKEND_TOKEN=headlamp HEADLAMP_CONFIG_ENABLE_HELM=true HEADLAMP_CONFIG_ENABLE_DYNAMIC_CLUSTERS=true HEADLAMP_CONFIG_ALLOW_KUBECONFIG_CHANGES=true HEADLAMP_STATIC_PLUGINS_DIR=$(CURDIR)/.plugins ./backend/headlamp-server -dev -proxy-urls https://artifacthub.io/* -listen-addr=localhost
+	HEADLAMP_BACKEND_TOKEN=headlamp HEADLAMP_CONFIG_ENABLE_HELM=true HEADLAMP_CONFIG_ENABLE_DYNAMIC_CLUSTERS=true HEADLAMP_CONFIG_ALLOW_KUBECONFIG_CHANGES=true ./backend/headlamp-server -dev -proxy-urls https://artifacthub.io/* -listen-addr=localhost
 else
 	@echo "**** Running on Windows without bash or zsh. ****"
-	@cmd /c "set HEADLAMP_BACKEND_TOKEN=headlamp&& set HEADLAMP_CONFIG_ENABLE_HELM=true&& set HEADLAMP_CONFIG_ENABLE_DYNAMIC_CLUSTERS=true&& set HEADLAMP_CONFIG_ALLOW_KUBECONFIG_CHANGES=true&& set HEADLAMP_STATIC_PLUGINS_DIR=.plugins&& backend\headlamp-server -dev -proxy-urls https://artifacthub.io/* -listen-addr=localhost"
+	@cmd /c "set HEADLAMP_BACKEND_TOKEN=headlamp&& set HEADLAMP_CONFIG_ENABLE_HELM=true&& set HEADLAMP_CONFIG_ENABLE_DYNAMIC_CLUSTERS=true&& set HEADLAMP_CONFIG_ALLOW_KUBECONFIG_CHANGES=true&& backend\headlamp-server -dev -proxy-urls https://artifacthub.io/* -listen-addr=localhost"
 endif
 
 run-dev:

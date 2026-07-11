@@ -1,8 +1,13 @@
 # Flux plugin for Headlamp
 
-A GitOps dashboard for [Flux CD](https://fluxcd.io/) that ships with Headlamp as a
-plugin: observe, sync, suspend, onboard and debug everything Flux manages without
-running a single `flux` command.
+A GitOps dashboard for [Flux CD](https://fluxcd.io/) that is **built into
+Headlamp**: observe, sync, suspend, onboard and debug everything Flux manages
+without running a single `flux` command.
+
+The sources live here in plugin form, but they are compiled directly into the
+Headlamp frontend (see `frontend/src/staticPlugins.ts`), so the Flux UI is
+always present — in the browser, the desktop app and the container image —
+with nothing to install or enable.
 
 ## What you get
 
@@ -48,14 +53,23 @@ sidebar entry appended at the end and no Home tab.
 
 ## Development
 
+The plugin is part of the frontend build, so the regular frontend workflow
+picks up changes here automatically:
+
+```bash
+make run-backend    # terminal 1
+make run-frontend   # terminal 2 — Flux UI is included, with hot reload
+```
+
+Unit tests and standalone checks still work from this folder:
+
 ```bash
 cd plugins/flux
 npm install
-npm start          # develop against a locally running Headlamp
 npm test           # unit tests
-npm run build      # produce dist/main.js
+npm run tsc        # typecheck against the published plugin API
+npm run build      # produce dist/main.js (standalone plugin bundle)
 ```
 
-The container image builds this plugin automatically (see the `static-plugins`
-stage in the repository's `Dockerfile`), so it is available out of the box in
-the shipped image — no manual installation needed.
+The standalone bundle is only needed if you want to load this plugin into an
+unmodified upstream Headlamp; in this repository it is already compiled in.
