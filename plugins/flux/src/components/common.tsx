@@ -16,15 +16,12 @@
 
 import { Icon } from '@iconify/react';
 import { Router } from '@kinvolk/headlamp-plugin/lib';
-import {
-  DateLabel,
-  HoverInfoLabel,
-  StatusLabel,
-} from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { DateLabel, HoverInfoLabel } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { localeDate } from '@kinvolk/headlamp-plugin/lib/Utils';
 import { Box, Link as MuiLink, Tooltip, Typography } from '@mui/material';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
+import { ICONS } from '../flux/icon';
 import {
   FluxHealth,
   FluxObject,
@@ -35,6 +32,7 @@ import {
   getStatusInfo,
   parseRevision,
 } from '../flux/utils';
+import { Pill, PillTone } from './ui';
 
 const { createRouteURL } = Router;
 
@@ -53,7 +51,7 @@ export function ExternalLink(props: { url?: string; children?: React.ReactNode }
       onClick={e => e.stopPropagation()}
     >
       {children ?? url}
-      <Icon icon="mdi:open-in-new" width="0.9rem" style={{ flexShrink: 0 }} />
+      <Icon icon={ICONS.externalLink} width="0.9rem" style={{ flexShrink: 0 }} />
     </MuiLink>
   );
 }
@@ -82,7 +80,7 @@ export function CommitAuthorLabel(props: { object: FluxObject }) {
     <Box sx={{ display: 'flex', flexDirection: 'column' }}>
       {info.author && (
         <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4 }}>
-          <Icon icon="mdi:account" width="0.95rem" />
+          <Icon icon={ICONS.author} width="0.95rem" />
           <Typography variant="body2" component="span" sx={{ whiteSpace: 'nowrap' }}>
             {info.author}
           </Typography>
@@ -110,27 +108,41 @@ export function healthToStatus(health: FluxHealth): 'success' | 'warning' | 'err
   }
 }
 
+/** Maps a Flux health to a design-system pill tone + icon + label. */
+export function healthPresentation(health: FluxHealth): {
+  tone: PillTone;
+  icon: string;
+  label: string;
+} {
+  switch (health) {
+    case 'Ready':
+      return { tone: 'success', icon: ICONS.statusReady, label: 'Ready' };
+    case 'NotReady':
+      return { tone: 'error', icon: ICONS.statusError, label: 'Failed' };
+    case 'Reconciling':
+      return { tone: 'warning', icon: ICONS.statusReconciling, label: 'Reconciling' };
+    case 'Suspended':
+      return { tone: 'neutral', icon: ICONS.statusSuspended, label: 'Suspended' };
+    default:
+      return { tone: 'neutral', icon: ICONS.statusUnknown, label: 'Unknown' };
+  }
+}
+
 /**
- * Status chip for a Flux resource. Hovering shows the full condition message,
+ * Status pill for a Flux resource. Hovering shows the full condition message,
  * which for failed resources is the failure message.
  */
 export function FluxStatusLabel(props: { object: FluxObject }) {
   const info = getStatusInfo(props.object);
-  const label =
-    info.health === 'Suspended' ? (
-      <>
-        <Icon icon="mdi:pause" width="1rem" style={{ verticalAlign: 'text-top' }} /> Suspended
-      </>
-    ) : (
-      info.health
-    );
+  const p = healthPresentation(info.health);
   return (
-    <StatusLabel
-      status={healthToStatus(info.health)}
+    <Pill
+      tone={p.tone}
+      icon={p.icon}
       title={[info.reason, info.message].filter(Boolean).join(': ')}
     >
-      {label}
-    </StatusLabel>
+      {p.label}
+    </Pill>
   );
 }
 
@@ -184,7 +196,7 @@ export function NextSyncLabel(props: { object: FluxObject }) {
       : seconds < 3600
       ? `in ${Math.round(seconds / 60)}m`
       : `in ${Math.round(seconds / 360) / 10}h`;
-  return <HoverInfoLabel label={inText} hoverInfo={localeDate(next)} icon="mdi:timer-outline" />;
+  return <HoverInfoLabel label={inText} hoverInfo={localeDate(next)} icon={ICONS.timer} />;
 }
 
 /** Link to the details page of a Flux resource (route name == kind). */
@@ -218,14 +230,25 @@ export function ReadySummary(props: { objects: FluxObject[] }) {
     counts[getStatusInfo(o).health]++;
   }
   return (
-    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-      <StatusLabel status="success">{counts.Ready} ready</StatusLabel>
-      {counts.NotReady > 0 && <StatusLabel status="error">{counts.NotReady} failed</StatusLabel>}
-      {counts.Reconciling > 0 && (
-        <StatusLabel status="warning">{counts.Reconciling} reconciling</StatusLabel>
+    <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap' }}>
+      <Pill tone="success" icon={ICONS.statusReady}>
+        {counts.Ready} ready
+      </Pill>
+      {counts.NotReady > 0 && (
+        <Pill tone="error" icon={ICONS.statusError}>
+          {counts.NotReady} failed
+        </Pill>
       )}
-      {counts.Suspended > 0 && <StatusLabel status="">{counts.Suspended} suspended</StatusLabel>}
-      {counts.Unknown > 0 && <StatusLabel status="">{counts.Unknown} unknown</StatusLabel>}
+      {counts.Reconciling > 0 && (
+        <Pill tone="warning" icon={ICONS.statusReconciling}>
+          {counts.Reconciling} reconciling
+        </Pill>
+      )}
+      {counts.Suspended > 0 && (
+        <Pill tone="neutral" icon={ICONS.statusSuspended}>
+          {counts.Suspended} suspended
+        </Pill>
+      )}
     </Box>
   );
 }

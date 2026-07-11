@@ -36,6 +36,7 @@ import {
 } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import React from 'react';
+import { ICONS } from '../flux/icon';
 import { fluxClass, kindByName } from './kinds';
 import { FORCE_ANNOTATION, getSourceRef, isSuspended, RECONCILE_ANNOTATION } from './utils';
 
@@ -121,7 +122,7 @@ function useFluxActions(item: FluxKubeObject): FluxAction[] {
     id: 'sync',
     label: 'Sync now',
     description: 'Reconcile this resource immediately',
-    icon: 'mdi:sync',
+    icon: ICONS.sync,
     severity: 'default',
     disabled: suspended,
     run: () => requestReconcile(item),
@@ -132,7 +133,7 @@ function useFluxActions(item: FluxKubeObject): FluxAction[] {
       id: 'sync-source',
       label: 'Sync with source',
       description: 'Reconcile the source first, then this resource',
-      icon: 'mdi:database-sync',
+      icon: ICONS.syncSource,
       severity: 'default',
       disabled: suspended,
       run: () => requestReconcileWithSource(item),
@@ -144,7 +145,7 @@ function useFluxActions(item: FluxKubeObject): FluxAction[] {
       id: 'force',
       label: 'Force reconcile',
       description: 'Force a one-off Helm upgrade even if the release has failed',
-      icon: 'mdi:sync-alert',
+      icon: ICONS.force,
       severity: 'warning',
       disabled: suspended,
       confirm: {
@@ -166,7 +167,7 @@ function useFluxActions(item: FluxKubeObject): FluxAction[] {
       id: 'resume',
       label: 'Resume',
       description: 'Resume reconciliation of this resource',
-      icon: 'mdi:play-circle-outline',
+      icon: ICONS.resume,
       severity: 'default',
       run: () => setSuspended(item, false),
     });
@@ -175,7 +176,7 @@ function useFluxActions(item: FluxKubeObject): FluxAction[] {
       id: 'suspend',
       label: 'Suspend',
       description: 'Pause reconciliation until resumed',
-      icon: 'mdi:pause-circle-outline',
+      icon: ICONS.suspend,
       severity: 'warning',
       confirm: {
         title: 'Suspend reconciliation',
@@ -209,10 +210,10 @@ function ConfirmDialog(props: {
   const color = severityColor(theme, severity === 'default' ? 'warning' : severity);
   const icon =
     severity === 'danger'
-      ? 'mdi:alert-octagon'
+      ? ICONS.warning
       : severity === 'warning'
-      ? 'mdi:alert'
-      : 'mdi:help-circle';
+      ? ICONS.warning
+      : ICONS.statusUnknown;
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
@@ -344,7 +345,7 @@ export function FluxActionButtons(props: FluxActionButtonsProps) {
           aria-label={`Flux actions for ${name}`}
           onClick={e => setAnchorEl(e.currentTarget)}
         >
-          <Icon icon="mdi:dots-vertical" />
+          <Icon icon={ICONS.more} />
         </IconButton>
       </Tooltip>
       <Menu anchorEl={anchorEl} open={!!anchorEl} onClose={() => setAnchorEl(null)}>

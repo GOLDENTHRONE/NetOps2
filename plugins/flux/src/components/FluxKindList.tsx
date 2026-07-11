@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { ResourceListView, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { ResourceListView } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import React from 'react';
 import { FluxActionButtons } from '../flux/actions';
 import { fluxClass, FluxKind } from '../flux/kinds';
@@ -36,6 +36,7 @@ import {
 } from './common';
 import { CreateFluxButton } from './CreateFluxButton';
 import { ErrorState } from './errors';
+import { Section, Surface } from './ui';
 
 type Column = any;
 
@@ -256,11 +257,13 @@ export interface FluxKindListSectionProps {
   title?: string;
   /** Optional one-line caption rendered under the section title. */
   description?: string;
+  /** Optional icon shown next to the section title. */
+  icon?: string;
 }
 
 /** A list view (with live status, sync info and actions) for one Flux kind. */
 export function FluxKindListSection(props: FluxKindListSectionProps) {
-  const { kindDef, title, description } = props;
+  const { kindDef, title, description, icon } = props;
 
   const sectionTitle = title ?? `${kindDef.kind}s`;
   const [items, error] = (fluxClass(kindDef) as any).useList();
@@ -354,35 +357,40 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
   // instead of an empty table with a cryptic error.
   if (error && !items?.length) {
     return (
-      <SectionBox title={sectionTitle}>
-        <ErrorState
-          error={error}
-          what={sectionTitle.toLowerCase()}
-          fluxKind={kindDef.kind}
-          group={kindDef.group}
-        />
-      </SectionBox>
+      <Section title={sectionTitle} icon={icon} description={description}>
+        <Surface sx={{ p: 2 }}>
+          <ErrorState
+            error={error}
+            what={sectionTitle.toLowerCase()}
+            fluxKind={kindDef.kind}
+            group={kindDef.group}
+          />
+        </Surface>
+      </Section>
     );
   }
 
   return (
-    <ResourceListView
-      title={sectionTitle}
-      data={items}
-      errors={error ? [error] : null}
-      columns={columns}
-      defaultSortingColumn={ordersById ? { id: 'order', desc: false } : undefined}
-      // enableColumnOrdering is available at runtime (compiled against the app),
-      // but not in the published plugin types; pass it untyped.
-      {...({ enableColumnOrdering: false } as any)}
-      headerProps={{
-        subtitle: description,
-        titleSideActions: [<CreateFluxButton key="create" kindDef={kindDef} />],
-        // We pass data directly (not a resourceClass), so re-enable the
-        // namespace filter that ResourceListView would otherwise hide.
-        noNamespaceFilter: false,
-      }}
-      id={`headlamp-flux-${kindDef.plural}`}
-    />
+    <Section title={sectionTitle} icon={icon} description={description}>
+      <Surface sx={{ px: 2, pb: 1, pt: 0.5 }}>
+        <ResourceListView
+          title=""
+          data={items}
+          errors={error ? [error] : null}
+          columns={columns}
+          defaultSortingColumn={ordersById ? { id: 'order', desc: false } : undefined}
+          // enableColumnOrdering is available at runtime (compiled against the app),
+          // but not in the published plugin types; pass it untyped.
+          {...({ enableColumnOrdering: false } as any)}
+          headerProps={{
+            titleSideActions: [<CreateFluxButton key="create" kindDef={kindDef} />],
+            // We pass data directly (not a resourceClass), so re-enable the
+            // namespace filter that ResourceListView would otherwise hide.
+            noNamespaceFilter: false,
+          }}
+          id={`headlamp-flux-${kindDef.plural}`}
+        />
+      </Surface>
+    </Section>
   );
 }

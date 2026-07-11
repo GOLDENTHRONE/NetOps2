@@ -15,15 +15,12 @@
  */
 
 import { Icon } from '@iconify/react';
-import {
-  Loader,
-  NamespacesAutocomplete,
-  SectionBox,
-} from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { alpha, Box, Card, Divider, Paper, Popover, Typography, useTheme } from '@mui/material';
+import { Loader, NamespacesAutocomplete } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { alpha, Box, Divider, Paper, Popover, Typography, useTheme } from '@mui/material';
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { FluxActionButtons } from '../flux/actions';
+import { ICONS } from '../flux/icon';
 import { fluxClass, FluxKind } from '../flux/kinds';
 import {
   computeDependencyWaves,
@@ -35,22 +32,16 @@ import {
   getStatusInfo,
   makeDependencyNodes,
 } from '../flux/utils';
-import {
-  FluxLink,
-  FluxStatusLabel,
-  healthToStatus,
-  LastSyncLabel,
-  NextSyncLabel,
-  SectionEmpty,
-} from './common';
+import { FluxLink, FluxStatusLabel, healthToStatus, LastSyncLabel, NextSyncLabel } from './common';
 import { ErrorState } from './errors';
+import { EmptyState, RADII, Section, Surface } from './ui';
 
 const HEALTH_ICON: Record<string, string> = {
-  Ready: 'mdi:check-circle',
-  NotReady: 'mdi:alert-circle',
-  Suspended: 'mdi:pause-circle',
-  Reconciling: 'mdi:progress-clock',
-  Unknown: 'mdi:help-circle-outline',
+  Ready: ICONS.statusReady,
+  NotReady: ICONS.statusError,
+  Suspended: ICONS.statusSuspended,
+  Reconciling: ICONS.statusReconciling,
+  Unknown: ICONS.statusUnknown,
 };
 
 function statusColor(theme: any, status: 'success' | 'warning' | 'error' | '') {
@@ -79,7 +70,7 @@ function NextReconcileHint(props: { object?: FluxObject }) {
       : `${Math.round(seconds / 360) / 10}h`;
   return (
     <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.3 }}>
-      <Icon icon="mdi:timer-outline" width="0.85rem" />
+      <Icon icon={ICONS.timer} width="0.85rem" />
       <Typography variant="caption" color="textSecondary">
         next in {text}
       </Typography>
@@ -97,7 +88,7 @@ function NodePopoverContent(props: { item?: any; node: DependencyNode; kind: str
   const sourceRef = object ? getSourceRef(object) : undefined;
 
   return (
-    <Paper sx={{ p: 2, maxWidth: 380, minWidth: 300 }}>
+    <Paper sx={{ p: 2, maxWidth: 380, minWidth: 300, borderRadius: RADII.card }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <Icon icon={HEALTH_ICON[info?.health ?? 'Unknown']} color={color} width="1.5rem" />
         <Box sx={{ minWidth: 0 }}>
@@ -206,19 +197,12 @@ function NodeCard(props: { node: DependencyNode; item?: any; kind: string }) {
 
   return (
     <>
-      <Card
-        variant="outlined"
+      <Surface
+        interactive
+        accent={color}
+        tinted
         onClick={e => setAnchorEl(e.currentTarget)}
-        sx={{
-          px: 1.5,
-          py: 1,
-          cursor: 'pointer',
-          borderLeft: `4px solid ${color}`,
-          backgroundColor: alpha(color, 0.06),
-          minWidth: 190,
-          transition: 'box-shadow 0.15s, transform 0.15s',
-          '&:hover': { boxShadow: 3, transform: 'translateY(-1px)' },
-        }}
+        sx={{ px: 1.5, py: 1, minWidth: 190 }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
           <Icon icon={HEALTH_ICON[info?.health ?? 'Unknown']} color={color} width="1.15rem" />
@@ -239,7 +223,7 @@ function NodeCard(props: { node: DependencyNode; item?: any; kind: string }) {
             {info.reason || info.message}
           </Typography>
         )}
-      </Card>
+      </Surface>
       <Popover
         open={!!anchorEl}
         anchorEl={anchorEl}
@@ -301,48 +285,48 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
   // Prompt for a namespace before drawing a potentially huge cluster-wide graph.
   if (!hasNamespace) {
     return (
-      <SectionBox title={sectionTitle}>
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 1.5,
-            py: 4,
-            textAlign: 'center',
-          }}
-        >
-          <Icon icon="mdi:sitemap-outline" width="2.4rem" />
-          <Typography variant="subtitle1">
-            Select a namespace to see the deployment order
-          </Typography>
-          <Typography variant="body2" color="textSecondary" sx={{ maxWidth: 460 }}>
-            The dependency graph is scoped to a namespace so it stays readable. Choose one or more
-            namespaces to visualize the order in which Flux applies these resources.
-          </Typography>
-          <Box sx={{ minWidth: 280, mt: 1 }}>
-            <NamespacesAutocomplete />
-          </Box>
-        </Box>
-      </SectionBox>
+      <Section title={sectionTitle} icon={ICONS.graph}>
+        <Surface sx={{ p: 2 }}>
+          <EmptyState
+            icon={ICONS.graph}
+            title="Select a namespace to see the deployment order"
+            description="The dependency graph is scoped to a namespace so it stays readable. Choose one or more namespaces to visualize the order in which Flux applies these resources."
+            action={
+              <Box sx={{ minWidth: 280 }}>
+                <NamespacesAutocomplete />
+              </Box>
+            }
+          />
+        </Surface>
+      </Section>
     );
   }
 
   return (
-    <SectionBox title={sectionTitle}>
+    <Section title={sectionTitle} icon={ICONS.graph}>
       {error && !items?.length ? (
-        <ErrorState
-          error={error}
-          what={`${kindDef.kind}s`}
-          fluxKind={kindDef.kind}
-          group={kindDef.group}
-        />
+        <Surface sx={{ p: 2 }}>
+          <ErrorState
+            error={error}
+            what={`${kindDef.kind}s`}
+            fluxKind={kindDef.kind}
+            group={kindDef.group}
+          />
+        </Surface>
       ) : items === null ? (
-        <Loader title="Loading" />
+        <Surface sx={{ p: 2 }}>
+          <Loader title="Loading" />
+        </Surface>
       ) : filtered.length === 0 ? (
-        <SectionEmpty message={`No ${kindDef.kind}s in the selected namespace`} />
+        <Surface sx={{ p: 2 }}>
+          <EmptyState
+            icon={ICONS.kustomization}
+            title={`No ${kindDef.kind}s in the selected namespace`}
+            description="Try a different namespace, or create one with the + button in the list below."
+          />
+        </Surface>
       ) : (
-        <>
+        <Surface sx={{ p: 2 }}>
           <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
             Each column is a wave: everything in a wave reconciles in parallel, and each wave waits
             for the previous one to become ready. Click a card for details and actions.
@@ -352,7 +336,7 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
               <React.Fragment key={i}>
                 {i > 0 && (
                   <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.disabled' }}>
-                    <Icon icon="mdi:arrow-right-thin" width="1.8rem" />
+                    <Icon icon={ICONS.arrowRight} width="1.8rem" />
                   </Box>
                 )}
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 200 }}>
@@ -398,8 +382,8 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
           {cycles.length > 0 && (
             <Box sx={{ mt: 2 }}>
               <Typography variant="subtitle2" color="error" sx={{ display: 'flex', gap: 0.5 }}>
-                <Icon icon="mdi:alert" width="1.2rem" /> Dependency cycle detected — these can never
-                become ready:
+                <Icon icon={ICONS.warning} width="1.2rem" /> Dependency cycle detected — these can
+                never become ready:
               </Typography>
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
                 {cycles.map(node => (
@@ -413,8 +397,8 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
               </Box>
             </Box>
           )}
-        </>
+        </Surface>
       )}
-    </SectionBox>
+    </Section>
   );
 }

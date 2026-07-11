@@ -17,6 +17,7 @@
 import { Icon } from '@iconify/react';
 import { alpha, Box, Paper, Typography, useTheme } from '@mui/material';
 import React from 'react';
+import { ICONS } from '../flux/icon';
 
 /**
  * Turns raw API errors into something a person can act on, instead of a
@@ -90,7 +91,7 @@ export function describeError(
       detail:
         `The ${options.fluxKind} API${options.group ? ` (${options.group})` : ''} was not found. ` +
         'This usually means Flux (or this Flux component) is not installed in the cluster.',
-      icon: 'mdi:puzzle-outline',
+      icon: ICONS.notInstalled,
       severity: 'warning',
       raw,
     };
@@ -99,7 +100,7 @@ export function describeError(
     return {
       title: `Could not find ${what}`,
       detail: 'The cluster does not have this resource. It may not be installed.',
-      icon: 'mdi:puzzle-outline',
+      icon: ICONS.notInstalled,
       severity: 'warning',
       raw,
     };
@@ -108,7 +109,7 @@ export function describeError(
     return {
       title: 'Your session is not authenticated',
       detail: `The cluster rejected the request for ${what}. Try signing in to the cluster again.`,
-      icon: 'mdi:lock',
+      icon: ICONS.lock,
       severity: 'error',
       raw,
     };
@@ -119,7 +120,7 @@ export function describeError(
       detail:
         'Your Kubernetes user or service account lacks RBAC permission for this resource. ' +
         'Ask a cluster administrator for read access to the Flux resources.',
-      icon: 'mdi:lock',
+      icon: ICONS.lock,
       severity: 'error',
       raw,
     };
@@ -130,7 +131,7 @@ export function describeError(
       detail:
         'The cluster (or the Headlamp backend) did not respond. Check your connection and that ' +
         'the cluster is reachable, then try again.',
-      icon: 'mdi:cloud-off-outline',
+      icon: ICONS.unreachable,
       severity: 'error',
       raw,
     };
@@ -138,7 +139,7 @@ export function describeError(
   return {
     title: `Something went wrong while loading ${what}`,
     detail: 'The cluster returned an unexpected error. The technical details are below.',
-    icon: 'mdi:alert-circle',
+    icon: ICONS.statusError,
     severity: 'error',
     raw,
   };

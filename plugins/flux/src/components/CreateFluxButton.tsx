@@ -16,6 +16,7 @@
 
 import { ActionButton, EditorDialog } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import React from 'react';
+import { ICONS } from '../flux/icon';
 import { FluxKind } from '../flux/kinds';
 
 /**
@@ -184,7 +185,7 @@ export function CreateFluxButton(props: { kindDef: FluxKind }) {
       <ActionButton
         description={`Create ${kindDef.kind}`}
         longDescription={`Onboard a new ${kindDef.kind} by applying a manifest`}
-        icon="mdi:plus-circle"
+        icon={ICONS.create}
         onClick={() => setOpen(true)}
       />
       {open && (
