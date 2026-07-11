@@ -14,11 +14,64 @@
  * limitations under the License.
  */
 
+import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 import svgr from 'vite-plugin-svgr';
+
+const resolvePath = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+
+// Aliases that let statically bundled plugins (src/staticPlugins.ts) keep
+// their regular '@kinvolk/headlamp-plugin/lib' imports while resolving to the
+// in-tree implementations. Order matters: more specific entries first.
+const staticPluginAliases = [
+  {
+    find: '@kinvolk/headlamp-plugin/lib/CommonComponents',
+    replacement: resolvePath('./src/components/common'),
+  },
+  {
+    find: '@kinvolk/headlamp-plugin/lib/K8s/crd',
+    replacement: resolvePath('./src/lib/k8s/crd.ts'),
+  },
+  {
+    find: '@kinvolk/headlamp-plugin/lib/K8s',
+    replacement: resolvePath('./src/lib/k8s'),
+  },
+  {
+    find: '@kinvolk/headlamp-plugin/lib/ApiProxy',
+    replacement: resolvePath('./src/lib/k8s/apiProxy.ts'),
+  },
+  {
+    find: '@kinvolk/headlamp-plugin/lib/Utils',
+    replacement: resolvePath('./src/lib/util.ts'),
+  },
+  {
+    find: '@kinvolk/headlamp-plugin/lib/Router',
+    replacement: resolvePath('./src/lib/router'),
+  },
+  {
+    find: '@kinvolk/headlamp-plugin/lib',
+    replacement: resolvePath('./src/plugin/staticPluginLib.ts'),
+  },
+];
+
+// Bundled plugin sources live outside frontend/ and may have their own
+// node_modules; dedupe shared libraries so only the frontend's copy is used.
+const staticPluginDedupe = [
+  'react',
+  'react-dom',
+  'react-router-dom',
+  'react-redux',
+  '@mui/material',
+  '@mui/lab',
+  '@emotion/react',
+  '@emotion/styled',
+  '@iconify/react',
+  'notistack',
+  'lodash',
+];
 
 // Use environment variable for backend port, defaulting to 4466
 const backendPort = process.env.HEADLAMP_PORT || '4466';
@@ -32,8 +85,16 @@ export default defineConfig({
   },
   envPrefix: 'REACT_APP_',
   base: process.env.PUBLIC_URL,
+  resolve: {
+    alias: staticPluginAliases,
+    dedupe: staticPluginDedupe,
+  },
   server: {
     port: 3000,
+    fs: {
+      // Allow serving the statically bundled plugin sources from ../plugins.
+      allow: ['..'],
+    },
     proxy: {
       '/api': {
         target: backendTarget,

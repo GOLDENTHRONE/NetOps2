@@ -42,9 +42,18 @@ RUN cd ./frontend && npm ci --only=prod
 FROM frontend-build AS frontend
 COPY ./frontend /headlamp/frontend
 
+# The Flux plugin is compiled into the frontend bundle (see
+# frontend/src/staticPlugins.ts), so its sources must be present next to
+# the frontend folder during the build.
+COPY ./plugins/flux /headlamp/plugins/flux
+
 WORKDIR /headlamp
 
 RUN cd ./frontend && npm run build
+
+# The bundled plugin sources are only needed during the frontend build;
+# remove them so the plugins-folder handling below stays untouched.
+RUN rm -rf ./plugins
 
 RUN echo "*** Built Headlamp with version: ***"
 RUN cat ./frontend/.env
@@ -70,15 +79,6 @@ COPY ./container/build-manifest.json ./container/fetch-plugins.sh /tools/
 WORKDIR /tools
 RUN mkdir -p /plugins
 RUN ./fetch-plugins.sh /plugins/
-
-# In-repo shipped plugins (e.g. the Flux dashboard), built from source so they
-# are available out of the box without any extra deployment steps.
-COPY ./plugins/flux /headlamp-plugins/flux
-RUN cd /headlamp-plugins/flux \
-    && npm ci \
-    && npm run build \
-    && mkdir -p /plugins/flux \
-    && cp dist/main.js package.json /plugins/flux/
 
 FROM image-base AS final
 

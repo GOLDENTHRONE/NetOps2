@@ -14,10 +14,37 @@
  * limitations under the License.
  */
 
+import path from 'node:path';
 import { defineConfig } from '@rsbuild/core';
 import { pluginNodePolyfill } from '@rsbuild/plugin-node-polyfill';
 import { pluginReact } from '@rsbuild/plugin-react';
 import { pluginSvgr } from '@rsbuild/plugin-svgr';
+
+// Aliases that let statically bundled plugins (src/staticPlugins.ts) keep
+// their regular '@kinvolk/headlamp-plugin/lib' imports while resolving to the
+// in-tree implementations. The '$' suffix marks exact matches.
+const staticPluginAliases = {
+  '@kinvolk/headlamp-plugin/lib/CommonComponents': path.resolve(__dirname, 'src/components/common'),
+  '@kinvolk/headlamp-plugin/lib/K8s/crd': path.resolve(__dirname, 'src/lib/k8s/crd.ts'),
+  '@kinvolk/headlamp-plugin/lib/K8s': path.resolve(__dirname, 'src/lib/k8s'),
+  '@kinvolk/headlamp-plugin/lib/ApiProxy': path.resolve(__dirname, 'src/lib/k8s/apiProxy.ts'),
+  '@kinvolk/headlamp-plugin/lib/Utils': path.resolve(__dirname, 'src/lib/util.ts'),
+  '@kinvolk/headlamp-plugin/lib/Router': path.resolve(__dirname, 'src/lib/router'),
+  '@kinvolk/headlamp-plugin/lib$': path.resolve(__dirname, 'src/plugin/staticPluginLib.ts'),
+};
+
+// Bundled plugin sources live outside frontend/ and may have their own
+// node_modules; alias the shared libraries they use to the frontend's copy
+// so only one instance of each is bundled.
+const staticPluginSharedLibs = {
+  'react/jsx-runtime$': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+  react$: path.resolve(__dirname, 'node_modules/react'),
+  'react-dom$': path.resolve(__dirname, 'node_modules/react-dom'),
+  'react-router-dom$': path.resolve(__dirname, 'node_modules/react-router-dom'),
+  '@mui/material': path.resolve(__dirname, 'node_modules/@mui/material'),
+  '@iconify/react$': path.resolve(__dirname, 'node_modules/@iconify/react'),
+  notistack$: path.resolve(__dirname, 'node_modules/notistack'),
+};
 
 // Dynamically inject REACT_APP_ environment variables
 const reactAppEnvVars = Object.entries(process.env)
@@ -35,6 +62,12 @@ const backendPort = process.env.HEADLAMP_PORT || '4466';
 const backendTarget = `http://localhost:${backendPort}`;
 
 export default defineConfig({
+  resolve: {
+    alias: { ...staticPluginAliases, ...staticPluginSharedLibs },
+    // The tsconfig "paths" map some packages to their @types/* entries for
+    // type checking; use the aliases above (real packages) for bundling.
+    aliasStrategy: 'prefer-alias',
+  },
   source: {
     entry: {
       index: './src/index.tsx',
