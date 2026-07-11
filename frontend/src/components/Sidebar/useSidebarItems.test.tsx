@@ -150,6 +150,55 @@ describe('useSidebarItems', () => {
     ).toBeDefined();
   });
 
+  it('should place entries with insertBefore above the given sibling', () => {
+    const customEntries: { [name: string]: SidebarEntry } = {
+      flux: {
+        name: 'flux',
+        label: 'Flux',
+        url: '/flux',
+        insertBefore: 'workloads',
+      },
+      child: {
+        name: 'child',
+        label: 'Child',
+        url: '/child',
+        parent: 'workloads',
+        insertBefore: 'Pods',
+      },
+    };
+
+    const store = mockStore(customEntries, []);
+    const { result } = renderHook(() => useSidebarItems(), {
+      wrapper: wrapper(store),
+    });
+
+    const names = result.current.map(it => it.name);
+    expect(names.indexOf('flux')).toBeGreaterThan(-1);
+    expect(names.indexOf('flux')).toBe(names.indexOf('workloads') - 1);
+
+    const workloadsSubList = result.current.find(it => it.name === 'workloads')?.subList ?? [];
+    expect(workloadsSubList[0]?.name).toBe('child');
+  });
+
+  it('should append entries whose insertBefore sibling does not exist', () => {
+    const customEntries: { [name: string]: SidebarEntry } = {
+      custom1: {
+        name: 'custom1',
+        label: 'Custom 1',
+        url: '/custom1',
+        insertBefore: 'does-not-exist',
+      },
+    };
+
+    const store = mockStore(customEntries, []);
+    const { result } = renderHook(() => useSidebarItems(), {
+      wrapper: wrapper(store),
+    });
+
+    const names = result.current.map(it => it.name);
+    expect(names[names.length - 1]).toBe('custom1');
+  });
+
   it('should include subheader entry fields from customSidebarEntries', () => {
     const sx = { fontSize: '1.1rem', textTransform: 'none' };
     const customEntries: { [name: string]: SidebarEntry } = {

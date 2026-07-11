@@ -469,6 +469,20 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
     forEachEntry(sidebarsList, item => entryLookup.set(item.name, item));
     forEachEntry(customEntries, item => entryLookup.set(item.name, item));
 
+    // Inserts an entry into the given list, honoring the entry's optional
+    // insertBefore property (name of the sibling to insert before). Falls
+    // back to appending when no such sibling exists.
+    const placeEntry = (list: SidebarItemProps[], item: SidebarItemProps) => {
+      const beforeIndex = item.insertBefore
+        ? list.findIndex(({ name }) => name === item.insertBefore)
+        : -1;
+      if (beforeIndex !== -1) {
+        list.splice(beforeIndex, 0, item);
+      } else {
+        list.push(item);
+      }
+    };
+
     // Place all custom entries in the tree
     customEntries.forEach(item => {
       if (item.parent) {
@@ -477,7 +491,7 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
           return;
         }
         parentEntry.subList ??= [];
-        parentEntry?.subList?.push(item);
+        placeEntry(parentEntry.subList, item);
       } else {
         const sidebar = item.sidebar ?? DefaultSidebars.IN_CLUSTER;
         let sidebarEntry = entryLookup.get(sidebar);
@@ -489,7 +503,8 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
           entryLookup.set(sidebar, sidebarEntry);
         }
 
-        sidebarEntry.subList?.push(item);
+        sidebarEntry.subList ??= [];
+        placeEntry(sidebarEntry.subList, item);
       }
     });
 

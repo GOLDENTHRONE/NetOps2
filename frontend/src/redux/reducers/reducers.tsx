@@ -16,6 +16,7 @@
 
 import { combineReducers } from 'redux';
 import { activityReducer } from '../../components/activity/activitySlice';
+import homeTabsReducer from '../../components/App/Home/homeTabsSlice';
 import notificationsReducer from '../../components/App/Notifications/notificationsSlice';
 import themeReducer from '../../components/App/themeSlice';
 import graphViewReducer from '../../components/resourceMap/graphViewSlice';
@@ -60,6 +61,7 @@ const reducers = combineReducers({
   activity: activityReducer,
   projects: projectsReducer,
   shortcuts: shortcutsReducer,
+  homeTabs: homeTabsReducer,
 });
 
 export type RootState = ReturnType<typeof reducers>;

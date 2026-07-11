@@ -28,6 +28,7 @@ import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { useEventWarningList } from '../../../lib/k8s/event';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
+import { useTypedSelector } from '../../../redux/hooks';
 // The Projects tab is currently disabled in favor of the Applications tab.
 // import ProjectList from '../../project/ProjectList';
 import ApplicationList from '../../applications/ApplicationList';
@@ -37,6 +38,7 @@ import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterTable from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
 import { getCustomClusterNames } from './customClusterNames';
+import { HomeTabsState } from './homeTabsSlice';
 import RecentClusters from './RecentClusters';
 
 export default function Home() {
@@ -117,15 +119,21 @@ function useWarningSettingsPerCluster(clusterNames: string[]) {
   return warningLabels;
 }
 
+const NO_PLUGIN_TABS: HomeTabsState['tabs'] = {};
+
 function HomeComponent(props: HomeComponentProps) {
-  const [view, setView] = useLocalStorageState<'clusters' | 'applications'>(
-    'home-tab-view',
-    'clusters'
-  );
+  const [view, setView] = useLocalStorageState<string>('home-tab-view', 'clusters');
+  // Optional chaining keeps stories/tests with partial mock stores working.
+  const pluginTabs = useTypedSelector(state => state.homeTabs?.tabs) ?? NO_PLUGIN_TABS;
   // Users may still have the removed 'projects' tab (or any other stale
   // value) persisted from an earlier version; fall back to 'clusters' so the
   // Tabs component always gets a valid value.
-  const effectiveView = view === 'applications' ? 'applications' : 'clusters';
+  const effectiveView =
+    view === 'applications' || (!!view && !!pluginTabs[view]) ? view : 'clusters';
+  const selectedPluginTab =
+    effectiveView === 'clusters' || effectiveView === 'applications'
+      ? undefined
+      : pluginTabs[effectiveView];
   const { clusters } = props;
   const [customNameClusters, setCustomNameClusters] = React.useState(
     getCustomClusterNames(clusters)
@@ -247,12 +255,30 @@ function HomeComponent(props: HomeComponentProps) {
                 fontSize: '1.25rem',
               }}
             />
+            {Object.values(pluginTabs).map(tab => (
+              <Tab
+                key={tab.id}
+                value={tab.id}
+                label={
+                  <>
+                    {tab.icon && <Icon icon={tab.icon} />}
+                    <Typography>{tab.label}</Typography>
+                  </>
+                }
+                sx={{
+                  flexDirection: 'row',
+                  gap: 1,
+                  fontSize: '1.25rem',
+                }}
+              />
+            ))}
           </Tabs>
         </Box>
 
         {effectiveView === 'clusters' && memoizedComponent}
         {/* {view === 'projects' && <ProjectList />} */}
         {effectiveView === 'applications' && <ApplicationList />}
+        {selectedPluginTab && <selectedPluginTab.component />}
       </SectionBox>
     </PageGrid>
   );
