@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-import { ResourceListView } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { ResourceListView, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import React from 'react';
 import { FluxActionButtons } from '../flux/actions';
 import { fluxClass, FluxKind } from '../flux/kinds';
 import { getLastSyncTime, getSourceRef, getStatusInfo } from '../flux/utils';
 import { FluxLink, FluxStatusLabel, LastSyncLabel, NextSyncLabel, RevisionLabel } from './common';
 import { CreateFluxButton } from './CreateFluxButton';
+import { ErrorState } from './errors';
 
 type Column = any;
 
@@ -287,13 +288,36 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
     'age',
   ];
 
+  const sectionTitle = title ?? `${kindDef.kind}s`;
+  const [items, error] = (fluxClass(kindDef) as any).useList();
+
+  // When the list failed and there is nothing to show, explain the real
+  // reason (Flux not installed, no permission, cluster unreachable, ...)
+  // instead of an empty table with a cryptic error.
+  if (error && !items?.length) {
+    return (
+      <SectionBox title={sectionTitle}>
+        <ErrorState
+          error={error}
+          what={sectionTitle.toLowerCase()}
+          fluxKind={kindDef.kind}
+          group={kindDef.group}
+        />
+      </SectionBox>
+    );
+  }
+
   return (
     <ResourceListView
-      title={title ?? `${kindDef.kind}s`}
-      resourceClass={fluxClass(kindDef) as any}
+      title={sectionTitle}
+      data={items}
+      errors={error ? [error] : null}
       columns={columns}
       headerProps={{
         titleSideActions: [<CreateFluxButton key="create" kindDef={kindDef} />],
+        // We pass data directly (not a resourceClass), so re-enable the
+        // namespace filter that ResourceListView would otherwise hide.
+        noNamespaceFilter: false,
       }}
       id={`headlamp-flux-${kindDef.plural}`}
     />

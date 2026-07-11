@@ -22,6 +22,7 @@ import React from 'react';
 import { useHistory } from 'react-router-dom';
 import { FLUX_KINDS, fluxClass } from '../flux/kinds';
 import { getStatusInfo } from '../flux/utils';
+import { InlineError, pickMostRelevantError } from './errors';
 
 const { ResourceClasses, useClustersConf } = K8s;
 
@@ -38,6 +39,9 @@ function useClusterFluxStatus(cluster: string) {
     (items ?? []).map((i: any) => i.jsonData)
   );
   const anyLoaded = results.some(([items]: [any[] | null]) => items !== null);
+  const errors = results.map(([, err]: [any, any]) => err);
+  const allFailed =
+    !!deploymentsError && results.every(([items, err]: [any, any]) => err && items === null);
 
   const controllersTotal = deployments?.length ?? 0;
   const controllersReady = (deployments ?? []).filter((d: any) => {
@@ -51,6 +55,9 @@ function useClusterFluxStatus(cluster: string) {
   return {
     loading: deployments === null && !anyLoaded && !deploymentsError,
     installed: controllersTotal > 0 || objects.length > 0,
+    // When every request failed, report the reason instead of pretending
+    // Flux is simply "not detected".
+    error: allFailed ? pickMostRelevantError([deploymentsError, ...errors]) : undefined,
     controllersReady,
     controllersTotal,
     resources: objects.length,
@@ -76,6 +83,8 @@ function ClusterFluxCard(props: { cluster: string }) {
             <Typography variant="body2" color="textSecondary">
               Checking Flux…
             </Typography>
+          ) : status.error ? (
+            <InlineError error={status.error} what="Flux resources" fluxKind="Flux" />
           ) : !status.installed ? (
             <StatusLabel status="">Flux not detected</StatusLabel>
           ) : (
@@ -114,11 +123,26 @@ function ClusterFluxCard(props: { cluster: string }) {
  * cluster, with links into the per-cluster Flux dashboards.
  */
 export default function FluxHomeTab() {
-  const clustersConf = useClustersConf() ?? {};
-  const clusters = Object.keys(clustersConf).sort();
+  const clustersConf = useClustersConf();
+  const clusters = Object.keys(clustersConf ?? {}).sort();
 
-  if (clusters.length === 0) {
+  // null means the cluster config is still loading; an empty object means
+  // there really are no clusters — don't show an eternal spinner for that.
+  if (clustersConf === null) {
     return <Loader title="Loading clusters" />;
+  }
+  if (clusters.length === 0) {
+    return (
+      <Box sx={{ textAlign: 'center', py: 6 }}>
+        <Icon icon="mdi:hexagon-multiple-outline" width="2.2rem" />
+        <Typography variant="h6" sx={{ mt: 1 }}>
+          No clusters yet
+        </Typography>
+        <Typography variant="body2" color="textSecondary">
+          Add a cluster to see its Flux status here.
+        </Typography>
+      </Box>
+    );
   }
 
   return (

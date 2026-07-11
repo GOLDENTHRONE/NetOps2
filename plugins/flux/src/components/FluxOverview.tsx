@@ -29,6 +29,7 @@ import { useHistory } from 'react-router-dom';
 import { FLUX_KINDS, FluxCategory, fluxClass, FluxKind } from '../flux/kinds';
 import { getStatusInfo } from '../flux/utils';
 import { ReadySummary, SectionEmpty } from './common';
+import { ErrorState, InlineError, pickMostRelevantError } from './errors';
 
 const { ResourceClasses } = K8s;
 const { createRouteURL } = Router;
@@ -93,9 +94,13 @@ function CategoryCard(props: { category: (typeof CATEGORY_PAGES)[number] }) {
             <Typography variant="h6">{category.label}</Typography>
           </Box>
           {allFailed ? (
-            <Typography variant="body2" color="textSecondary">
-              CRDs not installed
-            </Typography>
+            // Show the actual reason (not installed, forbidden, unreachable,
+            // ...) instead of assuming missing CRDs for every failure.
+            <InlineError
+              error={pickMostRelevantError(results.map(r => r.error))}
+              what={category.label.toLowerCase()}
+              fluxKind={category.label}
+            />
           ) : loaded.length === 0 ? (
             <Loader title={`Loading ${category.label}`} size={20} />
           ) : (
@@ -134,7 +139,7 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
   return (
     <SectionBox title="Flux Controllers">
       {error ? (
-        <SectionEmpty message={`Could not list Flux controllers: ${error}`} />
+        <ErrorState error={error} what="the Flux controller deployments" />
       ) : deployments === null ? (
         <Loader title="Loading Flux controllers" />
       ) : rows.length === 0 ? (

@@ -15,8 +15,6 @@
  */
 
 import './index.css';
-// Register the plugins that are built into Headlamp (e.g. Flux).
-import './staticPlugins';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
@@ -24,6 +22,15 @@ import App from './App';
 const container = document.getElementById('root');
 const root = createRoot(container!);
 root.render(<App />);
+
+// Register the plugins that are built into Headlamp (e.g. Flux) once the app
+// module graph is fully initialized. This must be a dynamic import: a static
+// one would change the evaluation order of the lib/k8s modules and crash the
+// whole app with "Cannot access 'KubeObject' before initialization". The
+// catch also keeps a broken built-in plugin from taking the app down.
+import('./staticPlugins').catch(err => {
+  console.error('Failed to load built-in plugins:', err);
+});
 
 /**
  * We used to have axe a11y check here

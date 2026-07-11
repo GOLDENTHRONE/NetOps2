@@ -25,6 +25,7 @@ import { Box, IconButton, Link as MuiLink, Typography } from '@mui/material';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { SectionEmpty } from './common';
+import { ErrorState, InlineError, pickMostRelevantError } from './errors';
 
 const { ResourceClasses } = K8s;
 
@@ -95,7 +96,7 @@ function entryLink(entry: ManagedEntry): React.ReactNode {
 function WorkloadPods(props: { entry: ManagedEntry }) {
   const { entry } = props;
   const cls = (ResourceClasses as Record<string, any>)[entry.kind];
-  const [workload] = cls.useGet(entry.name, entry.namespace);
+  const [workload, workloadError] = cls.useGet(entry.name, entry.namespace);
   const selector = workload?.jsonData?.spec?.selector;
   const matchLabels: Record<string, string> | undefined =
     selector?.matchLabels ?? (entry.kind === 'CronJob' ? undefined : selector);
@@ -107,17 +108,23 @@ function WorkloadPods(props: { entry: ManagedEntry }) {
 
   // The hook must run unconditionally; without a selector we use one that
   // matches nothing.
-  const [pods] = ResourceClasses.Pod.useList({
+  const [pods, podsError] = ResourceClasses.Pod.useList({
     namespace: entry.namespace,
     labelSelector: labelSelector ?? 'headlamp.dev/flux-no-match',
   });
 
+  if (workloadError) {
+    return <InlineError error={workloadError} what={`the ${entry.kind} ${entry.name}`} />;
+  }
   if (!labelSelector) {
     return (
       <Typography variant="caption" color="textSecondary">
         {workload === null ? 'Loading…' : 'No pod selector found'}
       </Typography>
     );
+  }
+  if (podsError) {
+    return <InlineError error={podsError} what="the pods of this workload" />;
   }
   if (pods === null) {
     return (
@@ -265,16 +272,20 @@ export function HelmReleaseInventorySection(props: { item: any }) {
   const labelSelector = `helm.toolkit.fluxcd.io/name=${name},helm.toolkit.fluxcd.io/namespace=${namespace}`;
 
   const entries: ManagedEntry[] = [];
+  const errors: any[] = [];
   let loading = false;
   for (const kind of HELM_SCAN_KINDS) {
     const cls = (ResourceClasses as Record<string, any>)[kind];
     // Constant list of kinds, so the hook order is stable.
-    const [objs] = cls.useList({
+    const [objs, err] = cls.useList({
       labelSelector,
       ...(targetNamespace ? { namespace: targetNamespace } : {}),
     });
-    if (objs === null) {
+    if (objs === null && !err) {
       loading = true;
+    }
+    if (err) {
+      errors.push(err);
     }
     for (const obj of objs ?? []) {
       entries.push({
@@ -286,12 +297,27 @@ export function HelmReleaseInventorySection(props: { item: any }) {
     }
   }
 
+  const allFailed = errors.length === HELM_SCAN_KINDS.length;
+
   return (
     <SectionBox title={`Managed objects (${entries.length})`}>
-      {entries.length === 0 && loading ? (
+      {allFailed ? (
+        <ErrorState
+          error={pickMostRelevantError(errors)}
+          what="the objects created by this Helm release"
+        />
+      ) : entries.length === 0 && loading ? (
         <SectionEmpty message="Looking for objects labeled by the helm-controller…" />
       ) : (
-        <ManagedResourcesTree entries={entries} />
+        <>
+          <ManagedResourcesTree entries={entries} />
+          {errors.length > 0 && (
+            <InlineError
+              error={pickMostRelevantError(errors)}
+              what={`some resource kinds (${errors.length} of ${HELM_SCAN_KINDS.length} checks failed)`}
+            />
+          )}
+        </>
       )}
     </SectionBox>
   );
