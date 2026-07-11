@@ -28,13 +28,74 @@ import { Link as RouterLink } from 'react-router-dom';
 import {
   FluxHealth,
   FluxObject,
+  getCommitInfo,
   getCommitWebUrl,
   getNextSyncTime,
+  getSourceWebUrl,
   getStatusInfo,
   parseRevision,
 } from '../flux/utils';
 
 const { createRouteURL } = Router;
+
+/** Opens a URL in a new tab, clickable link with an external-link affordance. */
+export function ExternalLink(props: { url?: string; children?: React.ReactNode }) {
+  const { url, children } = props;
+  if (!url) {
+    return <>{children ?? '-'}</>;
+  }
+  return (
+    <MuiLink
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, wordBreak: 'break-all' }}
+      onClick={e => e.stopPropagation()}
+    >
+      {children ?? url}
+      <Icon icon="mdi:open-in-new" width="0.9rem" style={{ flexShrink: 0 }} />
+    </MuiLink>
+  );
+}
+
+/** A source's URL rendered as a clickable link to the actual repository/registry. */
+export function SourceUrlLink(props: { url?: string }) {
+  const { url } = props;
+  if (!url) {
+    return <>-</>;
+  }
+  const webUrl = getSourceWebUrl(url);
+  if (!webUrl) {
+    // Not browsable (e.g. s3://). Show the raw URL as plain text.
+    return <span style={{ wordBreak: 'break-all' }}>{url}</span>;
+  }
+  return <ExternalLink url={webUrl}>{url}</ExternalLink>;
+}
+
+/** Commit author + relative time of the last change Flux pulled, when known. */
+export function CommitAuthorLabel(props: { object: FluxObject }) {
+  const info = getCommitInfo(props.object);
+  if (!info.author && !info.time) {
+    return <>-</>;
+  }
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+      {info.author && (
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4 }}>
+          <Icon icon="mdi:account" width="0.95rem" />
+          <Typography variant="body2" component="span" sx={{ whiteSpace: 'nowrap' }}>
+            {info.author}
+          </Typography>
+        </Box>
+      )}
+      {info.message && (
+        <Typography variant="caption" color="textSecondary" noWrap sx={{ maxWidth: 220 }}>
+          {info.message}
+        </Typography>
+      )}
+    </Box>
+  );
+}
 
 export function healthToStatus(health: FluxHealth): 'success' | 'warning' | 'error' | '' {
   switch (health) {

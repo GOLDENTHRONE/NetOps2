@@ -196,6 +196,10 @@ export function CreateFluxButton(props: { kindDef: FluxKind }) {
           onSave="default"
           saveLabel="Apply"
           title={`Create ${kindDef.kind}`}
+          // The editor's content area is sized as a percentage of the dialog,
+          // so the dialog itself needs a concrete height — otherwise the Monaco
+          // editor collapses to zero height and shows nothing until maximized.
+          PaperProps={{ sx: { height: '90vh' } }}
         />
       )}
     </>

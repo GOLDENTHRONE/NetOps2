@@ -16,9 +16,11 @@
 
 import {
   computeDependencyWaves,
+  getCommitInfo,
   getCommitWebUrl,
   getNextSyncTime,
   getSourceRef,
+  getSourceWebUrl,
   getStatusInfo,
   makeDependencyNodes,
   parseDuration,
@@ -154,6 +156,58 @@ describe('getCommitWebUrl', () => {
   it('returns undefined for unknown formats', () => {
     expect(getCommitWebUrl(undefined, 'abc')).toBeUndefined();
     expect(getCommitWebUrl('https://example.com/repo', undefined)).toBeUndefined();
+  });
+});
+
+describe('getSourceWebUrl', () => {
+  it('keeps https URLs and strips .git', () => {
+    expect(getSourceWebUrl('https://github.com/org/repo.git')).toBe('https://github.com/org/repo');
+  });
+
+  it('rewrites ssh URLs to https', () => {
+    expect(getSourceWebUrl('ssh://git@github.com:22/org/repo.git')).toBe(
+      'https://github.com/org/repo'
+    );
+  });
+
+  it('rewrites scp-like git URLs to https', () => {
+    expect(getSourceWebUrl('git@gitlab.com:org/repo.git')).toBe('https://gitlab.com/org/repo');
+  });
+
+  it('rewrites oci:// to https://', () => {
+    expect(getSourceWebUrl('oci://ghcr.io/org/chart')).toBe('https://ghcr.io/org/chart');
+  });
+
+  it('returns undefined for non-browsable schemes', () => {
+    expect(getSourceWebUrl('s3://my-bucket')).toBeUndefined();
+    expect(getSourceWebUrl(undefined)).toBeUndefined();
+  });
+});
+
+describe('getCommitInfo', () => {
+  it('reads author/message/time from artifact metadata', () => {
+    const info = getCommitInfo({
+      status: {
+        artifact: {
+          lastUpdateTime: '2025-01-02T03:04:05Z',
+          metadata: {
+            'org.opencontainers.image.authors': 'Jane Doe <jane@example.com>',
+            'org.opencontainers.image.title': 'Fix the thing\nmore detail',
+          },
+        },
+      },
+    });
+    expect(info.author).toBe('Jane Doe <jane@example.com>');
+    expect(info.message).toBe('Fix the thing');
+    expect(info.time).toBe('2025-01-02T03:04:05Z');
+  });
+
+  it('returns empty info when no metadata', () => {
+    expect(getCommitInfo({ status: {} })).toEqual({
+      author: undefined,
+      message: undefined,
+      time: undefined,
+    });
   });
 });
 

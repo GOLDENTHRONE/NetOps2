@@ -18,8 +18,22 @@ import { ResourceListView, SectionBox } from '@kinvolk/headlamp-plugin/lib/Commo
 import React from 'react';
 import { FluxActionButtons } from '../flux/actions';
 import { fluxClass, FluxKind } from '../flux/kinds';
-import { getLastSyncTime, getSourceRef, getStatusInfo } from '../flux/utils';
-import { FluxLink, FluxStatusLabel, LastSyncLabel, NextSyncLabel, RevisionLabel } from './common';
+import {
+  computeDependencyWaves,
+  getLastSyncTime,
+  getSourceRef,
+  getStatusInfo,
+  makeDependencyNodes,
+} from '../flux/utils';
+import {
+  CommitAuthorLabel,
+  FluxLink,
+  FluxStatusLabel,
+  LastSyncLabel,
+  NextSyncLabel,
+  RevisionLabel,
+  SourceUrlLink,
+} from './common';
 import { CreateFluxButton } from './CreateFluxButton';
 import { ErrorState } from './errors';
 
@@ -38,25 +52,23 @@ function kindColumns(kindDef: FluxKind): Column[] {
     case 'GitRepository':
     case 'OCIRepository':
       return [
-        {
-          id: 'url',
-          label: 'URL',
-          getValue: (item: any) => item.jsonData?.spec?.url,
-        },
+        urlColumn(),
         {
           id: 'ref',
           label: 'Ref',
           getValue: (item: any) => refToString(item.jsonData?.spec?.ref),
         },
         revisionColumn(),
+        {
+          id: 'lastChange',
+          label: 'Last change',
+          getValue: (item: any) => item.jsonData?.status?.artifact?.metadata?.['author'] ?? '',
+          render: (item: any) => <CommitAuthorLabel object={item.jsonData} />,
+        },
       ];
     case 'HelmRepository':
       return [
-        {
-          id: 'url',
-          label: 'URL',
-          getValue: (item: any) => item.jsonData?.spec?.url,
-        },
+        urlColumn(),
         {
           id: 'type',
           label: 'Type',
@@ -75,7 +87,7 @@ function kindColumns(kindDef: FluxKind): Column[] {
           label: 'Version',
           getValue: (item: any) => item.jsonData?.spec?.version ?? '*',
         },
-        sourceColumn(),
+        sourceColumn('From repository'),
         revisionColumn(),
       ];
     case 'Bucket':
@@ -84,6 +96,7 @@ function kindColumns(kindDef: FluxKind): Column[] {
           id: 'endpoint',
           label: 'Endpoint',
           getValue: (item: any) => item.jsonData?.spec?.endpoint,
+          render: (item: any) => <SourceUrlLink url={item.jsonData?.spec?.endpoint} />,
         },
         {
           id: 'bucket',
@@ -199,10 +212,20 @@ function revisionColumn(): Column {
   };
 }
 
-function sourceColumn(): Column {
+function urlColumn(): Column {
+  return {
+    id: 'url',
+    label: 'URL',
+    getValue: (item: any) => item.jsonData?.spec?.url ?? '',
+    render: (item: any) => <SourceUrlLink url={item.jsonData?.spec?.url} />,
+    gridTemplate: 2,
+  };
+}
+
+function sourceColumn(label = 'Source'): Column {
   return {
     id: 'source',
-    label: 'Source',
+    label,
     getValue: (item: any) => getSourceRef(item.jsonData)?.name ?? '',
     render: (item: any) => {
       const ref = getSourceRef(item.jsonData);
@@ -231,13 +254,51 @@ export interface FluxKindListSectionProps {
   kindDef: FluxKind;
   /** Optional title override; defaults to the plural kind. */
   title?: string;
+  /** Optional one-line caption rendered under the section title. */
+  description?: string;
 }
 
 /** A list view (with live status, sync info and actions) for one Flux kind. */
 export function FluxKindListSection(props: FluxKindListSectionProps) {
-  const { kindDef, title } = props;
+  const { kindDef, title, description } = props;
+
+  const sectionTitle = title ?? `${kindDef.kind}s`;
+  const [items, error] = (fluxClass(kindDef) as any).useList();
+
+  // Kustomizations and Helm releases are ordered by their deployment order
+  // (dependsOn waves) so the list reads top-to-bottom in the order Flux
+  // applies them, matching the graph above.
+  const ordersById = React.useMemo(() => {
+    if (kindDef.kind !== 'Kustomization' && kindDef.kind !== 'HelmRelease') {
+      return null;
+    }
+    const nodes = makeDependencyNodes((items ?? []).map((i: any) => i.jsonData));
+    const { waves } = computeDependencyWaves(nodes);
+    const map = new Map<string, number>();
+    waves.forEach((wave, i) => wave.forEach(n => map.set(n.id, i)));
+    return map;
+  }, [items, kindDef.kind]);
+
+  const orderOf = (item: any): number => {
+    if (!ordersById) {
+      return 0;
+    }
+    const id = `${item.jsonData?.metadata?.namespace}/${item.jsonData?.metadata?.name}`;
+    return ordersById.get(id) ?? 999;
+  };
 
   const columns: Column[] = [
+    ...(ordersById
+      ? [
+          {
+            id: 'order',
+            label: 'Wave',
+            getValue: (item: any) => orderOf(item) + 1,
+            gridTemplate: 'min-content',
+            sort: (a: any, b: any) => orderOf(a) - orderOf(b),
+          },
+        ]
+      : []),
     'name',
     'namespace',
     ...kindColumns(kindDef),
@@ -278,7 +339,7 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
     },
     {
       id: 'fluxActions',
-      label: '',
+      label: 'Actions',
       getValue: () => '',
       render: (item: any) => <FluxActionButtons item={item} />,
       sort: false,
@@ -287,9 +348,6 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
     },
     'age',
   ];
-
-  const sectionTitle = title ?? `${kindDef.kind}s`;
-  const [items, error] = (fluxClass(kindDef) as any).useList();
 
   // When the list failed and there is nothing to show, explain the real
   // reason (Flux not installed, no permission, cluster unreachable, ...)
@@ -313,7 +371,12 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
       data={items}
       errors={error ? [error] : null}
       columns={columns}
+      defaultSortingColumn={ordersById ? { id: 'order', desc: false } : undefined}
+      // enableColumnOrdering is available at runtime (compiled against the app),
+      // but not in the published plugin types; pass it untyped.
+      {...({ enableColumnOrdering: false } as any)}
       headerProps={{
+        subtitle: description,
         titleSideActions: [<CreateFluxButton key="create" kindDef={kindDef} />],
         // We pass data directly (not a resourceClass), so re-enable the
         // namespace filter that ResourceListView would otherwise hide.

@@ -36,7 +36,15 @@ import {
   isSuspended,
   parseRevision,
 } from '../flux/utils';
-import { FluxLink, FluxStatusLabel, healthToStatus, RevisionLabel, SectionEmpty } from './common';
+import {
+  CommitAuthorLabel,
+  FluxLink,
+  FluxStatusLabel,
+  healthToStatus,
+  RevisionLabel,
+  SectionEmpty,
+  SourceUrlLink,
+} from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
 import { HelmReleaseInventorySection, KustomizationInventorySection } from './Inventory';
 
@@ -87,7 +95,7 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
       const parsed = parseRevision(status.artifact?.revision);
       const commitUrl = getCommitWebUrl(spec.url, parsed.hash);
       return [
-        { name: 'URL', value: spec.url },
+        { name: 'URL', value: <SourceUrlLink url={spec.url} /> },
         {
           name: 'Reference',
           value:
@@ -105,6 +113,15 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
         },
         { name: 'Current revision', value: <RevisionLabel object={item.jsonData} /> },
         {
+          name: 'Last change',
+          value: <CommitAuthorLabel object={item.jsonData} />,
+          hide: !status.artifact?.metadata,
+        },
+        {
+          name: 'Last fetched',
+          value: status.artifact?.lastUpdateTime ? localeDate(status.artifact.lastUpdateTime) : '-',
+        },
+        {
           name: 'Commit on Git host',
           value: commitUrl ? (
             <a href={commitUrl} target="_blank" rel="noreferrer">
@@ -121,7 +138,7 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
     }
     case 'OCIRepository':
       return [
-        { name: 'URL', value: spec.url },
+        { name: 'URL', value: <SourceUrlLink url={spec.url} /> },
         {
           name: 'Reference',
           value: spec.ref?.tag ?? spec.ref?.semver ?? spec.ref?.digest ?? '-',
@@ -131,7 +148,7 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
       ];
     case 'HelmRepository':
       return [
-        { name: 'URL', value: spec.url },
+        { name: 'URL', value: <SourceUrlLink url={spec.url} /> },
         { name: 'Type', value: spec.type ?? 'default' },
       ];
     case 'HelmChart':
@@ -146,7 +163,7 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
       ];
     case 'Bucket':
       return [
-        { name: 'Endpoint', value: spec.endpoint },
+        { name: 'Endpoint', value: <SourceUrlLink url={spec.endpoint} /> },
         { name: 'Bucket', value: spec.bucketName },
         { name: 'Provider', value: spec.provider ?? 'generic' },
       ];
@@ -517,7 +534,9 @@ export default function FluxResourceDetails(props: { kindDef: FluxKind }) {
       name={name}
       namespace={namespace}
       withEvents
-      actions={(item: any) => (item ? [<FluxActionButtons key="flux-actions" item={item} />] : [])}
+      actions={(item: any) =>
+        item ? [<FluxActionButtons key="flux-actions" item={item} variant="buttons" />] : []
+      }
       extraInfo={(item: any) =>
         item ? [...commonInfoRows(item), ...kindInfoRows(kindDef, item)] : []
       }
