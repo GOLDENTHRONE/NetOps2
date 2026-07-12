@@ -42,11 +42,27 @@ import { Pill, PillTone } from './ui';
 
 const { createRouteURL } = Router;
 
+/**
+ * The one way to show "this field has no value": a quiet italic "n/a"
+ * instead of a bare dash, so empty never looks broken.
+ */
+export function NA() {
+  return (
+    <Typography
+      component="span"
+      variant="inherit"
+      sx={{ fontStyle: 'italic', color: 'text.secondary' }}
+    >
+      n/a
+    </Typography>
+  );
+}
+
 /** Opens a URL in a new tab, clickable link with an external-link affordance. */
 export function ExternalLink(props: { url?: string; children?: React.ReactNode }) {
   const { url, children } = props;
   if (!url) {
-    return <>{children ?? '-'}</>;
+    return <>{children ?? <NA />}</>;
   }
   return (
     <MuiLink
@@ -66,7 +82,7 @@ export function ExternalLink(props: { url?: string; children?: React.ReactNode }
 export function SourceUrlLink(props: { url?: string }) {
   const { url } = props;
   if (!url) {
-    return <>-</>;
+    return <NA />;
   }
   const webUrl = getSourceWebUrl(url);
   if (!webUrl) {
@@ -80,7 +96,7 @@ export function SourceUrlLink(props: { url?: string }) {
 export function CommitAuthorLabel(props: { object: FluxObject }) {
   const info = getCommitInfo(props.object);
   if (!info.author && !info.time) {
-    return <>-</>;
+    return <NA />;
   }
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column' }}>
@@ -160,7 +176,7 @@ export function RevisionLabel(props: { object: FluxObject }) {
     object?.status?.lastAppliedRevision ||
     object?.status?.lastAttemptedRevision;
   if (!revision) {
-    return <>-</>;
+    return <NA />;
   }
   const parsed = parseRevision(revision);
   const commitUrl =
@@ -184,7 +200,7 @@ export function RevisionLabel(props: { object: FluxObject }) {
 /** Relative time of the last successful sync. */
 export function LastSyncLabel(props: { date?: string }) {
   if (!props.date) {
-    return <>-</>;
+    return <NA />;
   }
   return <DateLabel date={props.date} format="mini" />;
 }
@@ -193,7 +209,7 @@ export function LastSyncLabel(props: { date?: string }) {
 export function NextSyncLabel(props: { object: FluxObject }) {
   const next = getNextSyncTime(props.object);
   if (!next) {
-    return <>-</>;
+    return <NA />;
   }
   const seconds = Math.max(0, Math.round((next.getTime() - Date.now()) / 1000));
   const inText =

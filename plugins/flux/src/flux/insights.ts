@@ -91,7 +91,7 @@ const MESSAGE_RULES: MessageRule[] = [
     test: /no matches for kind|could not find the requested resource|apiVersion.*not available/i,
     category: 'cluster',
     explanation:
-      'A manifest uses an API kind the cluster does not have — usually a missing CRD or operator.',
+      'A manifest uses an API kind the cluster does not have; usually a missing CRD or operator.',
     action: 'Install the component that provides this CRD, or order it before this with dependsOn.',
   },
   {
@@ -142,13 +142,13 @@ const MESSAGE_RULES: MessageRule[] = [
     test: /kustomization\.yaml|kustomize build|accumulat/i,
     category: 'build',
     explanation: 'The kustomize build of the manifests failed before anything was applied.',
-    action: 'Fix the kustomization at the configured path in Git — nothing changed in the cluster.',
+    action: 'Fix the kustomization at the configured path in Git; nothing changed in the cluster.',
   },
   {
     test: /values|template|parse error|yaml|json/i,
     category: 'build',
     explanation: 'The manifests or chart values could not be rendered.',
-    action: 'Fix the invalid configuration in Git — nothing was applied to the cluster.',
+    action: 'Fix the invalid configuration in Git; nothing was applied to the cluster.',
   },
 ];
 
@@ -193,7 +193,7 @@ export function diagnose(obj: FluxObject): Diagnosis {
   if (info.health === 'Suspended') {
     return {
       category: 'suspended',
-      headline: 'Paused — changes are not being applied',
+      headline: 'Paused: changes are not being applied',
       explanation: 'Reconciliation is suspended, so updates in the source are ignored.',
       action: 'Resume the resource when you want Flux to apply changes again.',
     };
@@ -300,7 +300,7 @@ export function getFailureCounts(obj: FluxObject): FailureCounts {
 
 /**
  * The namespaces a Kustomization or HelmRelease actually deploys into,
- * derived from the live inventory and the spec — the "where did my
+ * derived from the live inventory and the spec; the "where did my
  * deployment land" answer, independent of where the Flux object lives.
  */
 export function getTargetNamespaces(obj: FluxObject): string[] {
@@ -324,7 +324,7 @@ export function getTargetNamespaces(obj: FluxObject): string[] {
   return Array.from(namespaces).sort((a, b) => a.localeCompare(b));
 }
 
-/** All ids (transitively) that `id` depends on — its upstream chain. */
+/** All ids (transitively) that `id` depends on; its upstream chain. */
 export function collectUpstream(nodes: DependencyNode[], id: string): Set<string> {
   const byId = new Map(nodes.map(n => [n.id, n]));
   const seen = new Set<string>();
@@ -340,7 +340,7 @@ export function collectUpstream(nodes: DependencyNode[], id: string): Set<string
   return seen;
 }
 
-/** All ids that (transitively) depend on `id` — its downstream consumers. */
+/** All ids that (transitively) depend on `id`; its downstream consumers. */
 export function collectDownstream(nodes: DependencyNode[], id: string): Set<string> {
   const dependents = new Map<string, string[]>();
   for (const node of nodes) {
@@ -396,23 +396,23 @@ export function isBlockedOnDependency(obj: FluxObject): boolean {
 export const CONDITION_MEANINGS: Record<string, string> = {
   Ready:
     'The overall verdict: True means the last reconciliation fully succeeded and the desired ' +
-    'state is applied. False means it failed — the message says why. Unknown means it is ' +
+    'state is applied. False means it failed; the message says why. Unknown means it is ' +
     'still in progress.',
   Reconciling:
     'True while the controller is actively working on this resource (fetching, building or ' +
     'applying changes). It clears once the work finishes.',
   Stalled:
-    'True when the controller gave up retrying — the failure needs a human (or a change in ' +
+    'True when the controller gave up retrying; the failure needs a human (or a change in ' +
     'Git) to resolve. Nothing more will happen until then.',
   Healthy:
-    'True when all the health checks on the deployed workloads pass — the applied objects ' +
+    'True when all the health checks on the deployed workloads pass; the applied objects ' +
     'are not just created, they are actually running.',
   ArtifactInStorage:
     'True when the source controller has downloaded this source and stored a snapshot ' +
     '(artifact) that Kustomizations and HelmReleases can consume.',
   FetchFailed:
     'True when the latest attempt to fetch from the remote (Git, OCI, Helm repo or bucket) ' +
-    'failed — usually credentials, network or a missing ref.',
+    'failed; usually credentials, network or a missing ref.',
   SourceVerified:
     'True when the cryptographic verification of the source (e.g. commit signature or ' +
     'artifact signature) succeeded.',
@@ -468,9 +468,250 @@ const LINKABLE_KINDS = new Set([
   'Bucket',
 ]);
 
+/** Labels Flux's kustomize-controller stamps on everything it applies. */
+export const KUSTOMIZE_NAME_LABEL = 'kustomize.toolkit.fluxcd.io/name';
+export const KUSTOMIZE_NAMESPACE_LABEL = 'kustomize.toolkit.fluxcd.io/namespace';
+
+/** A workload name prefix used to attribute pods to an application. */
+export interface WorkloadPrefix {
+  namespace: string;
+  prefix: string;
+}
+
+/**
+ * One "application" as an operator thinks of it: a root Kustomization or
+ * HelmRelease plus everything it (transitively) defines, regardless of how
+ * many Flux objects or namespaces are involved under the hood.
+ */
+export interface Application {
+  /** "Kind/namespace/name" of the root object. */
+  id: string;
+  name: string;
+  namespace: string;
+  rootKind: string;
+  /** All Flux appliers in this application, including the root. */
+  members: { kind: string; object: FluxObject }[];
+  /** The namespaces the application actually deploys into. */
+  targetNamespaces: string[];
+  /** Workload name prefixes for matching this application's pods. */
+  workloadPrefixes: WorkloadPrefix[];
+}
+
+function definedById(obj: FluxObject): string | undefined {
+  const labels = (obj?.metadata as any)?.labels ?? {};
+  const name = labels[KUSTOMIZE_NAME_LABEL];
+  if (!name) {
+    return undefined;
+  }
+  const namespace = labels[KUSTOMIZE_NAMESPACE_LABEL] ?? obj?.metadata?.namespace ?? '';
+  return `${namespace}/${name}`;
+}
+
+const APP_WORKLOAD_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
+
+/**
+ * Groups Kustomizations and HelmReleases into applications: each root (an
+ * applier not created by another Kustomization) collects everything whose
+ * defined-by chain leads back to it.
+ */
+export function buildApplications(objects: { kind: string; object: FluxObject }[]): Application[] {
+  const appliers = objects.filter(o => o.kind === 'Kustomization' || o.kind === 'HelmRelease');
+  const kustomizationsById = new Map<string, FluxObject>();
+  for (const { kind, object } of appliers) {
+    if (kind === 'Kustomization') {
+      kustomizationsById.set(
+        `${object.metadata?.namespace ?? ''}/${object.metadata?.name ?? ''}`,
+        object
+      );
+    }
+  }
+
+  /** Follows defined-by labels up to the topmost Kustomization we know of. */
+  const rootOf = (obj: FluxObject): FluxObject => {
+    let current = obj;
+    const seen = new Set<string>();
+    for (;;) {
+      const id = `${current.metadata?.namespace ?? ''}/${current.metadata?.name ?? ''}`;
+      if (seen.has(id)) {
+        return current;
+      }
+      seen.add(id);
+      const parentId = definedById(current);
+      if (!parentId || parentId === id) {
+        return current;
+      }
+      const parent = kustomizationsById.get(parentId);
+      if (!parent) {
+        return current;
+      }
+      current = parent;
+    }
+  };
+
+  const apps = new Map<string, Application>();
+  for (const { kind, object } of appliers) {
+    const root = rootOf(object);
+    const rootKind = root === object ? kind : 'Kustomization';
+    const rootId = `${rootKind}/${root.metadata?.namespace ?? ''}/${root.metadata?.name ?? ''}`;
+    let app = apps.get(rootId);
+    if (!app) {
+      app = {
+        id: rootId,
+        name: root.metadata?.name ?? '',
+        namespace: root.metadata?.namespace ?? '',
+        rootKind,
+        members: [],
+        targetNamespaces: [],
+        workloadPrefixes: [],
+      };
+      apps.set(rootId, app);
+    }
+    app.members.push({ kind, object });
+  }
+
+  for (const app of apps.values()) {
+    const namespaces = new Set<string>();
+    const prefixes: WorkloadPrefix[] = [];
+    for (const { kind, object } of app.members) {
+      for (const namespace of getTargetNamespaces(object)) {
+        namespaces.add(namespace);
+      }
+      const entries = object?.status?.inventory?.entries;
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          const [namespace, name, , entryKind] = String(entry?.id ?? '').split('_');
+          if (namespace && name && APP_WORKLOAD_KINDS.has(entryKind)) {
+            prefixes.push({ namespace, prefix: name });
+          }
+        }
+      }
+      if (kind === 'HelmRelease') {
+        const releaseName = object?.spec?.releaseName ?? object?.metadata?.name;
+        const namespace = object?.spec?.targetNamespace ?? object?.metadata?.namespace;
+        if (releaseName && namespace) {
+          prefixes.push({ namespace, prefix: releaseName });
+        }
+      }
+    }
+    app.targetNamespaces = Array.from(namespaces).sort((a, b) => a.localeCompare(b));
+    app.workloadPrefixes = prefixes;
+  }
+
+  return Array.from(apps.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** A pod problem worth an operator's attention. */
+export interface PodIssue {
+  name: string;
+  namespace: string;
+  reason: string;
+}
+
+export interface PodsSummary {
+  total: number;
+  ready: number;
+  issues: PodIssue[];
+}
+
+function podMatchesApp(pod: FluxObject, app: Application): boolean {
+  const namespace = pod?.metadata?.namespace ?? '';
+  const name = pod?.metadata?.name ?? '';
+  if (!app.targetNamespaces.includes(namespace)) {
+    return false;
+  }
+  const prefixesInNamespace = app.workloadPrefixes.filter(p => p.namespace === namespace);
+  if (prefixesInNamespace.length === 0) {
+    // No workload names known for this namespace: attribute by namespace.
+    return true;
+  }
+  return prefixesInNamespace.some(p => name === p.prefix || name.startsWith(`${p.prefix}-`));
+}
+
+/**
+ * The live pod health of an application: how many pods are ready, and the
+ * concrete problems (CrashLoopBackOff, image pull failures, stuck Pending)
+ * an operator would otherwise dig for by hand.
+ */
+export function summarizeAppPods(app: Application, pods: FluxObject[]): PodsSummary {
+  const summary: PodsSummary = { total: 0, ready: 0, issues: [] };
+  for (const pod of pods) {
+    if (!podMatchesApp(pod, app)) {
+      continue;
+    }
+    const status: any = pod?.status ?? {};
+    const phase = status.phase;
+    if (phase === 'Succeeded') {
+      // Finished jobs are not "unready".
+      continue;
+    }
+    summary.total += 1;
+    const containerStatuses: any[] = status.containerStatuses ?? [];
+    const allReady =
+      containerStatuses.length > 0 && containerStatuses.every((c: any) => c?.ready === true);
+    if (phase === 'Running' && allReady) {
+      summary.ready += 1;
+      continue;
+    }
+    const waitingReason = containerStatuses
+      .map((c: any) => c?.state?.waiting?.reason)
+      .find(Boolean);
+    const reason = waitingReason ?? (phase === 'Failed' ? 'Failed' : phase ?? 'NotReady');
+    summary.issues.push({
+      name: pod?.metadata?.name ?? '',
+      namespace: pod?.metadata?.namespace ?? '',
+      reason,
+    });
+  }
+  return summary;
+}
+
+export type AppHealth = 'Healthy' | 'Degraded' | 'Failing' | 'Deploying' | 'Suspended';
+
+/**
+ * One verdict for the whole application, the way an operator would judge
+ * it: Flux failures beat pod problems beat in-flight work beat all-quiet.
+ */
+export function summarizeApplication(
+  app: Application,
+  podsSummary?: PodsSummary
+): { health: AppHealth; reconciling: boolean; failingMembers: number; readyMembers: number } {
+  let failingMembers = 0;
+  let readyMembers = 0;
+  let reconciling = false;
+  let suspended = 0;
+  for (const { object } of app.members) {
+    const health = getStatusInfo(object).health;
+    if (health === 'NotReady') {
+      failingMembers += 1;
+    } else if (health === 'Ready') {
+      readyMembers += 1;
+    } else if (health === 'Reconciling') {
+      reconciling = true;
+    } else if (health === 'Suspended') {
+      suspended += 1;
+    }
+  }
+  let health: AppHealth;
+  if (failingMembers > 0) {
+    health = 'Failing';
+  } else if (
+    podsSummary &&
+    (podsSummary.issues.length > 0 || podsSummary.ready < podsSummary.total)
+  ) {
+    health = 'Degraded';
+  } else if (reconciling) {
+    health = 'Deploying';
+  } else if (suspended > 0 && readyMembers === 0) {
+    health = 'Suspended';
+  } else {
+    health = 'Healthy';
+  }
+  return { health, reconciling, failingMembers, readyMembers };
+}
+
 /**
  * Finds Kubernetes objects referenced in a controller message, e.g. the
- * "Deployment/apps/web status: 'Failed'" pieces of a failed health check —
+ * "Deployment/apps/web status: 'Failed'" pieces of a failed health check -
  * so the UI can link straight to the failing workload.
  */
 export function extractMentionedResources(message?: string): MentionedResource[] {

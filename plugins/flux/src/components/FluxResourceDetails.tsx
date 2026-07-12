@@ -53,11 +53,13 @@ import {
   FluxStatusLabel,
   healthPresentation,
   K8sRefLink,
+  NA,
   RevisionLabel,
   SectionEmpty,
   SourceUrlLink,
 } from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
+import { FluxEventsSection } from './Events';
 import { GitCommitHistorySection } from './GitHistory';
 import { HelmReleaseInventorySection, KustomizationInventorySection } from './Inventory';
 import { LineageSection, NamespaceChips } from './Lineage';
@@ -75,7 +77,7 @@ function commonInfoRows(item: any) {
     },
     {
       name: 'Status message',
-      value: getStatusInfo(json).message ?? '-',
+      value: getStatusInfo(json).message ?? <NA />,
     },
     {
       name: 'Failed attempts',
@@ -97,24 +99,40 @@ function commonInfoRows(item: any) {
     },
     {
       name: 'Interval',
-      value: json?.spec?.interval ?? '-',
+      value: json?.spec?.interval ?? <NA />,
     },
     {
       name: 'Last sync',
-      value: last ? localeDate(last) : '-',
+      value: last ? localeDate(last) : <NA />,
     },
     {
       name: 'Next scheduled sync (approx.)',
-      value: next ? localeDate(next) : '-',
+      value: next ? localeDate(next) : <NA />,
     },
     {
       name: 'Last manual sync request',
-      value: json?.metadata?.annotations?.['reconcile.fluxcd.io/requestedAt']
-        ? localeDate(json.metadata.annotations['reconcile.fluxcd.io/requestedAt'])
-        : '-',
+      value: json?.metadata?.annotations?.['reconcile.fluxcd.io/requestedAt'] ? (
+        localeDate(json.metadata.annotations['reconcile.fluxcd.io/requestedAt'])
+      ) : (
+        <NA />
+      ),
       hide: !json?.metadata?.annotations?.['reconcile.fluxcd.io/requestedAt'],
     },
   ];
+}
+
+function secretLink(item: any, name?: string) {
+  if (!name) {
+    return <NA />;
+  }
+  return (
+    <K8sRefLink kind="Secret" group="" name={name} namespace={item.metadata?.namespace}>
+      <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+        <Icon icon={kindIcon('Secret')} width="0.95rem" />
+        {name}
+      </Box>
+    </K8sRefLink>
+  );
 }
 
 function kindInfoRows(kindDef: FluxKind, item: any) {
@@ -129,17 +147,19 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
         {
           name: 'Reference',
           value:
-            spec.ref?.branch !== undefined
-              ? `branch: ${spec.ref.branch}`
-              : spec.ref?.tag !== undefined
-              ? `tag: ${spec.ref.tag}`
-              : spec.ref?.semver !== undefined
-              ? `semver: ${spec.ref.semver}`
-              : spec.ref?.commit !== undefined
-              ? `commit: ${spec.ref.commit}`
-              : spec.ref?.name !== undefined
-              ? `ref: ${spec.ref.name}`
-              : '-',
+            spec.ref?.branch !== undefined ? (
+              `branch: ${spec.ref.branch}`
+            ) : spec.ref?.tag !== undefined ? (
+              `tag: ${spec.ref.tag}`
+            ) : spec.ref?.semver !== undefined ? (
+              `semver: ${spec.ref.semver}`
+            ) : spec.ref?.commit !== undefined ? (
+              `commit: ${spec.ref.commit}`
+            ) : spec.ref?.name !== undefined ? (
+              `ref: ${spec.ref.name}`
+            ) : (
+              <NA />
+            ),
         },
         { name: 'Current revision', value: <RevisionLabel object={item.jsonData} /> },
         {
@@ -149,7 +169,11 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
         },
         {
           name: 'Last fetched',
-          value: status.artifact?.lastUpdateTime ? localeDate(status.artifact.lastUpdateTime) : '-',
+          value: status.artifact?.lastUpdateTime ? (
+            localeDate(status.artifact.lastUpdateTime)
+          ) : (
+            <NA />
+          ),
         },
         {
           name: 'Commit on Git host',
@@ -158,12 +182,12 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
               {commitUrl}
             </a>
           ) : (
-            '-'
+            <NA />
           ),
           hide: !commitUrl,
         },
-        { name: 'Credentials secret', value: spec.secretRef?.name ?? '-' },
-        { name: 'Timeout', value: spec.timeout ?? '-' },
+        { name: 'Credentials secret', value: secretLink(item, spec.secretRef?.name) },
+        { name: 'Timeout', value: spec.timeout ?? <NA /> },
       ];
     }
     case 'OCIRepository':
@@ -171,7 +195,7 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
         { name: 'URL', value: <SourceUrlLink url={spec.url} /> },
         {
           name: 'Reference',
-          value: spec.ref?.tag ?? spec.ref?.semver ?? spec.ref?.digest ?? '-',
+          value: spec.ref?.tag ?? spec.ref?.semver ?? spec.ref?.digest ?? <NA />,
         },
         { name: 'Provider', value: spec.provider ?? 'generic' },
         { name: 'Current revision', value: <RevisionLabel object={item.jsonData} /> },
@@ -202,14 +226,14 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
         { name: 'Source', value: sourceLink(item) },
         { name: 'Path', value: spec.path ?? './' },
         { name: 'Prune', value: spec.prune ? 'Yes' : 'No' },
-        { name: 'Target namespace', value: spec.targetNamespace ?? '-' },
-        { name: 'Service account', value: spec.serviceAccountName ?? '-' },
+        { name: 'Target namespace', value: spec.targetNamespace ?? <NA /> },
+        { name: 'Service account', value: spec.serviceAccountName ?? <NA /> },
         { name: 'Wait for health checks', value: spec.wait ? 'Yes' : 'No' },
-        { name: 'Timeout', value: spec.timeout ?? '-' },
-        { name: 'Last applied revision', value: status.lastAppliedRevision ?? '-' },
+        { name: 'Timeout', value: spec.timeout ?? <NA /> },
+        { name: 'Last applied revision', value: status.lastAppliedRevision ?? <NA /> },
         {
           name: 'Last attempted revision',
-          value: status.lastAttemptedRevision ?? '-',
+          value: status.lastAttemptedRevision ?? <NA />,
           hide: status.lastAttemptedRevision === status.lastAppliedRevision,
         },
       ];
@@ -218,20 +242,20 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
       return [
         {
           name: 'Chart',
-          value: spec.chart?.spec?.chart ?? spec.chartRef?.name ?? '-',
+          value: spec.chart?.spec?.chart ?? spec.chartRef?.name ?? <NA />,
         },
         { name: 'Version constraint', value: spec.chart?.spec?.version ?? '*' },
         { name: 'Source', value: sourceLink(item) },
         { name: 'Release name', value: spec.releaseName ?? item.metadata?.name },
         { name: 'Target namespace', value: spec.targetNamespace ?? item.metadata?.namespace },
-        { name: 'Deployed chart version', value: latest?.chartVersion ?? '-' },
-        { name: 'Deployed app version', value: latest?.appVersion ?? '-' },
-        { name: 'Helm status', value: latest?.status ?? '-' },
+        { name: 'Deployed chart version', value: latest?.chartVersion ?? <NA /> },
+        { name: 'Deployed app version', value: latest?.appVersion ?? <NA /> },
+        { name: 'Helm status', value: latest?.status ?? <NA /> },
       ];
     }
     case 'Alert':
       return [
-        { name: 'Provider', value: spec.providerRef?.name ?? '-' },
+        { name: 'Provider', value: spec.providerRef?.name ?? <NA /> },
         { name: 'Severity', value: spec.eventSeverity ?? 'info' },
         {
           name: 'Event sources',
@@ -241,38 +265,42 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
     case 'Provider':
       return [
         { name: 'Type', value: spec.type },
-        { name: 'Channel', value: spec.channel ?? '-' },
-        { name: 'Address secret', value: spec.secretRef?.name ?? '-' },
+        { name: 'Channel', value: spec.channel ?? <NA /> },
+        { name: 'Address secret', value: secretLink(item, spec.secretRef?.name) },
       ];
     case 'Receiver':
       return [
         { name: 'Type', value: spec.type },
         { name: 'Events', value: (spec.events ?? []).join(', ') || '-' },
-        { name: 'Webhook path', value: status.webhookPath ?? '-' },
+        { name: 'Webhook path', value: status.webhookPath ?? <NA /> },
       ];
     case 'ImageRepository':
       return [
         { name: 'Image', value: spec.image },
-        { name: 'Tags scanned', value: status.lastScanResult?.tagCount ?? '-' },
+        { name: 'Tags scanned', value: status.lastScanResult?.tagCount ?? <NA /> },
         {
           name: 'Last scan',
-          value: status.lastScanResult?.scanTime ? localeDate(status.lastScanResult.scanTime) : '-',
+          value: status.lastScanResult?.scanTime ? (
+            localeDate(status.lastScanResult.scanTime)
+          ) : (
+            <NA />
+          ),
         },
       ];
     case 'ImagePolicy':
       return [
-        { name: 'Image repository', value: spec.imageRepositoryRef?.name ?? '-' },
+        { name: 'Image repository', value: spec.imageRepositoryRef?.name ?? <NA /> },
         { name: 'Policy', value: JSON.stringify(spec.policy ?? {}) },
-        { name: 'Latest image', value: status.latestImage ?? '-' },
+        { name: 'Latest image', value: status.latestImage ?? <NA /> },
       ];
     case 'ImageUpdateAutomation':
       return [
         { name: 'Source', value: sourceLink(item) },
-        { name: 'Update path', value: spec.update?.path ?? '-' },
-        { name: 'Push branch', value: spec.git?.push?.branch ?? '-' },
+        { name: 'Update path', value: spec.update?.path ?? <NA /> },
+        { name: 'Push branch', value: spec.git?.push?.branch ?? <NA /> },
         {
           name: 'Last automation run',
-          value: status.lastAutomationRunTime ? localeDate(status.lastAutomationRunTime) : '-',
+          value: status.lastAutomationRunTime ? localeDate(status.lastAutomationRunTime) : <NA />,
         },
       ];
     default:
@@ -283,7 +311,7 @@ function kindInfoRows(kindDef: FluxKind, item: any) {
 function sourceLink(item: any) {
   const ref = getSourceRef(item.jsonData);
   if (!ref) {
-    return '-';
+    return <NA />;
   }
   return (
     <FluxLink kind={ref.kind} name={ref.name} namespace={ref.namespace}>
@@ -315,7 +343,7 @@ function ObjectChip(props: { kind: string; object: any }) {
 
 /**
  * Plain-language banner explaining what is happening with this resource,
- * why, what it is waiting for and what to do next — shown whenever the
+ * why, what it is waiting for and what to do next; shown whenever the
  * resource is not simply healthy, so nobody has to decode conditions.
  */
 function DiagnosisSection(props: { item: any }) {
@@ -394,7 +422,7 @@ function DiagnosisSection(props: { item: any }) {
 }
 
 /**
- * For a source: everything Flux discovered/derived from it — the
+ * For a source: everything Flux discovered/derived from it; the
  * Kustomizations, HelmCharts, HelmReleases and image automations that
  * reference this source, shown as clickable tags.
  */
@@ -499,7 +527,7 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
               {
                 label: 'Namespace',
                 getter: (row: { kind: string; object: any }) =>
-                  row.object.metadata?.namespace ?? '-',
+                  row.object.metadata?.namespace ?? <NA />,
               },
               {
                 label: 'Status',
@@ -516,6 +544,11 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
             ]}
             data={found}
           />
+          {loading && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', py: 1 }}>
+              Still checking other resource kinds, more rows may appear.
+            </Typography>
+          )}
         </Surface>
       )}
     </SectionBox>
@@ -554,22 +587,24 @@ function DependenciesSection(props: { item: any; kindDef: FluxKind }) {
             name: 'Depends on (deployed before this)',
             value: (
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                {dependsOn.length === 0
-                  ? '-'
-                  : dependsOn.map(dep => {
-                      const id = `${dep.namespace ?? myNamespace}/${dep.name}`;
-                      const obj = byId.get(id);
-                      if (obj) {
-                        return <ObjectChip key={id} kind={kindDef.kind} object={obj} />;
-                      }
-                      // Only claim a dependency is missing when we could
-                      // actually list the resources; on error just show it.
-                      return error || objs === null ? (
-                        <Chip key={id} size="small" label={id} variant="outlined" />
-                      ) : (
-                        <Chip key={id} size="small" label={`${id} (missing)`} color="warning" />
-                      );
-                    })}
+                {dependsOn.length === 0 ? (
+                  <NA />
+                ) : (
+                  dependsOn.map(dep => {
+                    const id = `${dep.namespace ?? myNamespace}/${dep.name}`;
+                    const obj = byId.get(id);
+                    if (obj) {
+                      return <ObjectChip key={id} kind={kindDef.kind} object={obj} />;
+                    }
+                    // Only claim a dependency is missing when we could
+                    // actually list the resources; on error just show it.
+                    return error || objs === null ? (
+                      <Chip key={id} size="small" label={id} variant="outlined" />
+                    ) : (
+                      <Chip key={id} size="small" label={`${id} (missing)`} color="warning" />
+                    );
+                  })
+                )}
               </Box>
             ),
           },
@@ -577,11 +612,13 @@ function DependenciesSection(props: { item: any; kindDef: FluxKind }) {
             name: 'Required by (deployed after this)',
             value: (
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                {dependents.length === 0
-                  ? '-'
-                  : dependents.map((obj: any) => (
-                      <ObjectChip key={obj.metadata.uid} kind={kindDef.kind} object={obj} />
-                    ))}
+                {dependents.length === 0 ? (
+                  <NA />
+                ) : (
+                  dependents.map((obj: any) => (
+                    <ObjectChip key={obj.metadata.uid} kind={kindDef.kind} object={obj} />
+                  ))
+                )}
               </Box>
             ),
           },
@@ -622,7 +659,7 @@ function MentionedResourceLinks(props: { message?: string; fallbackNamespace?: s
 }
 
 /**
- * Kubernetes conditions as a table, newest transition first — with a plain
+ * Kubernetes conditions as a table, newest transition first; with a plain
  * explanation of what each condition type means and direct links to the
  * objects a failure message mentions, so "Not Ready" is always followed by
  * "and here is where to look".
@@ -674,12 +711,12 @@ function ConditionsSection(props: { conditions: any[]; namespace?: string }) {
               </StatusLabel>
             ),
           },
-          { label: 'Reason', getter: (c: any) => c.reason ?? '-' },
+          { label: 'Reason', getter: (c: any) => c.reason ?? <NA /> },
           {
             label: 'Message',
             getter: (c: any) => (
               <Box>
-                <span>{c.message ?? '-'}</span>
+                <span>{c.message ?? <NA />}</span>
                 <MentionedResourceLinks message={c.message} fallbackNamespace={props.namespace} />
               </Box>
             ),
@@ -710,13 +747,13 @@ function ArtifactSection(props: { item: any }) {
       <NameValueTable
         rows={[
           { name: 'Revision', value: artifact.revision },
-          { name: 'Digest', value: artifact.digest ?? artifact.checksum ?? '-' },
+          { name: 'Digest', value: artifact.digest ?? artifact.checksum ?? <NA /> },
           {
             name: 'Size',
-            value: artifact.size ? `${(artifact.size / 1024).toFixed(1)} KiB` : '-',
+            value: artifact.size ? `${(artifact.size / 1024).toFixed(1)} KiB` : <NA />,
           },
           { name: 'Last update', value: localeDate(artifact.lastUpdateTime) },
-          { name: 'Path', value: artifact.path ?? '-' },
+          { name: 'Path', value: artifact.path ?? <NA /> },
         ]}
       />
     </SectionBox>
@@ -735,7 +772,7 @@ function HelmHistorySection(props: { item: any }) {
         columns={[
           { label: 'Version', getter: (h: any) => h.version },
           { label: 'Chart version', getter: (h: any) => h.chartVersion },
-          { label: 'App version', getter: (h: any) => h.appVersion ?? '-' },
+          { label: 'App version', getter: (h: any) => h.appVersion ?? <NA /> },
           {
             label: 'Status',
             getter: (h: any) => (
@@ -763,7 +800,6 @@ export default function FluxResourceDetails(props: { kindDef: FluxKind }) {
       resourceType={fluxClass(kindDef) as any}
       name={name}
       namespace={namespace}
-      withEvents
       actions={(item: any) =>
         item ? [<FluxActionButtons key="flux-actions" item={item} variant="buttons" />] : []
       }
@@ -810,6 +846,7 @@ export default function FluxResourceDetails(props: { kindDef: FluxKind }) {
           sections.push(<HelmHistorySection key="flux-history" item={item} />);
           sections.push(<HelmReleaseInventorySection key="flux-helm-inventory" item={item} />);
         }
+        sections.push(<FluxEventsSection key="flux-events" item={item} />);
         return sections;
       }}
     />

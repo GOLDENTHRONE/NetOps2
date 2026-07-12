@@ -25,7 +25,7 @@ import {
 import { Box, Typography } from '@mui/material';
 import React from 'react';
 import { ICONS, kindIcon } from '../flux/icon';
-import { K8sRefLink, SectionEmpty } from './common';
+import { K8sRefLink, NA, SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
 import { Pill, Surface } from './ui';
 
@@ -68,8 +68,8 @@ export function parseInventoryEntries(
 
 /**
  * Link for a managed object: Flux kinds (HelmRelease, Kustomization, ...)
- * go to their rich Flux pages; everything else — built-in kinds and custom
- * resources alike — opens in Headlamp's split-right details panel.
+ * go to their rich Flux pages; everything else; built-in kinds and custom
+ * resources alike; opens in Headlamp's split-right details panel.
  */
 function entryLink(entry: ManagedEntry): React.ReactNode {
   return (
@@ -186,7 +186,7 @@ function PodRow(props: { pod: any }) {
 
 /**
  * The objects managed by a Flux applier as one table, consistent with every
- * other table in the Flux UI: kind (with a recognizable icon — Vault, Helm,
+ * other table in the Flux UI: kind (with a recognizable icon; Vault, Helm,
  * ConfigMap, Secret, ...), a link to the real object, its namespace, and
  * live pods for workloads.
  */
@@ -220,7 +220,7 @@ export function ManagedResourcesTable(props: { entries: ManagedEntry[] }) {
           {
             label: 'Namespace',
             gridTemplate: 'min-content',
-            getter: (entry: ManagedEntry) => entry.namespace ?? '-',
+            getter: (entry: ManagedEntry) => entry.namespace ?? <NA />,
           },
           {
             label: 'API group',
@@ -234,7 +234,7 @@ export function ManagedResourcesTable(props: { entries: ManagedEntry[] }) {
               WORKLOAD_KINDS.includes(entry.kind) && entry.namespace ? (
                 <WorkloadPods entry={entry} />
               ) : (
-                '-'
+                <NA />
               ),
           },
         ]}

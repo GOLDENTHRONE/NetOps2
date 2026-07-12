@@ -33,6 +33,7 @@ export interface FluxObject {
   metadata?: {
     name?: string;
     namespace?: string;
+    labels?: Record<string, string>;
     annotations?: Record<string, string>;
   };
   spec?: Record<string, any>;
@@ -75,13 +76,13 @@ export function getStatusInfo(obj: FluxObject): FluxStatusInfo {
 
   // OCI Helm repositories are static references: the source-controller does
   // not reconcile them, so they never report conditions. That is normal and
-  // healthy — not "Unknown".
+  // healthy; not "Unknown".
   if (obj?.kind === 'HelmRepository' && obj?.spec?.type === 'oci') {
     return {
       health: 'Ready',
       reason: 'OCIReference',
       message:
-        'OCI Helm repositories are static references — HelmReleases pull charts from them ' +
+        'OCI Helm repositories are static references; HelmReleases pull charts from them ' +
         'directly, so there is nothing to reconcile and no status is reported.',
     };
   }

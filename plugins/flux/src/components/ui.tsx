@@ -119,7 +119,7 @@ export function NamespaceBar() {
   );
 }
 
-/** Shared radii — soft, modern corners. */
+/** Shared radii; soft, modern corners. */
 export const RADII = {
   card: '14px',
   control: '10px',
@@ -188,7 +188,7 @@ export interface SurfaceProps {
   sx?: any;
 }
 
-/** A soft, elevated card — the base building block of the UI. */
+/** A soft, elevated card; the base building block of the UI. */
 export function Surface(props: SurfaceProps) {
   const { children, accent, tinted, stripe, interactive, onClick, sx } = props;
   const theme = useTheme();
@@ -285,7 +285,7 @@ export interface Crumb {
 
 /**
  * The page header that gives every page its context: a breadcrumb trail
- * (Flux › Sources › …), an icon, a title and a short description — so users
+ * (Flux › Sources › …), an icon, a title and a short description; so users
  * always know where they are and what they are looking at.
  */
 export function PageHeader(props: {
@@ -413,7 +413,7 @@ export function Section(props: {
   );
 }
 
-/** A friendly, illustrated empty state — never a blank page. */
+/** A friendly, illustrated empty state; never a blank page. */
 export function EmptyState(props: {
   icon?: string;
   title: string;

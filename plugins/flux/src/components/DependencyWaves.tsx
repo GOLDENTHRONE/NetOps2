@@ -43,7 +43,14 @@ import {
   getStatusInfo,
   makeDependencyNodes,
 } from '../flux/utils';
-import { FluxLink, FluxStatusLabel, healthToStatus, LastSyncLabel, NextSyncLabel } from './common';
+import {
+  FluxLink,
+  FluxStatusLabel,
+  healthToStatus,
+  LastSyncLabel,
+  NA,
+  NextSyncLabel,
+} from './common';
 import { ErrorState } from './errors';
 import { accentsFor, EmptyState, RADII, Section, Surface } from './ui';
 
@@ -161,13 +168,13 @@ function NodeDetailCard(props: { item?: any; node: DependencyNode; kind: string 
           Last sync
         </Typography>
         <Typography variant="caption">
-          {object ? <LastSyncLabel date={getLastSyncTime(object)} /> : '-'}
+          {object ? <LastSyncLabel date={getLastSyncTime(object)} /> : <NA />}
         </Typography>
         <Typography variant="caption" color="textSecondary">
           Next sync
         </Typography>
         <Typography variant="caption">
-          {object ? <NextSyncLabel object={object} /> : '-'}
+          {object ? <NextSyncLabel object={object} /> : <NA />}
         </Typography>
         {sourceRef && (
           <>
@@ -336,14 +343,15 @@ export interface DependencyWavesSectionProps {
  *
  * Clicking a node opens its detail card and highlights its upstream
  * dependencies ("needed") and downstream dependents ("waits"). Card colors
- * carry the live status — the legend at the top right explains them. When
+ * carry the live status; the legend at the top right explains them. When
  * the graph overflows, chevron buttons scroll it; there is no scrollbar.
  *
- * The graph is only rendered once one or more namespaces are selected — a
+ * The graph is only rendered once one or more namespaces are selected; a
  * cluster-wide graph can be far too large to be useful.
  */
 export function DependencyWavesSection(props: DependencyWavesSectionProps) {
   const { kindDef, title } = props;
+  const hintAccent = accentsFor(useTheme()).info;
   const selectedNamespaces = useSelector(
     (state: any) => state.filter?.namespaces as Set<string> | undefined
   );
@@ -371,12 +379,23 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
     const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
     setScrollState(s => (s.left === left && s.right === right ? s : { left, right }));
   }, []);
+  // Re-measure after every render (content width changes with the data) and
+  // whenever the container itself resizes.
   React.useEffect(() => {
     updateScrollState();
+  });
+  React.useEffect(() => {
+    const observer =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateScrollState) : undefined;
+    if (scrollRef.current && observer) {
+      observer.observe(scrollRef.current);
+    }
     window.addEventListener('resize', updateScrollState);
-    return () => window.removeEventListener('resize', updateScrollState);
-    // Re-check whenever the data (and therefore the graph width) changes.
-  }, [updateScrollState, items, selectedNamespaces]);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateScrollState);
+    };
+  }, [updateScrollState]);
   const scrollByPage = (direction: 1 | -1) => {
     const el = scrollRef.current;
     if (!el) {
@@ -439,18 +458,20 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
 
   const sectionTitle = title ?? 'Deployment order';
 
-  // Without a namespace a cluster-wide graph would be unreadable; keep the
-  // page quiet with a single subtle hint instead of a large empty section.
+  // Without a namespace a cluster-wide graph would be unreadable; show a
+  // gentle, minimal alert instead of a large empty section.
   if (!hasNamespace) {
     return (
-      <Box
-        sx={{ display: 'flex', alignItems: 'center', gap: 0.75, color: 'text.secondary', mb: 3 }}
+      <Surface
+        accent={hintAccent}
+        tinted
+        sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1.25, mb: 3 }}
       >
-        <Icon icon={ICONS.graph} width="1rem" />
+        <Icon icon={ICONS.graph} color={hintAccent} width="1.15rem" style={{ flexShrink: 0 }} />
         <Typography variant="body2">
           Select a namespace (top right) to visualize the deployment order.
         </Typography>
-      </Box>
+      </Surface>
     );
   }
 
@@ -547,7 +568,7 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
           {cycles.length > 0 && (
             <Box sx={{ mt: 2 }}>
               <Typography variant="subtitle2" color="error" sx={{ display: 'flex', gap: 0.5 }}>
-                <Icon icon={ICONS.warning} width="1.2rem" /> Dependency cycle detected — these can
+                <Icon icon={ICONS.warning} width="1.2rem" /> Dependency cycle detected; these can
                 never become ready:
               </Typography>
               <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>

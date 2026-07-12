@@ -144,7 +144,7 @@ export default function FluxHomeTab() {
   const clusters = Object.keys(clustersConf ?? {}).sort();
 
   // null means the cluster config is still loading; an empty object means
-  // there really are no clusters — don't show an eternal spinner for that.
+  // there really are no clusters; don't show an eternal spinner for that.
   if (clustersConf === null) {
     return <Loader title="Loading clusters" />;
   }

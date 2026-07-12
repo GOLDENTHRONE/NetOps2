@@ -42,9 +42,9 @@ type Column = any;
 
 function refToString(ref?: Record<string, any>): string {
   if (!ref) {
-    return '-';
+    return 'n/a';
   }
-  return ref.branch ?? ref.tag ?? ref.semver ?? ref.digest ?? ref.commit ?? ref.name ?? '-';
+  return ref.branch ?? ref.tag ?? ref.semver ?? ref.digest ?? ref.commit ?? ref.name ?? 'n/a';
 }
 
 /** Columns specific to each Flux kind, shown between Namespace and Status. */
@@ -123,7 +123,7 @@ function kindColumns(kindDef: FluxKind): Column[] {
           id: 'chart',
           label: 'Chart',
           getValue: (item: any) =>
-            item.jsonData?.spec?.chart?.spec?.chart ?? item.jsonData?.spec?.chartRef?.name ?? '-',
+            item.jsonData?.spec?.chart?.spec?.chart ?? item.jsonData?.spec?.chartRef?.name ?? 'n/a',
         },
         sourceColumn(),
         dependsOnColumn(),
@@ -133,7 +133,7 @@ function kindColumns(kindDef: FluxKind): Column[] {
           getValue: (item: any) =>
             item.jsonData?.status?.history?.[0]?.chartVersion ??
             item.jsonData?.status?.lastAppliedRevision ??
-            '-',
+            'n/a',
         },
       ];
     case 'Alert':
@@ -167,7 +167,7 @@ function kindColumns(kindDef: FluxKind): Column[] {
         {
           id: 'webhookPath',
           label: 'Webhook path',
-          getValue: (item: any) => item.jsonData?.status?.webhookPath ?? '-',
+          getValue: (item: any) => item.jsonData?.status?.webhookPath ?? 'n/a',
         },
       ];
     case 'ImageRepository':
@@ -180,7 +180,7 @@ function kindColumns(kindDef: FluxKind): Column[] {
         {
           id: 'tags',
           label: 'Tags scanned',
-          getValue: (item: any) => item.jsonData?.status?.lastScanResult?.tagCount ?? '-',
+          getValue: (item: any) => item.jsonData?.status?.lastScanResult?.tagCount ?? 'n/a',
         },
       ];
     case 'ImagePolicy':
@@ -231,7 +231,7 @@ function sourceColumn(label = 'Source'): Column {
     render: (item: any) => {
       const ref = getSourceRef(item.jsonData);
       if (!ref) {
-        return '-';
+        return 'n/a';
       }
       return (
         <FluxLink kind={ref.kind} name={ref.name} namespace={ref.namespace}>
@@ -270,7 +270,7 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
 
   // Kustomizations and Helm releases are pre-sorted by their deployment
   // order (dependsOn waves) so the list reads top-to-bottom in the order
-  // Flux applies them, matching the graph above — without needing a
+  // Flux applies them, matching the graph above; without needing a
   // dedicated column for it.
   const ordersById = React.useMemo(() => {
     if (kindDef.kind !== 'Kustomization' && kindDef.kind !== 'HelmRelease') {
