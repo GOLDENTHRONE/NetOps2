@@ -268,9 +268,10 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
   const sectionTitle = title ?? `${kindDef.kind}s`;
   const [items, error] = (fluxClass(kindDef) as any).useList();
 
-  // Kustomizations and Helm releases are ordered by their deployment order
-  // (dependsOn waves) so the list reads top-to-bottom in the order Flux
-  // applies them, matching the graph above.
+  // Kustomizations and Helm releases are pre-sorted by their deployment
+  // order (dependsOn waves) so the list reads top-to-bottom in the order
+  // Flux applies them, matching the graph above — without needing a
+  // dedicated column for it.
   const ordersById = React.useMemo(() => {
     if (kindDef.kind !== 'Kustomization' && kindDef.kind !== 'HelmRelease') {
       return null;
@@ -331,15 +332,16 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
   );
 
   const columns: Column[] = [
+    // Invisible sort target that keeps the rows in deployment (wave) order
+    // without spending a visible column on it.
     ...(ordersById
       ? [
           {
             id: 'order',
-            label: 'Wave',
+            label: 'Deployment order',
             getValue: (item: any) => orderOf(item) + 1,
-            render: (item: any) => `Wave ${orderOf(item) + 1}`,
-            gridTemplate: 'min-content',
             sort: (a: any, b: any) => orderOf(a) - orderOf(b),
+            show: false,
           },
         ]
       : []),

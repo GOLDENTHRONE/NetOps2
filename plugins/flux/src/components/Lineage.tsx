@@ -143,10 +143,10 @@ function namespaceUrl(name: string): string | undefined {
   }
 }
 
-function NamespaceChips(props: { namespaces: string[] }) {
+export function NamespaceChips(props: { namespaces: string[] }) {
   const accents = useAccents();
   if (props.namespaces.length === 0) {
-    return <Typography variant="body2">no namespaces yet</Typography>;
+    return <span>-</span>;
   }
   return (
     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
@@ -300,48 +300,5 @@ export function LineageSection(props: { item: any; kindDef: FluxKind }) {
         <LineageFlow steps={steps} />
       </Surface>
     </SectionBox>
-  );
-}
-
-/**
- * For a source: every namespace it ultimately deploys into, computed from
- * the live inventories of the Kustomizations/HelmReleases that consume it.
- * Rendered as part of the "Used by" story on source detail pages.
- */
-export function ConsumerLineageRow(props: {
-  consumerKind: string;
-  consumer: any;
-}): React.ReactElement {
-  const { consumerKind, consumer } = props;
-  const object: FluxObject = consumer.jsonData;
-  const namespaces = getTargetNamespaces(object);
-  const info = getStatusInfo(object);
-  const p = healthPresentation(info.health);
-
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', py: 0.5 }}>
-      <Icon icon={KIND_ICON[consumerKind] ?? ICONS.resources} width="1.05rem" />
-      <FluxLink
-        kind={consumerKind}
-        name={object.metadata?.name ?? ''}
-        namespace={object.metadata?.namespace}
-      >
-        <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-          {object.metadata?.name}
-        </Typography>
-      </FluxLink>
-      <Typography variant="caption" color="text.secondary">
-        {consumerKind} · {object.metadata?.namespace}
-      </Typography>
-      <Pill tone={p.tone} icon={p.icon}>
-        {p.label}
-      </Pill>
-      {namespaces.length > 0 && (
-        <>
-          <Icon icon={ICONS.arrowRight} width="1rem" style={{ opacity: 0.5 }} />
-          <NamespaceChips namespaces={namespaces} />
-        </>
-      )}
-    </Box>
   );
 }

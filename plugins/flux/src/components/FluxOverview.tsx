@@ -24,7 +24,7 @@ import {
 import { alpha, Box, Typography, useTheme } from '@mui/material';
 import React from 'react';
 import { useHistory } from 'react-router-dom';
-import { FLUX_ICON, ICONS } from '../flux/icon';
+import { ICONS } from '../flux/icon';
 import { FLUX_KINDS, FluxCategory, fluxClass, FluxKind } from '../flux/kinds';
 import { FluxHealth, getStatusInfo } from '../flux/utils';
 import { ReadySummary, SectionEmpty } from './common';
@@ -38,7 +38,7 @@ import {
   splitAttention,
   useAllFluxObjects,
 } from './operations';
-import { PageHeader, Pill, RADII, Section, Surface, useAccents } from './ui';
+import { Pill, RADII, Section, Surface, useAccents } from './ui';
 
 const { ResourceClasses } = K8s;
 const { createRouteURL } = Router;
@@ -421,14 +421,12 @@ export default function FluxOverview() {
   const data = useAllFluxObjects();
   return (
     <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1600, mx: 'auto' }}>
-      <PageHeader
-        icon={FLUX_ICON}
-        title="Flux"
-        description="The operational state of every deployment Flux manages in this cluster — what needs attention, what is deploying, and what changed."
-        crumbs={[{ label: 'Flux' }, { label: 'Overview' }]}
-      />
       <FluxHealthHero data={data} />
-      <Box sx={{ mt: 3 }} />
+      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 3 }}>
+        {CATEGORY_PAGES.map(category => (
+          <CategoryCard key={category.category} category={category} />
+        ))}
+      </Box>
       {data.loading ? (
         <FeedLoader />
       ) : (
@@ -438,13 +436,6 @@ export default function FluxOverview() {
           <RecentActivitySection data={data} />
         </>
       )}
-      <Section title="What Flux manages" sx={{ mt: 3 }}>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          {CATEGORY_PAGES.map(category => (
-            <CategoryCard key={category.category} category={category} />
-          ))}
-        </Box>
-      </Section>
       <FluxControllersSection />
     </Box>
   );

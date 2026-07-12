@@ -18,9 +18,11 @@ import {
   collectDownstream,
   collectUpstream,
   diagnose,
+  extractMentionedResources,
   getFailureCounts,
   getTargetNamespaces,
   isBlockedOnDependency,
+  pluralizeKind,
   summarizeWave,
 } from './insights';
 import { FluxObject, makeDependencyNodes } from './utils';
@@ -196,6 +198,44 @@ describe('collectUpstream / collectDownstream', () => {
   it('collects transitive downstream dependents', () => {
     expect(collectDownstream(nodes, 'ns/infra')).toEqual(new Set(['ns/db', 'ns/app']));
     expect(collectDownstream(nodes, 'ns/app').size).toBe(0);
+  });
+});
+
+describe('extractMentionedResources', () => {
+  it('extracts Kind/namespace/name references from health check failures', () => {
+    const refs = extractMentionedResources(
+      "health check failed: [Deployment/apps/web status: 'Failed', Pod/apps/web-abc123 not ready]"
+    );
+    expect(refs).toEqual([
+      { kind: 'Deployment', namespace: 'apps', name: 'web' },
+      { kind: 'Pod', namespace: 'apps', name: 'web-abc123' },
+    ]);
+  });
+
+  it('extracts Kind/name references without a namespace', () => {
+    const refs = extractMentionedResources('HelmChart/podinfo is not ready');
+    expect(refs).toEqual([{ kind: 'HelmChart', name: 'podinfo' }]);
+  });
+
+  it('ignores unknown kinds and deduplicates', () => {
+    const refs = extractMentionedResources(
+      'Foo/bar/baz failed; Deployment/apps/web failed; Deployment/apps/web still failing'
+    );
+    expect(refs).toEqual([{ kind: 'Deployment', namespace: 'apps', name: 'web' }]);
+  });
+
+  it('returns nothing for empty messages', () => {
+    expect(extractMentionedResources(undefined)).toEqual([]);
+    expect(extractMentionedResources('all good')).toEqual([]);
+  });
+});
+
+describe('pluralizeKind', () => {
+  it('pluralizes common kinds the way Kubernetes does', () => {
+    expect(pluralizeKind('VaultStaticSecret')).toBe('vaultstaticsecrets');
+    expect(pluralizeKind('Ingress')).toBe('ingresses');
+    expect(pluralizeKind('NetworkPolicy')).toBe('networkpolicies');
+    expect(pluralizeKind('Gateway')).toBe('gateways');
   });
 });
 

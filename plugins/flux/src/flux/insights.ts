@@ -380,3 +380,113 @@ export function isBlockedOnDependency(obj: FluxObject): boolean {
   }
   return diagnose(obj).category === 'dependency';
 }
+
+/**
+ * What each condition type means, in plain language, so nobody has to know
+ * the Flux condition contract to read the Conditions table.
+ */
+export const CONDITION_MEANINGS: Record<string, string> = {
+  Ready:
+    'The overall verdict: True means the last reconciliation fully succeeded and the desired ' +
+    'state is applied. False means it failed — the message says why. Unknown means it is ' +
+    'still in progress.',
+  Reconciling:
+    'True while the controller is actively working on this resource (fetching, building or ' +
+    'applying changes). It clears once the work finishes.',
+  Stalled:
+    'True when the controller gave up retrying — the failure needs a human (or a change in ' +
+    'Git) to resolve. Nothing more will happen until then.',
+  Healthy:
+    'True when all the health checks on the deployed workloads pass — the applied objects ' +
+    'are not just created, they are actually running.',
+  ArtifactInStorage:
+    'True when the source controller has downloaded this source and stored a snapshot ' +
+    '(artifact) that Kustomizations and HelmReleases can consume.',
+  FetchFailed:
+    'True when the latest attempt to fetch from the remote (Git, OCI, Helm repo or bucket) ' +
+    'failed — usually credentials, network or a missing ref.',
+  SourceVerified:
+    'True when the cryptographic verification of the source (e.g. commit signature or ' +
+    'artifact signature) succeeded.',
+  Released: 'True when the Helm install/upgrade for the current revision completed successfully.',
+  TestSuccess: 'True when the Helm tests for the current release passed.',
+  Remediated:
+    'True when a failed Helm release was remediated (rolled back or uninstalled) after a ' +
+    'failure. Look at the history to see what happened.',
+};
+
+/**
+ * Best-effort plural for building CRD names (e.g. VaultStaticSecret →
+ * vaultstaticsecrets). Matches the pluralization Kubernetes code generators
+ * use for the overwhelming majority of kinds.
+ */
+export function pluralizeKind(kind: string): string {
+  const lower = kind.toLowerCase();
+  if (lower.endsWith('s') || lower.endsWith('x') || lower.endsWith('z') || lower.endsWith('ch')) {
+    return `${lower}es`;
+  }
+  if (lower.endsWith('y') && !/[aeiou]y$/.test(lower)) {
+    return `${lower.slice(0, -1)}ies`;
+  }
+  return `${lower}s`;
+}
+
+/** A Kubernetes object mentioned inside a condition/event message. */
+export interface MentionedResource {
+  kind: string;
+  namespace?: string;
+  name: string;
+}
+
+/** Kinds worth linking when they appear in messages. */
+const LINKABLE_KINDS = new Set([
+  'Deployment',
+  'StatefulSet',
+  'DaemonSet',
+  'ReplicaSet',
+  'Pod',
+  'Job',
+  'CronJob',
+  'Service',
+  'Ingress',
+  'ConfigMap',
+  'Secret',
+  'PersistentVolumeClaim',
+  'HelmRelease',
+  'Kustomization',
+  'GitRepository',
+  'HelmChart',
+  'OCIRepository',
+  'Bucket',
+]);
+
+/**
+ * Finds Kubernetes objects referenced in a controller message, e.g. the
+ * "Deployment/apps/web status: 'Failed'" pieces of a failed health check —
+ * so the UI can link straight to the failing workload.
+ */
+export function extractMentionedResources(message?: string): MentionedResource[] {
+  if (!message) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const out: MentionedResource[] = [];
+  // Kind/namespace/name first (Flux health checks), then Kind/name.
+  const pattern = /\b([A-Z][A-Za-z]+)\/([a-z0-9][a-z0-9.-]*)(?:\/([a-z0-9][a-z0-9.-]*))?/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(message)) !== null) {
+    const [, kind, first, second] = match;
+    if (!LINKABLE_KINDS.has(kind)) {
+      continue;
+    }
+    const ref: MentionedResource = second
+      ? { kind, namespace: first, name: second }
+      : { kind, name: first };
+    const key = `${ref.kind}/${ref.namespace ?? ''}/${ref.name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(ref);
+    }
+  }
+  return out;
+}

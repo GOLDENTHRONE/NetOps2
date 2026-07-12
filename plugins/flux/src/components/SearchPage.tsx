@@ -15,27 +15,18 @@
  */
 
 import { Icon } from '@iconify/react';
-import { DateLabel, Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { alpha, Box, InputAdornment, TextField, Typography, useTheme } from '@mui/material';
+import { DateLabel, Loader, SimpleTable } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { alpha, Box, InputAdornment, TextField, useTheme } from '@mui/material';
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { useHistory, useLocation } from 'react-router-dom';
 import { FluxActionButtons } from '../flux/actions';
-import { ICONS } from '../flux/icon';
-import { FluxObject, getLastSyncTime, getSourceRef, parseRevision } from '../flux/utils';
+import { ICONS, kindIcon } from '../flux/icon';
+import { getLastSyncTime, getSourceRef, parseRevision } from '../flux/utils';
 import { FluxLink, FluxStatusLabel } from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
 import { FluxRow, useAllFluxObjects } from './operations';
-import {
-  EmptyState,
-  NamespaceBar,
-  PageHeader,
-  Pill,
-  RADII,
-  Section,
-  Surface,
-  useAccents,
-} from './ui';
+import { EmptyState, NamespaceBar, RADII, Surface, useAccents } from './ui';
 
 /** Operational states the quick filters slice by. */
 type StateFilter = 'all' | 'failing' | 'blocked' | 'progressing' | 'suspended' | 'ready';
@@ -217,13 +208,33 @@ export default function FluxSearchPage() {
 
   return (
     <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1600, mx: 'auto' }}>
-      <PageHeader
-        icon={ICONS.search}
-        title="Search"
-        description="Find anything Flux manages by state, name, namespace, commit or failure — across every resource kind at once."
-        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Search' }]}
-      />
-      <NamespaceBar />
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          flexWrap: 'wrap',
+          mb: 2,
+        }}
+      >
+        <TextField
+          size="small"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search by name, namespace, kind, commit, source or failure message…"
+          sx={{ flex: '1 1 340px', maxWidth: 620 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <Icon icon={ICONS.search} width="1.1rem" />
+              </InputAdornment>
+            ),
+          }}
+        />
+        <Box sx={{ ml: 'auto' }}>
+          <NamespaceBar />
+        </Box>
+      </Box>
 
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
         {STATE_FILTERS.map(f => (
@@ -238,99 +249,75 @@ export default function FluxSearchPage() {
         ))}
       </Box>
 
-      <TextField
-        fullWidth
-        size="small"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Search by name, namespace, kind, commit, source or failure message…"
-        sx={{ mb: 2, maxWidth: 720 }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <Icon icon={ICONS.search} width="1.1rem" />
-            </InputAdornment>
-          ),
-        }}
-      />
-
-      <Section title={data.loading ? 'Results' : `Results (${results.length})`}>
-        {allFailed ? (
-          <Surface sx={{ p: 2 }}>
-            <ErrorState error={pickMostRelevantError(data.errors)} what="the Flux resources" />
-          </Surface>
-        ) : data.loading ? (
-          <Surface sx={{ p: 2 }}>
-            <Loader title="Loading Flux resources" />
-          </Surface>
-        ) : results.length === 0 ? (
-          <Surface sx={{ p: 2 }}>
-            <EmptyState
-              icon={ICONS.search}
-              title="Nothing matches"
-              description="Try a different state filter, clear the search text, or widen the namespace filter above."
-            />
-          </Surface>
-        ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {results.map(row => (
-              <ResultRow
-                key={`${row.kindDef.kind}/${row.object.metadata?.namespace}/${row.object.metadata?.name}`}
-                row={row}
-              />
-            ))}
-          </Box>
-        )}
-      </Section>
-    </Box>
-  );
-}
-
-function ResultRow(props: { row: FluxRow }) {
-  const { row } = props;
-  const { object, kindDef, diagnosis } = row;
-  const name = object.metadata?.name ?? '';
-  const namespace = object.metadata?.namespace ?? '';
-  const lastSync = getLastSyncTime(object);
-  const revision =
-    (object as FluxObject)?.status?.artifact?.revision ?? object?.status?.lastAppliedRevision;
-  const parsed = parseRevision(revision);
-
-  return (
-    <Surface sx={{ p: 1.5, display: 'flex', gap: 1.5, alignItems: 'center' }}>
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          <FluxLink kind={kindDef.kind} name={name} namespace={namespace}>
-            <Typography component="span" variant="body2" sx={{ fontWeight: 700 }}>
-              {name}
-            </Typography>
-          </FluxLink>
-          <Typography variant="caption" color="text.secondary">
-            {kindDef.kind} · {namespace}
-          </Typography>
-          {(parsed.ref || parsed.shortHash) && (
-            <Pill tone="neutral" icon={ICONS.commit} title={revision}>
-              {[parsed.ref, parsed.shortHash].filter(Boolean).join(' @ ')}
-            </Pill>
-          )}
-        </Box>
-        <Typography variant="caption" color="text.secondary" component="div" noWrap>
-          {diagnosis.category === 'ok'
-            ? diagnosis.headline
-            : `${diagnosis.headline}${diagnosis.explanation ? ` — ${diagnosis.explanation}` : ''}`}
-        </Typography>
-      </Box>
-      {lastSync && (
-        <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-          <DateLabel date={lastSync} format="mini" />
-        </Typography>
+      {allFailed ? (
+        <Surface sx={{ p: 2 }}>
+          <ErrorState error={pickMostRelevantError(data.errors)} what="the Flux resources" />
+        </Surface>
+      ) : data.loading ? (
+        <Surface sx={{ p: 2 }}>
+          <Loader title="Loading Flux resources" />
+        </Surface>
+      ) : results.length === 0 ? (
+        <Surface sx={{ p: 2 }}>
+          <EmptyState
+            icon={ICONS.search}
+            title="Nothing matches"
+            description="Try a different state filter, clear the search text, or widen the namespace filter above."
+          />
+        </Surface>
+      ) : (
+        <Surface sx={{ px: 2, py: 0.5 }}>
+          <SimpleTable
+            columns={[
+              {
+                label: 'Resource',
+                getter: (row: FluxRow) => (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Icon icon={kindIcon(row.kindDef.kind, row.kindDef.group)} width="1.2rem" />
+                    <FluxLink
+                      kind={row.kindDef.kind}
+                      name={row.object.metadata?.name ?? ''}
+                      namespace={row.object.metadata?.namespace}
+                    >
+                      {row.object.metadata?.name}
+                    </FluxLink>
+                  </Box>
+                ),
+              },
+              { label: 'Kind', getter: (row: FluxRow) => row.kindDef.kind },
+              {
+                label: 'Namespace',
+                getter: (row: FluxRow) => row.object.metadata?.namespace ?? '-',
+              },
+              {
+                label: 'Status',
+                getter: (row: FluxRow) => <FluxStatusLabel object={row.object} />,
+              },
+              {
+                label: 'Why',
+                getter: (row: FluxRow) =>
+                  row.diagnosis.category === 'ok'
+                    ? row.diagnosis.headline
+                    : `${row.diagnosis.headline}${
+                        row.diagnosis.explanation ? ` — ${row.diagnosis.explanation}` : ''
+                      }`,
+              },
+              {
+                label: 'Last sync',
+                getter: (row: FluxRow) => {
+                  const lastSync = getLastSyncTime(row.object);
+                  return lastSync ? <DateLabel date={lastSync} format="mini" /> : '-';
+                },
+              },
+              {
+                label: 'Actions',
+                getter: (row: FluxRow) => <FluxActionButtons item={row.item} variant="inline" />,
+              },
+            ]}
+            data={results}
+          />
+        </Surface>
       )}
-      <Box sx={{ flexShrink: 0 }}>
-        <FluxStatusLabel object={object} />
-      </Box>
-      <Box sx={{ flexShrink: 0 }}>
-        <FluxActionButtons item={row.item} variant="inline" />
-      </Box>
-    </Surface>
+    </Box>
   );
 }

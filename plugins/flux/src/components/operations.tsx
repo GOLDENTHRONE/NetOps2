@@ -21,12 +21,12 @@
  */
 
 import { Icon } from '@iconify/react';
-import { DateLabel, Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { DateLabel, Loader, SimpleTable } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { alpha, Box, Link as MuiLink, Typography, useTheme } from '@mui/material';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { FluxActionButtons } from '../flux/actions';
-import { ICONS } from '../flux/icon';
+import { ICONS, kindIcon } from '../flux/icon';
 import { diagnose, Diagnosis } from '../flux/insights';
 import { FLUX_KINDS, fluxClass, FluxKind } from '../flux/kinds';
 import {
@@ -234,40 +234,18 @@ function FeedOverflowLink(props: { hidden: number }) {
  * "What needs my attention right now?" — every failing resource with a
  * plain-language cause and next step, followed by the resources queued
  * behind them, so operators fix root causes instead of symptoms.
+ * Renders nothing at all when nothing needs attention.
  */
 export function NeedsAttentionSection(props: { data: AllFluxObjects }) {
   const { rows, loading } = props.data;
-  const accents = useAccents();
   const { failing, blocked } = splitAttention(rows);
 
-  if (loading) {
+  if (loading || (failing.length === 0 && blocked.length === 0)) {
     return null;
   }
 
-  if (failing.length === 0 && blocked.length === 0) {
-    return (
-      <Section title="Needs attention" icon={ICONS.warning}>
-        <Surface accent={accents.success} tinted sx={{ p: 2, display: 'flex', gap: 1.5 }}>
-          <Icon icon={ICONS.statusReady} color={accents.success} width="1.6rem" />
-          <Box>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              Nothing needs your attention
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              No failed reconciliations and nothing is stuck waiting on a dependency.
-            </Typography>
-          </Box>
-        </Surface>
-      </Section>
-    );
-  }
-
   return (
-    <Section
-      title={`Needs attention (${failing.length + blocked.length})`}
-      icon={ICONS.warning}
-      description="Failures first — fixing those usually unblocks everything waiting below them."
-    >
+    <Section title={`Needs attention (${failing.length + blocked.length})`} icon={ICONS.warning}>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {failing.slice(0, MAX_FEED_ROWS).map(row => (
           <OperationalRow key={rowKey(row)} row={row} tone="error" />
@@ -291,11 +269,7 @@ export function InProgressSection(props: { data: AllFluxObjects }) {
   }
 
   return (
-    <Section
-      title={`Deploying now (${progressing.length})`}
-      icon={ICONS.statusReconciling}
-      description="Reconciliations currently in flight."
-    >
+    <Section title={`Deploying now (${progressing.length})`} icon={ICONS.statusReconciling}>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         {progressing.slice(0, MAX_FEED_ROWS).map(row => (
           <OperationalRow key={rowKey(row)} row={row} tone="info" />
@@ -308,11 +282,11 @@ export function InProgressSection(props: { data: AllFluxObjects }) {
 
 /**
  * "What changed recently?" — the latest successful syncs of sources and
- * appliers with their revision and commit info, newest first.
+ * appliers with their revision and commit info, newest first. Rendered as
+ * a table so it reads exactly like the Controllers table below it.
  */
 export function RecentActivitySection(props: { data: AllFluxObjects }) {
   const { rows, loading } = props.data;
-  const theme = useTheme();
 
   const recent = React.useMemo(() => {
     return rows
@@ -327,63 +301,75 @@ export function RecentActivitySection(props: { data: AllFluxObjects }) {
   }
 
   return (
-    <Section
-      title="Recent activity"
-      icon={ICONS.clock}
-      description="The latest changes Flux pulled and deployed, newest first."
-    >
+    <Section title="Recent activity" icon={ICONS.clock}>
       <Surface sx={{ px: 2, py: 0.5 }}>
-        {recent.map(({ row, time }, i) => {
-          const { object, kindDef } = row;
-          const revision =
-            object?.status?.artifact?.revision ?? object?.status?.lastAppliedRevision;
-          const parsed = parseRevision(revision);
-          const commit = getCommitInfo(object);
-          const p = healthPresentation(row.info.health);
-          return (
-            <Box
-              key={rowKey(row)}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1.5,
-                py: 1,
-                borderTop: i > 0 ? `1px solid ${alpha(theme.palette.divider, 0.5)}` : 'none',
-              }}
-            >
-              <Icon icon={p.icon} width="1.1rem" style={{ flexShrink: 0, opacity: 0.7 }} />
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <SimpleTable
+          columns={[
+            {
+              label: 'Resource',
+              getter: ({ row }: { row: FluxRow }) => (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Icon icon={kindIcon(row.kindDef.kind, row.kindDef.group)} width="1.2rem" />
                   <FluxLink
-                    kind={kindDef.kind}
-                    name={object.metadata?.name ?? ''}
-                    namespace={object.metadata?.namespace}
+                    kind={row.kindDef.kind}
+                    name={row.object.metadata?.name ?? ''}
+                    namespace={row.object.metadata?.namespace}
                   >
-                    <Typography component="span" variant="body2" sx={{ fontWeight: 600 }}>
-                      {object.metadata?.name}
-                    </Typography>
+                    {row.object.metadata?.name}
                   </FluxLink>
-                  <Typography variant="caption" color="text.secondary">
-                    {kindDef.kind}
-                  </Typography>
-                  {(parsed.ref || parsed.shortHash) && (
-                    <Pill tone="neutral" icon={ICONS.commit} title={revision}>
-                      {[parsed.ref, parsed.shortHash].filter(Boolean).join(' @ ')}
-                    </Pill>
-                  )}
                 </Box>
-                {(commit.author || commit.message) && (
-                  <Typography variant="caption" color="text.secondary" noWrap component="div">
-                    {[commit.author, commit.message].filter(Boolean).join(' — ')}
-                  </Typography>
-                )}
-              </Box>
-              <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                <DateLabel date={time} format="mini" />
-              </Typography>
-            </Box>
-          );
-        })}
+              ),
+            },
+            {
+              label: 'Kind',
+              getter: ({ row }: { row: FluxRow }) => row.kindDef.kind,
+            },
+            {
+              label: 'Namespace',
+              getter: ({ row }: { row: FluxRow }) => row.object.metadata?.namespace ?? '-',
+            },
+            {
+              label: 'Revision',
+              getter: ({ row }: { row: FluxRow }) => {
+                const revision =
+                  row.object?.status?.artifact?.revision ?? row.object?.status?.lastAppliedRevision;
+                const parsed = parseRevision(revision);
+                const text = [parsed.ref, parsed.shortHash].filter(Boolean).join(' @ ');
+                return text ? (
+                  <Pill tone="neutral" icon={ICONS.commit} title={revision}>
+                    {text}
+                  </Pill>
+                ) : (
+                  '-'
+                );
+              },
+            },
+            {
+              label: 'Change',
+              getter: ({ row }: { row: FluxRow }) => {
+                const commit = getCommitInfo(row.object);
+                const text = [commit.author, commit.message].filter(Boolean).join(' — ');
+                return text || '-';
+              },
+            },
+            {
+              label: 'Status',
+              getter: ({ row }: { row: FluxRow }) => {
+                const p = healthPresentation(row.info.health);
+                return (
+                  <Pill tone={p.tone} icon={p.icon}>
+                    {p.label}
+                  </Pill>
+                );
+              },
+            },
+            {
+              label: 'When',
+              getter: ({ time }: { time: string }) => <DateLabel date={time} format="mini" />,
+            },
+          ]}
+          data={recent}
+        />
       </Surface>
     </Section>
   );
