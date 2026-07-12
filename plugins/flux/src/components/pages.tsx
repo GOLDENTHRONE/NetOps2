@@ -20,7 +20,7 @@ import { ICONS } from '../flux/icon';
 import { kindByName, kindsInCategory } from '../flux/kinds';
 import { DependencyWavesSection } from './DependencyWaves';
 import { FluxKindListSection } from './FluxKindList';
-import { NamespaceBar, PageHeader } from './ui';
+import { NamespaceBar } from './ui';
 
 const TITLES: Record<string, string> = {
   GitRepository: 'Git Repositories',
@@ -59,16 +59,19 @@ function Page(props: { children: React.ReactNode }) {
   return <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1600, mx: 'auto' }}>{props.children}</Box>;
 }
 
+/** The slim page chrome: just the namespace context, top right. */
+function TopBar() {
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+      <NamespaceBar />
+    </Box>
+  );
+}
+
 export function FluxSourcesPage() {
   return (
     <Page>
-      <PageHeader
-        icon={ICONS.sources}
-        title="Sources"
-        description="The repositories, charts and buckets Flux watches for changes."
-        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Sources' }]}
-        actions={<NamespaceBar />}
-      />
+      <TopBar />
       {kindsInCategory('sources').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
@@ -90,13 +93,7 @@ export function FluxKustomizationsPage() {
   const kindDef = kindByName('Kustomization')!;
   return (
     <Page>
-      <PageHeader
-        icon={ICONS.kustomization}
-        title="Kustomizations"
-        description="Sets of manifests Flux applies to the cluster, in dependency order."
-        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Kustomizations' }]}
-        actions={<NamespaceBar />}
-      />
+      <TopBar />
       <DependencyWavesSection kindDef={kindDef} />
       <FluxKindListSection
         kindDef={kindDef}
@@ -111,13 +108,7 @@ export function FluxHelmReleasesPage() {
   const kindDef = kindByName('HelmRelease')!;
   return (
     <Page>
-      <PageHeader
-        icon={ICONS.helmRelease}
-        title="Helm Releases"
-        description="Helm charts Flux installs and upgrades, in dependency order."
-        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Helm Releases' }]}
-        actions={<NamespaceBar />}
-      />
+      <TopBar />
       <DependencyWavesSection kindDef={kindDef} />
       <FluxKindListSection kindDef={kindDef} title={TITLES.HelmRelease} icon={ICONS.helmRelease} />
     </Page>
@@ -127,13 +118,7 @@ export function FluxHelmReleasesPage() {
 export function FluxNotificationsPage() {
   return (
     <Page>
-      <PageHeader
-        icon={ICONS.notifications}
-        title="Notifications"
-        description="Alerts, providers and receivers that report Flux events to the outside world."
-        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Notifications' }]}
-        actions={<NamespaceBar />}
-      />
+      <TopBar />
       {kindsInCategory('notifications').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
@@ -149,13 +134,7 @@ export function FluxNotificationsPage() {
 export function FluxImageAutomationPage() {
   return (
     <Page>
-      <PageHeader
-        icon={ICONS.imageAutomation}
-        title="Image Automation"
-        description="Scans container registries for new image versions and updates Git automatically."
-        crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Image Automation' }]}
-        actions={<NamespaceBar />}
-      />
+      <TopBar />
       {kindsInCategory('imageautomation').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}

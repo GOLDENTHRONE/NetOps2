@@ -16,7 +16,17 @@
 
 import { Icon } from '@iconify/react';
 import { Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { alpha, Box, Divider, Paper, Popper, Theme, Typography, useTheme } from '@mui/material';
+import {
+  alpha,
+  Box,
+  Divider,
+  IconButton,
+  Paper,
+  Popover,
+  Theme,
+  Typography,
+  useTheme,
+} from '@mui/material';
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { FluxActionButtons } from '../flux/actions';
@@ -81,8 +91,8 @@ function NextReconcileHint(props: { object?: FluxObject }) {
   );
 }
 
-/** The detail card shown while hovering a node. Actions live in the header as a gear menu. */
-function NodeHoverCard(props: { item?: any; node: DependencyNode; kind: string }) {
+/** The detail card opened by clicking a node. Actions live in the header as a gear menu. */
+function NodeDetailCard(props: { item?: any; node: DependencyNode; kind: string }) {
   const { item, node, kind } = props;
   const object: FluxObject | undefined = item?.jsonData;
   const theme = useTheme();
@@ -204,11 +214,9 @@ function NodeCard(props: {
   item?: any;
   kind: string;
   emphasis: Emphasis;
-  onHoverStart: (id: string, anchor: HTMLElement) => void;
-  onHoverEnd: () => void;
-  onTogglePin: (id: string) => void;
+  onSelect: (id: string, anchor: HTMLElement) => void;
 }) {
-  const { node, item, kind, emphasis, onHoverStart, onHoverEnd, onTogglePin } = props;
+  const { node, item, kind, emphasis, onSelect } = props;
   const object: FluxObject | undefined = item?.jsonData;
   const theme = useTheme();
   const accents = accentsFor(theme);
@@ -227,15 +235,12 @@ function NodeCard(props: {
       : undefined;
 
   return (
-    <Box
-      onMouseEnter={e => onHoverStart(node.id, e.currentTarget as HTMLElement)}
-      onMouseLeave={onHoverEnd}
-    >
+    <Box>
       <Surface
         interactive
         accent={color}
         tinted
-        onClick={() => onTogglePin(node.id)}
+        onClick={e => onSelect(node.id, e.currentTarget as HTMLElement)}
         sx={{
           px: 1.5,
           py: 1,
@@ -329,10 +334,10 @@ export interface DependencyWavesSectionProps {
  * in the order Flux deploys them: items in the same wave reconcile in
  * parallel; each wave waits for the previous one to be ready.
  *
- * Hovering a node opens its detail card and highlights its upstream
- * dependencies ("needed") and downstream dependents ("waits"); clicking
- * pins the highlight in place. Card colors carry the live status — the
- * legend at the top right explains them.
+ * Clicking a node opens its detail card and highlights its upstream
+ * dependencies ("needed") and downstream dependents ("waits"). Card colors
+ * carry the live status — the legend at the top right explains them. When
+ * the graph overflows, chevron buttons scroll it; there is no scrollbar.
  *
  * The graph is only rendered once one or more namespaces are selected — a
  * cluster-wide graph can be far too large to be useful.
@@ -346,26 +351,39 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
 
   const [items, error] = (fluxClass(kindDef) as any).useList();
 
-  // Hover drives the highlight and the detail card; clicking pins it.
-  const [hovered, setHovered] = React.useState<{ id: string; anchor: HTMLElement } | null>(null);
-  const [pinnedId, setPinnedId] = React.useState<string | null>(null);
-  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Clicking a card opens its detail popover and highlights its dependency
+  // chain; closing the popover clears the highlight.
+  const [selection, setSelection] = React.useState<{ id: string; anchor: HTMLElement } | null>(
+    null
+  );
+  const onSelect = (id: string, anchor: HTMLElement) => setSelection({ id, anchor });
 
-  const cancelClose = () => {
-    if (closeTimer.current) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = undefined;
+  // The graph never shows a scrollbar: when it overflows, arrow buttons at
+  // either end scroll it a page at a time instead.
+  const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const [scrollState, setScrollState] = React.useState({ left: false, right: false });
+  const updateScrollState = React.useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
     }
+    const left = el.scrollLeft > 4;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+    setScrollState(s => (s.left === left && s.right === right ? s : { left, right }));
+  }, []);
+  React.useEffect(() => {
+    updateScrollState();
+    window.addEventListener('resize', updateScrollState);
+    return () => window.removeEventListener('resize', updateScrollState);
+    // Re-check whenever the data (and therefore the graph width) changes.
+  }, [updateScrollState, items, selectedNamespaces]);
+  const scrollByPage = (direction: 1 | -1) => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    el.scrollBy({ left: direction * Math.max(260, el.clientWidth * 0.6), behavior: 'smooth' });
   };
-  const onHoverStart = (id: string, anchor: HTMLElement) => {
-    cancelClose();
-    setHovered({ id, anchor });
-  };
-  const onHoverEnd = () => {
-    cancelClose();
-    closeTimer.current = setTimeout(() => setHovered(null), 250);
-  };
-  const onTogglePin = (id: string) => setPinnedId(current => (current === id ? null : id));
 
   const filtered = React.useMemo(
     () =>
@@ -390,7 +408,7 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
   );
   const { waves, cycles } = React.useMemo(() => computeDependencyWaves(nodes), [nodes]);
 
-  const activeId = hovered?.id ?? pinnedId;
+  const activeId = selection?.id ?? null;
   const { upstream, downstream } = React.useMemo(() => {
     if (!activeId) {
       return { upstream: new Set<string>(), downstream: new Set<string>() };
@@ -417,7 +435,7 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
     return 'dimmed';
   };
 
-  const hoveredNode = hovered ? nodes.find(n => n.id === hovered.id) : undefined;
+  const selectedNode = selection ? nodes.find(n => n.id === selection.id) : undefined;
 
   const sectionTitle = title ?? 'Deployment order';
 
@@ -436,10 +454,15 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
     );
   }
 
-  const cardProps = { kind: kindDef.kind, onHoverStart, onHoverEnd, onTogglePin };
+  const cardProps = { kind: kindDef.kind, onSelect };
 
   return (
-    <Section title={sectionTitle} icon={ICONS.graph} actions={<StatusLegend />}>
+    <Section
+      title={sectionTitle}
+      icon={ICONS.graph}
+      description="Click a card to know more."
+      actions={<StatusLegend />}
+    >
       {error && !items?.length ? (
         <Surface sx={{ p: 2 }}>
           <ErrorState
@@ -463,49 +486,63 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
         </Surface>
       ) : (
         <Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflowX: 'auto', pb: 1 }}>
-            {waves.map((wave, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && (
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      color: 'text.disabled',
-                      px: 0.5,
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Icon icon={ICONS.arrowRight} width="1.8rem" />
+          <Box sx={{ position: 'relative' }}>
+            {scrollState.left && <ScrollArrow direction={-1} onClick={() => scrollByPage(-1)} />}
+            {scrollState.right && <ScrollArrow direction={1} onClick={() => scrollByPage(1)} />}
+            <Box
+              ref={scrollRef}
+              onScroll={updateScrollState}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5,
+                overflowX: 'hidden',
+                pb: 1,
+              }}
+            >
+              {waves.map((wave, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: 'text.disabled',
+                        px: 0.5,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Icon icon={ICONS.arrowRight} width="1.8rem" />
+                    </Box>
+                  )}
+                  <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 210 }}>
+                    <Typography
+                      variant="overline"
+                      sx={{
+                        fontWeight: 700,
+                        color: 'text.secondary',
+                        lineHeight: 1,
+                        textAlign: 'center',
+                        mb: 1,
+                      }}
+                    >
+                      Wave {i + 1}
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {wave.map(node => (
+                        <NodeCard
+                          key={node.id}
+                          node={node}
+                          item={byId.get(node.id)}
+                          emphasis={emphasisOf(node.id)}
+                          {...cardProps}
+                        />
+                      ))}
+                    </Box>
                   </Box>
-                )}
-                <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 210 }}>
-                  <Typography
-                    variant="overline"
-                    sx={{
-                      fontWeight: 700,
-                      color: 'text.secondary',
-                      lineHeight: 1,
-                      textAlign: 'center',
-                      mb: 1,
-                    }}
-                  >
-                    Wave {i + 1}
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    {wave.map(node => (
-                      <NodeCard
-                        key={node.id}
-                        node={node}
-                        item={byId.get(node.id)}
-                        emphasis={emphasisOf(node.id)}
-                        {...cardProps}
-                      />
-                    ))}
-                  </Box>
-                </Box>
-              </React.Fragment>
-            ))}
+                </React.Fragment>
+              ))}
+            </Box>
           </Box>
           {cycles.length > 0 && (
             <Box sx={{ mt: 2 }}>
@@ -526,24 +563,47 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
               </Box>
             </Box>
           )}
-          <Popper
-            open={!!hovered && !!hoveredNode}
-            anchorEl={hovered?.anchor}
-            placement="bottom-start"
-            sx={{ zIndex: theme => theme.zIndex.tooltip }}
+          <Popover
+            open={!!selection && !!selectedNode}
+            anchorEl={selection?.anchor}
+            onClose={() => setSelection(null)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
           >
-            <Box onMouseEnter={cancelClose} onMouseLeave={onHoverEnd} sx={{ pt: 0.5 }}>
-              {hoveredNode && (
-                <NodeHoverCard
-                  item={byId.get(hoveredNode.id)}
-                  node={hoveredNode}
-                  kind={kindDef.kind}
-                />
-              )}
-            </Box>
-          </Popper>
+            {selectedNode && (
+              <NodeDetailCard
+                item={byId.get(selectedNode.id)}
+                node={selectedNode}
+                kind={kindDef.kind}
+              />
+            )}
+          </Popover>
         </Box>
       )}
     </Section>
+  );
+}
+
+/** Floating chevron button revealing overflowed waves on click. */
+function ScrollArrow(props: { direction: 1 | -1; onClick: () => void }) {
+  const { direction, onClick } = props;
+  const theme = useTheme();
+  return (
+    <IconButton
+      size="small"
+      onClick={onClick}
+      aria-label={direction === 1 ? 'Scroll right' : 'Scroll left'}
+      sx={{
+        position: 'absolute',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        [direction === 1 ? 'right' : 'left']: -6,
+        zIndex: 2,
+        backgroundColor: theme.palette.background.paper,
+        boxShadow: '0 2px 8px rgba(16, 24, 40, 0.25)',
+        '&:hover': { backgroundColor: theme.palette.background.paper },
+      }}
+    >
+      <Icon icon={direction === 1 ? ICONS.chevronRight : ICONS.chevronLeft} width="1.2rem" />
+    </IconButton>
   );
 }

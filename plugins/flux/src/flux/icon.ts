@@ -189,6 +189,10 @@ const LUCIDE_ICONS: [string, string][] = [
     `<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18l6-6l-6-6"/>`,
   ],
   [
+    'lucide:chevron-left',
+    `<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 18l-6-6l6-6"/>`,
+  ],
+  [
     'lucide:chevron-down',
     `<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 9l6 6l6-6"/>`,
   ],
@@ -297,7 +301,7 @@ export const ICONS = {
   helmChart: HELM_ICON,
   bucket: 'lucide:archive',
   kustomization: 'lucide:layers',
-  helmRelease: 'lucide:ship',
+  helmRelease: HELM_ICON,
   notifications: 'lucide:bell',
   alert: 'lucide:bell-ring',
   provider: 'lucide:send',
@@ -327,6 +331,7 @@ export const ICONS = {
   commit: 'lucide:git-commit-horizontal',
   author: 'lucide:user-round',
   chevronRight: 'lucide:chevron-right',
+  chevronLeft: 'lucide:chevron-left',
   chevronDown: 'lucide:chevron-down',
   create: 'lucide:plus',
   resources: 'lucide:boxes',

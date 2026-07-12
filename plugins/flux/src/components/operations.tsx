@@ -112,7 +112,11 @@ function OperationalRow(props: { row: FluxRow; tone: 'error' | 'warning' | 'info
   const namespace = object.metadata?.namespace ?? '';
 
   return (
-    <Surface accent={color} sx={{ p: 1.5, display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+    <Surface
+      accent={color}
+      stripe
+      sx={{ p: 1.5, display: 'flex', gap: 1.5, alignItems: 'flex-start' }}
+    >
       <Box
         sx={{
           display: 'flex',

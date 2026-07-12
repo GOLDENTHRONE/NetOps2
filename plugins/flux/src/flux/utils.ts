@@ -73,6 +73,19 @@ export function getStatusInfo(obj: FluxObject): FluxStatusInfo {
     };
   }
 
+  // OCI Helm repositories are static references: the source-controller does
+  // not reconcile them, so they never report conditions. That is normal and
+  // healthy — not "Unknown".
+  if (obj?.kind === 'HelmRepository' && obj?.spec?.type === 'oci') {
+    return {
+      health: 'Ready',
+      reason: 'OCIReference',
+      message:
+        'OCI Helm repositories are static references — HelmReleases pull charts from them ' +
+        'directly, so there is nothing to reconcile and no status is reported.',
+    };
+  }
+
   const reconciling = getCondition(obj, 'Reconciling');
   const stalled = getCondition(obj, 'Stalled');
   const ready = getCondition(obj, 'Ready');
@@ -111,7 +124,12 @@ export function getStatusInfo(obj: FluxObject): FluxStatusInfo {
     };
   }
 
-  return { health: 'Unknown' };
+  return {
+    health: 'Unknown',
+    message:
+      'This resource has not reported any status yet. Its controller may not have observed ' +
+      'it, or the controller responsible for it may not be running.',
+  };
 }
 
 /**

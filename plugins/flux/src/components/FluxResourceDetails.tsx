@@ -15,7 +15,6 @@
  */
 
 import { Icon } from '@iconify/react';
-import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import {
   DetailsGrid,
   NameValueTable,
@@ -24,9 +23,9 @@ import {
   StatusLabel,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { localeDate } from '@kinvolk/headlamp-plugin/lib/Utils';
-import { Box, Chip, Link as MuiLink, Typography } from '@mui/material';
+import { Box, Chip, Typography } from '@mui/material';
 import React from 'react';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { FluxActionButtons } from '../flux/actions';
 import { ICONS, kindIcon } from '../flux/icon';
 import {
@@ -38,12 +37,14 @@ import {
 } from '../flux/insights';
 import { fluxClass, FluxKind, kindsInCategory, SOURCE_KINDS } from '../flux/kinds';
 import {
+  computeDependencyWaves,
   getCommitWebUrl,
   getLastSyncTime,
   getNextSyncTime,
   getSourceRef,
   getStatusInfo,
   isSuspended,
+  makeDependencyNodes,
   parseRevision,
 } from '../flux/utils';
 import {
@@ -51,11 +52,13 @@ import {
   FluxLink,
   FluxStatusLabel,
   healthPresentation,
+  K8sRefLink,
   RevisionLabel,
   SectionEmpty,
   SourceUrlLink,
 } from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
+import { GitCommitHistorySection } from './GitHistory';
 import { HelmReleaseInventorySection, KustomizationInventorySection } from './Inventory';
 import { LineageSection, NamespaceChips } from './Lineage';
 import { Pill, Surface, useAccents } from './ui';
@@ -322,26 +325,30 @@ function DiagnosisSection(props: { item: any }) {
   if (diagnosis.category === 'ok') {
     return null;
   }
-  const color =
-    diagnosis.category === 'progressing'
-      ? accents.info
-      : diagnosis.category === 'suspended'
-      ? accents.neutral
-      : diagnosis.category === 'dependency'
-      ? accents.warning
-      : accents.error;
-  const icon =
-    diagnosis.category === 'progressing'
-      ? ICONS.statusReconciling
-      : diagnosis.category === 'suspended'
-      ? ICONS.statusSuspended
-      : diagnosis.category === 'dependency'
-      ? ICONS.clock
-      : ICONS.statusError;
+  // A resource without any status is a gray "nothing reported", not a failure.
+  const noStatus = getStatusInfo(object).health === 'Unknown';
+  const color = noStatus
+    ? accents.neutral
+    : diagnosis.category === 'progressing'
+    ? accents.info
+    : diagnosis.category === 'suspended'
+    ? accents.neutral
+    : diagnosis.category === 'dependency'
+    ? accents.warning
+    : accents.error;
+  const icon = noStatus
+    ? ICONS.statusUnknown
+    : diagnosis.category === 'progressing'
+    ? ICONS.statusReconciling
+    : diagnosis.category === 'suspended'
+    ? ICONS.statusSuspended
+    : diagnosis.category === 'dependency'
+    ? ICONS.clock
+    : ICONS.statusError;
 
   return (
     <SectionBox title="What's happening">
-      <Surface accent={color} tinted sx={{ p: 2, display: 'flex', gap: 1.5 }}>
+      <Surface accent={color} tinted stripe sx={{ p: 2, display: 'flex', gap: 1.5 }}>
         <Icon icon={icon} color={color} width="1.6rem" style={{ flexShrink: 0, marginTop: 2 }} />
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.3 }}>
@@ -428,6 +435,29 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
   }
 
   const allFailed = errors.length === consumers.length;
+
+  // Present consumers in the order Flux deploys them: Kustomizations first,
+  // then HelmReleases, each in their dependsOn wave order.
+  const kindRank: Record<string, number> = {
+    Kustomization: 0,
+    HelmRelease: 1,
+    HelmChart: 2,
+    ImageUpdateAutomation: 3,
+  };
+  const waveOrder = new Map<string, number>();
+  for (const kind of ['Kustomization', 'HelmRelease']) {
+    const objects = found.filter(f => f.kind === kind).map(f => f.object.jsonData);
+    const { waves } = computeDependencyWaves(makeDependencyNodes(objects));
+    waves.forEach((wave, i) => wave.forEach(n => waveOrder.set(`${kind}/${n.id}`, i)));
+  }
+  const orderOf = (f: { kind: string; object: any }) =>
+    waveOrder.get(`${f.kind}/${f.object.metadata?.namespace}/${f.object.metadata?.name}`) ?? 999;
+  found.sort(
+    (a, b) =>
+      (kindRank[a.kind] ?? 9) - (kindRank[b.kind] ?? 9) ||
+      orderOf(a) - orderOf(b) ||
+      (a.object.metadata?.name ?? '').localeCompare(b.object.metadata?.name ?? '')
+  );
 
   return (
     <SectionBox title={`What this source deploys (${found.length})`}>
@@ -574,38 +604,17 @@ function MentionedResourceLinks(props: { message?: string; fallbackNamespace?: s
       </Typography>
       {refs.map(ref => {
         const namespace = ref.namespace ?? props.fallbackNamespace;
-        const cls = (K8s.ResourceClasses as Record<string, any>)[ref.kind];
-        let url = '';
-        if (cls) {
-          try {
-            const obj = new cls({
-              kind: ref.kind,
-              apiVersion: cls.apiGroupName ? `${cls.apiGroupName}/v1` : 'v1',
-              metadata: { name: ref.name, namespace },
-            });
-            url = obj.getDetailsLink();
-          } catch (e) {
-            url = '';
-          }
-        }
-        const label = (
-          <Pill tone="neutral" icon={kindIcon(ref.kind)}>
-            {ref.kind}/{ref.name}
-          </Pill>
-        );
-        const key = `${ref.kind}/${namespace}/${ref.name}`;
-        if (url) {
-          return (
-            <MuiLink key={key} component={RouterLink} to={url} underline="none">
-              {label}
-            </MuiLink>
-          );
-        }
-        // Flux kinds route by kind name.
         return (
-          <FluxLink key={key} kind={ref.kind} name={ref.name} namespace={namespace}>
-            {label}
-          </FluxLink>
+          <K8sRefLink
+            key={`${ref.kind}/${namespace}/${ref.name}`}
+            kind={ref.kind}
+            name={ref.name}
+            namespace={namespace}
+          >
+            <Pill tone="neutral" icon={kindIcon(ref.kind)}>
+              {ref.kind}/{ref.name}
+            </Pill>
+          </K8sRefLink>
         );
       })}
     </Box>
@@ -779,6 +788,9 @@ export default function FluxResourceDetails(props: { kindDef: FluxKind }) {
               namespace={item.metadata?.namespace}
             />
           );
+        }
+        if (kindDef.kind === 'GitRepository') {
+          sections.push(<GitCommitHistorySection key="flux-git-history" item={item} />);
         }
         if (kindDef.category === 'sources') {
           sections.push(<ArtifactSection key="flux-artifact" item={item} />);
