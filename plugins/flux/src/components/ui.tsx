@@ -46,11 +46,10 @@ import { ICONS } from '../flux/icon';
 const { createRouteURL } = Router;
 
 /**
- * A single, wide namespace filter for a whole page. It reads and writes the
- * same global namespace filter the rest of Headlamp uses, so one selection at
- * the top of the page scopes every list and the dependency graph below — no
- * need to pick a namespace per section. Full namespace names stay visible as
- * chips (unlike the truncated built-in filter).
+ * The page's namespace context, shown compactly at the top right of every
+ * Flux page. It reads and writes the same global namespace filter the rest
+ * of Headlamp uses, so one selection follows the user across all Flux pages
+ * until they change it.
  */
 export function NamespaceBar() {
   const theme = useTheme();
@@ -68,83 +67,52 @@ export function NamespaceBar() {
   const value = React.useMemo(() => Array.from(selected ?? []), [selected]);
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5, flexWrap: 'wrap' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, color: 'text.secondary' }}>
-        <Icon icon={ICONS.namespace} width="1.1rem" />
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          Namespace
-        </Typography>
-      </Box>
-      <Autocomplete
-        multiple
-        size="small"
-        options={options}
-        value={value}
-        onChange={(_e, newValue) =>
-          dispatch({ type: 'filter/setNamespaceFilter', payload: newValue })
-        }
-        disableCloseOnSelect
-        limitTags={6}
-        sx={{ minWidth: 340, maxWidth: 720, flex: '1 1 340px' }}
-        renderTags={(tags, getTagProps) =>
-          tags.map((tag, index) => (
-            <Chip
-              size="small"
-              label={tag}
-              {...getTagProps({ index })}
-              key={tag}
-              sx={{
-                borderRadius: RADII.control,
-                backgroundColor: alpha(accentsFor(theme).primary, 0.12),
-                color: accentsFor(theme).primary,
-                fontWeight: 600,
-              }}
-            />
-          ))
-        }
-        renderInput={params => (
-          <TextField
-            {...params}
-            variant="outlined"
-            placeholder={value.length === 0 ? 'All namespaces' : ''}
-          />
-        )}
-      />
-    </Box>
-  );
-}
-
-/**
- * A searchable, single-pick namespace selector for pages that need a
- * namespace before they can render (graphs, waves). Picking one sets the
- * same global namespace context the rest of the Flux pages use, so the
- * choice follows the user across pages until they change it.
- */
-export function NamespacePicker(props: { placeholder?: string }) {
-  const dispatch = useDispatch();
-  const [namespaces] = (K8s.ResourceClasses as any).Namespace.useList();
-  const options: string[] = React.useMemo(
-    () =>
-      (namespaces ?? [])
-        .map((n: any) => n.metadata?.name)
-        .filter(Boolean)
-        .sort((a: string, b: string) => a.localeCompare(b)),
-    [namespaces]
-  );
-  return (
     <Autocomplete
+      multiple
       size="small"
       options={options}
-      value={null}
+      value={value}
       onChange={(_e, newValue) =>
-        dispatch({ type: 'filter/setNamespaceFilter', payload: newValue ? [newValue] : [] })
+        dispatch({ type: 'filter/setNamespaceFilter', payload: newValue })
       }
-      sx={{ minWidth: 280, maxWidth: 360 }}
+      disableCloseOnSelect
+      limitTags={1}
+      sx={{ minWidth: 260, maxWidth: 380 }}
+      renderTags={(tags, getTagProps) =>
+        tags.map((tag, index) => (
+          <Chip
+            size="small"
+            label={tag}
+            {...getTagProps({ index })}
+            key={tag}
+            sx={{
+              borderRadius: RADII.control,
+              backgroundColor: alpha(accentsFor(theme).primary, 0.12),
+              color: accentsFor(theme).primary,
+              fontWeight: 600,
+            }}
+          />
+        ))
+      }
       renderInput={params => (
         <TextField
           {...params}
           variant="outlined"
-          placeholder={props.placeholder ?? 'Search namespaces…'}
+          placeholder={value.length === 0 ? 'All namespaces' : ''}
+          InputProps={{
+            ...params.InputProps,
+            startAdornment: (
+              <>
+                <Box
+                  component="span"
+                  sx={{ display: 'inline-flex', color: 'text.secondary', pl: 0.5, pr: 0.25 }}
+                >
+                  <Icon icon={ICONS.namespace} width="1rem" />
+                </Box>
+                {params.InputProps.startAdornment}
+              </>
+            ),
+          }}
         />
       )}
     />

@@ -67,8 +67,8 @@ export function FluxSourcesPage() {
         title="Sources"
         description="The repositories, charts and buckets Flux watches for changes."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Sources' }]}
+        actions={<NamespaceBar />}
       />
-      <NamespaceBar />
       {kindsInCategory('sources').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
@@ -95,8 +95,8 @@ export function FluxKustomizationsPage() {
         title="Kustomizations"
         description="Sets of manifests Flux applies to the cluster, in dependency order."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Kustomizations' }]}
+        actions={<NamespaceBar />}
       />
-      <NamespaceBar />
       <DependencyWavesSection kindDef={kindDef} />
       <FluxKindListSection
         kindDef={kindDef}
@@ -116,8 +116,8 @@ export function FluxHelmReleasesPage() {
         title="Helm Releases"
         description="Helm charts Flux installs and upgrades, in dependency order."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Helm Releases' }]}
+        actions={<NamespaceBar />}
       />
-      <NamespaceBar />
       <DependencyWavesSection kindDef={kindDef} />
       <FluxKindListSection kindDef={kindDef} title={TITLES.HelmRelease} icon={ICONS.helmRelease} />
     </Page>
@@ -132,8 +132,8 @@ export function FluxNotificationsPage() {
         title="Notifications"
         description="Alerts, providers and receivers that report Flux events to the outside world."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Notifications' }]}
+        actions={<NamespaceBar />}
       />
-      <NamespaceBar />
       {kindsInCategory('notifications').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
@@ -154,8 +154,8 @@ export function FluxImageAutomationPage() {
         title="Image Automation"
         description="Scans container registries for new image versions and updates Git automatically."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Image Automation' }]}
+        actions={<NamespaceBar />}
       />
-      <NamespaceBar />
       {kindsInCategory('imageautomation').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}

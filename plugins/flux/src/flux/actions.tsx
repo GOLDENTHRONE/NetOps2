@@ -271,6 +271,8 @@ export interface FluxActionButtonsProps {
    *   coded) for table rows — no hover/overflow menu.
    */
   variant?: 'menu' | 'buttons' | 'inline';
+  /** Trigger icon for the 'menu' variant (defaults to the ellipsis). */
+  menuIcon?: string;
 }
 
 /** Short labels for the compact inline (table row) buttons. */
@@ -291,7 +293,7 @@ const INLINE_ACTION_IDS = new Set(Object.keys(INLINE_LABELS));
  * destructive happens on a single stray click.
  */
 export function FluxActionButtons(props: FluxActionButtonsProps) {
-  const { item, withEditDelete, variant = 'menu' } = props;
+  const { item, withEditDelete, variant = 'menu', menuIcon } = props;
   const theme = useTheme();
   const { enqueueSnackbar } = useSnackbar();
   const actions = useFluxActions(item);
@@ -427,7 +429,7 @@ export function FluxActionButtons(props: FluxActionButtonsProps) {
           aria-label={`Flux actions for ${name}`}
           onClick={e => setAnchorEl(e.currentTarget)}
         >
-          <Icon icon={ICONS.more} />
+          <Icon icon={menuIcon ?? ICONS.more} />
         </IconButton>
       </Tooltip>
       <Menu anchorEl={anchorEl} open={!!anchorEl} onClose={() => setAnchorEl(null)}>

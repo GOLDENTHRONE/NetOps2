@@ -15,20 +15,24 @@
  */
 
 import { Icon } from '@iconify/react';
-import { K8s } from '@kinvolk/headlamp-plugin/lib';
+import { K8s, Router } from '@kinvolk/headlamp-plugin/lib';
 import {
   Link as HeadlampLink,
   SectionBox,
+  SimpleTable,
   StatusLabel,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { Box, IconButton, Link as MuiLink, Typography } from '@mui/material';
+import { Box, Link as MuiLink, Typography } from '@mui/material';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { ICONS } from '../flux/icon';
+import { ICONS, kindIcon } from '../flux/icon';
+import { pluralizeKind } from '../flux/insights';
 import { SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
+import { Surface } from './ui';
 
 const { ResourceClasses } = K8s;
+const { createRouteURL } = Router;
 
 /** One object managed by a Kustomization or Helm release. */
 export interface ManagedEntry {
@@ -65,32 +69,54 @@ export function parseInventoryEntries(
   return result;
 }
 
-/** Details page link for a managed object; plain text when the kind is unknown. */
+/**
+ * Details page link for a managed object. Built-in kinds link to their
+ * regular Headlamp pages; custom resources (Vault secrets, cert-manager
+ * objects, ...) link to Headlamp's generic custom-resource page, so every
+ * row stays navigable.
+ */
 function entryLink(entry: ManagedEntry): React.ReactNode {
   const cls = (ResourceClasses as Record<string, any>)[entry.kind];
-  const nameText = entry.namespace ? `${entry.namespace}/${entry.name}` : entry.name;
-  if (!cls || (cls.apiGroupName ?? '') !== entry.group) {
-    return <span>{nameText}</span>;
+  if (cls && (cls.apiGroupName ?? '') === entry.group) {
+    let url = '';
+    try {
+      const obj = new cls({
+        kind: entry.kind,
+        apiVersion: entry.group ? `${entry.group}/v1` : 'v1',
+        metadata: { name: entry.name, namespace: entry.namespace },
+      });
+      url = obj.getDetailsLink();
+    } catch (e) {
+      url = '';
+    }
+    if (url) {
+      return (
+        <MuiLink component={RouterLink} to={url}>
+          {entry.name}
+        </MuiLink>
+      );
+    }
   }
-  let url = '';
-  try {
-    const obj = new cls({
-      kind: entry.kind,
-      apiVersion: entry.group ? `${entry.group}/v1` : 'v1',
-      metadata: { name: entry.name, namespace: entry.namespace },
-    });
-    url = obj.getDetailsLink();
-  } catch (e) {
-    url = '';
+  // Not a built-in kind: link to the generic custom-resource page.
+  if (entry.group) {
+    try {
+      const url = createRouteURL('customresource', {
+        crd: `${pluralizeKind(entry.kind)}.${entry.group}`,
+        namespace: entry.namespace ?? '-',
+        crName: entry.name,
+      });
+      if (url) {
+        return (
+          <MuiLink component={RouterLink} to={url}>
+            {entry.name}
+          </MuiLink>
+        );
+      }
+    } catch (e) {
+      // Fall through to plain text.
+    }
   }
-  if (!url) {
-    return <span>{nameText}</span>;
-  }
-  return (
-    <MuiLink component={RouterLink} to={url}>
-      {nameText}
-    </MuiLink>
-  );
+  return <span>{entry.name}</span>;
 }
 
 /** Live pods of a workload, resolved through the workload's label selector. */
@@ -147,7 +173,6 @@ function WorkloadPods(props: { entry: ManagedEntry }) {
         const phase = pod.jsonData?.status?.phase;
         return (
           <Box key={pod.metadata.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Icon icon={ICONS.arrowRight} width="1rem" />
             <HeadlampLink kubeObject={pod}>{pod.metadata.name}</HeadlampLink>
             <StatusLabel
               status={
@@ -167,72 +192,83 @@ function WorkloadPods(props: { entry: ManagedEntry }) {
   );
 }
 
-function EntryRow(props: { entry: ManagedEntry }) {
+/** The "Pods" cell of a workload row: collapsed by default, expands to live pods. */
+function PodsCell(props: { entry: ManagedEntry }) {
   const { entry } = props;
   const [expanded, setExpanded] = React.useState(false);
   const expandable = WORKLOAD_KINDS.includes(entry.kind) && !!entry.namespace;
 
+  if (!expandable) {
+    return <>-</>;
+  }
+  if (!expanded) {
+    return (
+      <MuiLink
+        component="button"
+        type="button"
+        onClick={() => setExpanded(true)}
+        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, fontSize: '0.8rem' }}
+      >
+        <Icon icon={ICONS.chevronRight} width="0.9rem" />
+        Show pods
+      </MuiLink>
+    );
+  }
   return (
-    <Box sx={{ pl: 1 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        {expandable ? (
-          <IconButton
-            size="small"
-            onClick={() => setExpanded(e => !e)}
-            aria-label={expanded ? 'Hide pods' : 'Show pods'}
-          >
-            <Icon icon={expanded ? ICONS.chevronDown : ICONS.chevronRight} width="1.1rem" />
-          </IconButton>
-        ) : (
-          <Box sx={{ width: '1.85rem' }} />
-        )}
-        {entryLink(entry)}
-      </Box>
-      {expanded && (
-        <Box sx={{ pl: 5, pb: 1 }}>
-          <WorkloadPods entry={entry} />
-        </Box>
-      )}
+    <Box>
+      <MuiLink
+        component="button"
+        type="button"
+        onClick={() => setExpanded(false)}
+        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, fontSize: '0.8rem', mb: 0.5 }}
+      >
+        <Icon icon={ICONS.chevronDown} width="0.9rem" />
+        Hide pods
+      </MuiLink>
+      <WorkloadPods entry={entry} />
     </Box>
   );
 }
 
 /**
- * Hierarchical view of the objects managed by a Flux applier, grouped by
- * kind. Workloads can be expanded down to their live pods, and every entry
- * links to the regular Headlamp details view (logs, shell, edit, ...).
+ * The objects managed by a Flux applier as one table, consistent with every
+ * other table in the Flux UI: kind (with a recognizable icon — Vault, Helm,
+ * ConfigMap, Secret, ...), a link to the real object, its namespace, and
+ * live pods for workloads.
  */
-export function ManagedResourcesTree(props: { entries: ManagedEntry[] }) {
+export function ManagedResourcesTable(props: { entries: ManagedEntry[] }) {
   const { entries } = props;
-  const groups = React.useMemo(() => {
-    const map = new Map<string, ManagedEntry[]>();
-    for (const entry of entries) {
-      const key = entry.group ? `${entry.kind} (${entry.group})` : entry.kind;
-      map.set(key, [...(map.get(key) ?? []), entry]);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [entries]);
+
+  const sorted = React.useMemo(
+    () => [...entries].sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)),
+    [entries]
+  );
 
   if (entries.length === 0) {
     return <SectionEmpty message="No managed objects reported yet" />;
   }
 
   return (
-    <Box>
-      {groups.map(([kindLabel, kindEntries]) => (
-        <Box key={kindLabel} sx={{ mb: 1.5 }}>
-          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-            {kindLabel} ({kindEntries.length})
-          </Typography>
-          {kindEntries
-            .slice()
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map(entry => (
-              <EntryRow key={`${entry.namespace ?? ''}/${entry.name}`} entry={entry} />
-            ))}
-        </Box>
-      ))}
-    </Box>
+    <Surface sx={{ px: 2, py: 0.5 }}>
+      <SimpleTable
+        columns={[
+          {
+            label: 'Kind',
+            getter: (entry: ManagedEntry) => (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Icon icon={kindIcon(entry.kind, entry.group)} width="1.2rem" />
+                <span>{entry.kind}</span>
+              </Box>
+            ),
+          },
+          { label: 'Name', getter: (entry: ManagedEntry) => entryLink(entry) },
+          { label: 'Namespace', getter: (entry: ManagedEntry) => entry.namespace ?? '-' },
+          { label: 'API group', getter: (entry: ManagedEntry) => entry.group || 'core' },
+          { label: 'Pods', getter: (entry: ManagedEntry) => <PodsCell entry={entry} /> },
+        ]}
+        data={sorted}
+      />
+    </Surface>
   );
 }
 
@@ -241,7 +277,7 @@ export function KustomizationInventorySection(props: { item: any }) {
   const entries = parseInventoryEntries(props.item?.jsonData?.status?.inventory?.entries);
   return (
     <SectionBox title={`Managed objects (${entries.length})`}>
-      <ManagedResourcesTree entries={entries} />
+      <ManagedResourcesTable entries={entries} />
     </SectionBox>
   );
 }
@@ -311,7 +347,7 @@ export function HelmReleaseInventorySection(props: { item: any }) {
         <SectionEmpty message="Looking for objects labeled by the helm-controller…" />
       ) : (
         <>
-          <ManagedResourcesTree entries={entries} />
+          <ManagedResourcesTable entries={entries} />
           {errors.length > 0 && (
             <InlineError
               error={pickMostRelevantError(errors)}

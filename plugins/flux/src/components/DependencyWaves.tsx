@@ -16,23 +16,16 @@
 
 import { Icon } from '@iconify/react';
 import { Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { alpha, Box, Divider, Paper, Popover, Theme, Typography, useTheme } from '@mui/material';
+import { alpha, Box, Divider, Paper, Popper, Theme, Typography, useTheme } from '@mui/material';
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { FluxActionButtons } from '../flux/actions';
 import { ICONS } from '../flux/icon';
-import {
-  collectDownstream,
-  collectUpstream,
-  diagnose,
-  summarizeWave,
-  WaveState,
-} from '../flux/insights';
+import { collectDownstream, collectUpstream, diagnose } from '../flux/insights';
 import { fluxClass, FluxKind } from '../flux/kinds';
 import {
   computeDependencyWaves,
   DependencyNode,
-  FluxHealth,
   FluxObject,
   getLastSyncTime,
   getNextSyncTime,
@@ -42,7 +35,7 @@ import {
 } from '../flux/utils';
 import { FluxLink, FluxStatusLabel, healthToStatus, LastSyncLabel, NextSyncLabel } from './common';
 import { ErrorState } from './errors';
-import { accentsFor, EmptyState, NamespacePicker, Pill, RADII, Section, Surface } from './ui';
+import { accentsFor, EmptyState, RADII, Section, Surface } from './ui';
 
 const HEALTH_ICON: Record<string, string> = {
   Ready: ICONS.statusReady,
@@ -60,9 +53,6 @@ function statusColor(theme: Theme, status: 'success' | 'warning' | 'error' | '')
   }
   return a[status];
 }
-
-/** Height reserved for each wave's header, so the arrows line up with the cards. */
-const WAVE_HEADER_HEIGHT = 30;
 
 /** Countdown chip shown on the node card (e.g. "next sync in 4m"). */
 function NextReconcileHint(props: { object?: FluxObject }) {
@@ -91,15 +81,9 @@ function NextReconcileHint(props: { object?: FluxObject }) {
   );
 }
 
-/** A rich, colored, structured detail card opened when a node is clicked. */
-function NodePopoverContent(props: {
-  item?: any;
-  node: DependencyNode;
-  kind: string;
-  upstreamCount: number;
-  downstreamCount: number;
-}) {
-  const { item, node, kind, upstreamCount, downstreamCount } = props;
+/** The detail card shown while hovering a node. Actions live in the header as a gear menu. */
+function NodeHoverCard(props: { item?: any; node: DependencyNode; kind: string }) {
+  const { item, node, kind } = props;
   const object: FluxObject | undefined = item?.jsonData;
   const theme = useTheme();
   const info = object ? getStatusInfo(object) : undefined;
@@ -108,10 +92,10 @@ function NodePopoverContent(props: {
   const sourceRef = object ? getSourceRef(object) : undefined;
 
   return (
-    <Paper sx={{ p: 2, maxWidth: 380, minWidth: 300, borderRadius: RADII.card }}>
+    <Paper elevation={6} sx={{ p: 2, maxWidth: 380, minWidth: 300, borderRadius: RADII.card }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <Icon icon={HEALTH_ICON[info?.health ?? 'Unknown']} color={color} width="1.5rem" />
-        <Box sx={{ minWidth: 0 }}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
           <FluxLink kind={kind} name={node.name} namespace={node.namespace}>
             <Typography variant="subtitle1" sx={{ fontWeight: 600, lineHeight: 1.2 }} noWrap>
               {node.name}
@@ -121,6 +105,7 @@ function NodePopoverContent(props: {
             {kind} · {node.namespace}
           </Typography>
         </Box>
+        {item && <FluxActionButtons item={item} menuIcon={ICONS.gear} />}
       </Box>
 
       {object && (
@@ -206,31 +191,12 @@ function NodePopoverContent(props: {
             </Typography>
           </>
         )}
-        {(upstreamCount > 0 || downstreamCount > 0) && (
-          <>
-            <Typography variant="caption" color="textSecondary">
-              Highlighted
-            </Typography>
-            <Typography variant="caption">
-              {upstreamCount} upstream · {downstreamCount} downstream
-            </Typography>
-          </>
-        )}
       </Box>
-
-      {item && (
-        <>
-          <Divider sx={{ my: 1 }} />
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <FluxActionButtons item={item} />
-          </Box>
-        </>
-      )}
     </Paper>
   );
 }
 
-/** How a node participates in the current selection. */
+/** How a node participates in the current highlight. */
 type Emphasis = 'none' | 'selected' | 'upstream' | 'downstream' | 'dimmed';
 
 function NodeCard(props: {
@@ -238,9 +204,11 @@ function NodeCard(props: {
   item?: any;
   kind: string;
   emphasis: Emphasis;
-  onSelect: (id: string, anchor: HTMLElement) => void;
+  onHoverStart: (id: string, anchor: HTMLElement) => void;
+  onHoverEnd: () => void;
+  onTogglePin: (id: string) => void;
 }) {
-  const { node, item, kind, emphasis, onSelect } = props;
+  const { node, item, kind, emphasis, onHoverStart, onHoverEnd, onTogglePin } = props;
   const object: FluxObject | undefined = item?.jsonData;
   const theme = useTheme();
   const accents = accentsFor(theme);
@@ -259,69 +227,97 @@ function NodeCard(props: {
       : undefined;
 
   return (
-    <Surface
-      interactive
-      accent={color}
-      tinted
-      onClick={e => onSelect(node.id, e.currentTarget as HTMLElement)}
-      sx={{
-        px: 1.5,
-        py: 1,
-        minWidth: 190,
-        opacity: emphasis === 'dimmed' ? 0.35 : 1,
-        transition: 'opacity 0.15s ease, box-shadow 0.15s ease',
-        ...(emphasisRing ? { boxShadow: emphasisRing } : {}),
-      }}
+    <Box
+      onMouseEnter={e => onHoverStart(node.id, e.currentTarget as HTMLElement)}
+      onMouseLeave={onHoverEnd}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-        <Icon icon={HEALTH_ICON[info?.health ?? 'Unknown']} color={color} width="1.15rem" />
-        <Typography component="span" variant="body2" sx={{ fontWeight: 600 }} noWrap>
-          {node.name}
-        </Typography>
-        {emphasis === 'upstream' && (
-          <Typography variant="caption" sx={{ color: accents.warning, ml: 'auto' }}>
-            needed first
+      <Surface
+        interactive
+        accent={color}
+        tinted
+        onClick={() => onTogglePin(node.id)}
+        sx={{
+          px: 1.5,
+          py: 1,
+          minWidth: 200,
+          opacity: emphasis === 'dimmed' ? 0.35 : 1,
+          transition: 'opacity 0.15s ease, box-shadow 0.15s ease',
+          ...(emphasis === 'selected'
+            ? {
+                backgroundColor: alpha(accents.primary, theme.palette.mode === 'dark' ? 0.18 : 0.1),
+              }
+            : {}),
+          ...(emphasisRing ? { boxShadow: emphasisRing } : {}),
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <Icon icon={HEALTH_ICON[info?.health ?? 'Unknown']} color={color} width="1.15rem" />
+          <Typography component="span" variant="body2" sx={{ fontWeight: 600, minWidth: 0 }} noWrap>
+            {node.name}
           </Typography>
-        )}
-        {emphasis === 'downstream' && (
-          <Typography variant="caption" sx={{ color: accents.info, ml: 'auto' }}>
-            waits on it
-          </Typography>
-        )}
-      </Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}>
-        <Typography variant="caption" color="textSecondary" noWrap>
-          {node.namespace}
-        </Typography>
-        <NextReconcileHint object={object} />
-      </Box>
-      {info?.health === 'NotReady' && diagnosis && (
-        <Typography variant="caption" color="error" noWrap sx={{ display: 'block', mt: 0.25 }}>
-          {diagnosis.headline}
-        </Typography>
-      )}
-      {info?.health === 'Reconciling' && diagnosis?.category === 'dependency' && (
-        <Typography
-          variant="caption"
-          sx={{ display: 'block', mt: 0.25, color: accents.warning }}
-          noWrap
+          {emphasis === 'upstream' && (
+            <Typography
+              variant="caption"
+              noWrap
+              sx={{ color: accents.warning, ml: 'auto', flexShrink: 0 }}
+            >
+              needed
+            </Typography>
+          )}
+          {emphasis === 'downstream' && (
+            <Typography
+              variant="caption"
+              noWrap
+              sx={{ color: accents.info, ml: 'auto', flexShrink: 0 }}
+            >
+              waits
+            </Typography>
+          )}
+        </Box>
+        <Box
+          sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 0.5 }}
         >
-          waiting for dependency
-        </Typography>
-      )}
-    </Surface>
+          <Typography variant="caption" color="textSecondary" noWrap>
+            {node.namespace}
+          </Typography>
+          <NextReconcileHint object={object} />
+        </Box>
+        {info?.health === 'NotReady' && diagnosis && (
+          <Typography variant="caption" color="error" noWrap sx={{ display: 'block', mt: 0.25 }}>
+            {diagnosis.headline}
+          </Typography>
+        )}
+      </Surface>
+    </Box>
   );
 }
 
-const WAVE_STATE_PRESENTATION: Record<
-  WaveState,
-  { label: string; icon: string; tone: 'success' | 'warning' | 'error' | 'info' | 'neutral' }
-> = {
-  complete: { label: 'deployed', icon: ICONS.statusReady, tone: 'success' },
-  active: { label: 'deploying', icon: ICONS.statusReconciling, tone: 'info' },
-  blocked: { label: 'blocked', icon: ICONS.statusError, tone: 'error' },
-  waiting: { label: 'waiting', icon: ICONS.clock, tone: 'neutral' },
-};
+/** Small always-visible legend explaining what the card colors mean. */
+function StatusLegend() {
+  const theme = useTheme();
+  const accents = accentsFor(theme);
+  const entries: { color: string; label: string }[] = [
+    { color: accents.success, label: 'Ready' },
+    { color: accents.error, label: 'Failed' },
+    { color: accents.warning, label: 'Reconciling' },
+    { color: accents.muted, label: 'Suspended' },
+  ];
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+      {entries.map(e => (
+        <Box key={e.label} sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+          <Box
+            component="span"
+            sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: e.color }}
+          />
+          <Typography variant="caption" color="text.secondary">
+            {e.label}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+}
 
 export interface DependencyWavesSectionProps {
   kindDef: FluxKind;
@@ -333,9 +329,10 @@ export interface DependencyWavesSectionProps {
  * in the order Flux deploys them: items in the same wave reconcile in
  * parallel; each wave waits for the previous one to be ready.
  *
- * Clicking a node highlights its upstream dependencies (what must deploy
- * first) and downstream dependents (what waits on it), and opens a detail
- * card explaining the node's state in plain language.
+ * Hovering a node opens its detail card and highlights its upstream
+ * dependencies ("needed") and downstream dependents ("waits"); clicking
+ * pins the highlight in place. Card colors carry the live status — the
+ * legend at the top right explains them.
  *
  * The graph is only rendered once one or more namespaces are selected — a
  * cluster-wide graph can be far too large to be useful.
@@ -349,10 +346,26 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
 
   const [items, error] = (fluxClass(kindDef) as any).useList();
 
-  const [selection, setSelection] = React.useState<{
-    id: string;
-    anchor: HTMLElement;
-  } | null>(null);
+  // Hover drives the highlight and the detail card; clicking pins it.
+  const [hovered, setHovered] = React.useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const [pinnedId, setPinnedId] = React.useState<string | null>(null);
+  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const cancelClose = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = undefined;
+    }
+  };
+  const onHoverStart = (id: string, anchor: HTMLElement) => {
+    cancelClose();
+    setHovered({ id, anchor });
+  };
+  const onHoverEnd = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setHovered(null), 250);
+  };
+  const onTogglePin = (id: string) => setPinnedId(current => (current === id ? null : id));
 
   const filtered = React.useMemo(
     () =>
@@ -377,21 +390,22 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
   );
   const { waves, cycles } = React.useMemo(() => computeDependencyWaves(nodes), [nodes]);
 
+  const activeId = hovered?.id ?? pinnedId;
   const { upstream, downstream } = React.useMemo(() => {
-    if (!selection) {
+    if (!activeId) {
       return { upstream: new Set<string>(), downstream: new Set<string>() };
     }
     return {
-      upstream: collectUpstream(nodes, selection.id),
-      downstream: collectDownstream(nodes, selection.id),
+      upstream: collectUpstream(nodes, activeId),
+      downstream: collectDownstream(nodes, activeId),
     };
-  }, [nodes, selection]);
+  }, [nodes, activeId]);
 
   const emphasisOf = (id: string): Emphasis => {
-    if (!selection) {
+    if (!activeId) {
       return 'none';
     }
-    if (id === selection.id) {
+    if (id === activeId) {
       return 'selected';
     }
     if (upstream.has(id)) {
@@ -403,38 +417,29 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
     return 'dimmed';
   };
 
-  const healthOf = (node: DependencyNode): FluxHealth => {
-    const item = byId.get(node.id);
-    return item ? getStatusInfo(item.jsonData).health : 'Unknown';
-  };
-
-  const onSelect = (id: string, anchor: HTMLElement) => setSelection({ id, anchor });
-  const selectedNode = selection ? nodes.find(n => n.id === selection.id) : undefined;
+  const hoveredNode = hovered ? nodes.find(n => n.id === hovered.id) : undefined;
 
   const sectionTitle = title ?? 'Deployment order';
 
-  // Prompt for a namespace before drawing a potentially huge cluster-wide graph.
+  // Without a namespace a cluster-wide graph would be unreadable; keep the
+  // page quiet with a single subtle hint instead of a large empty section.
   if (!hasNamespace) {
     return (
-      <Section title={sectionTitle} icon={ICONS.graph}>
-        <Surface sx={{ p: 2 }}>
-          <EmptyState
-            icon={ICONS.graph}
-            title="Pick a namespace to see the deployment order"
-            description="Deployment graphs are scoped to one namespace so they stay readable. The namespace you pick becomes your working context on every Flux page until you change it."
-            action={<NamespacePicker placeholder="Search namespaces…" />}
-          />
-        </Surface>
-      </Section>
+      <Box
+        sx={{ display: 'flex', alignItems: 'center', gap: 0.75, color: 'text.secondary', mb: 3 }}
+      >
+        <Icon icon={ICONS.graph} width="1rem" />
+        <Typography variant="body2">
+          Select a namespace (top right) to visualize the deployment order.
+        </Typography>
+      </Box>
     );
   }
 
+  const cardProps = { kind: kindDef.kind, onHoverStart, onHoverEnd, onTogglePin };
+
   return (
-    <Section
-      title={sectionTitle}
-      icon={ICONS.graph}
-      description="Click any step to highlight what must deploy before it and what waits on it."
-    >
+    <Section title={sectionTitle} icon={ICONS.graph} actions={<StatusLegend />}>
       {error && !items?.length ? (
         <Surface sx={{ p: 2 }}>
           <ErrorState
@@ -458,66 +463,49 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
         </Surface>
       ) : (
         <Box>
-          <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1.5, overflowX: 'auto', pb: 1 }}>
-            {waves.map((wave, i) => {
-              const waveState = summarizeWave(wave.map(healthOf));
-              const p = WAVE_STATE_PRESENTATION[waveState];
-              return (
-                <React.Fragment key={i}>
-                  {i > 0 && (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                      {/* Spacer matching the wave header, so the arrow centers on
-                          the cards band rather than the whole column. */}
-                      <Box sx={{ height: WAVE_HEADER_HEIGHT }} />
-                      <Box
-                        sx={{
-                          flex: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: 'text.disabled',
-                          px: 0.5,
-                        }}
-                      >
-                        <Icon icon={ICONS.arrowRight} width="1.8rem" />
-                      </Box>
-                    </Box>
-                  )}
-                  <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 200 }}>
-                    <Box
-                      sx={{
-                        height: WAVE_HEADER_HEIGHT,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.75,
-                      }}
-                    >
-                      <Typography
-                        variant="overline"
-                        sx={{ fontWeight: 700, color: 'text.secondary', lineHeight: 1 }}
-                      >
-                        Wave {i + 1}
-                      </Typography>
-                      <Pill tone={p.tone} icon={p.icon}>
-                        {p.label}
-                      </Pill>
-                    </Box>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {wave.map(node => (
-                        <NodeCard
-                          key={node.id}
-                          node={node}
-                          item={byId.get(node.id)}
-                          kind={kindDef.kind}
-                          emphasis={emphasisOf(node.id)}
-                          onSelect={onSelect}
-                        />
-                      ))}
-                    </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, overflowX: 'auto', pb: 1 }}>
+            {waves.map((wave, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && (
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      color: 'text.disabled',
+                      px: 0.5,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Icon icon={ICONS.arrowRight} width="1.8rem" />
                   </Box>
-                </React.Fragment>
-              );
-            })}
+                )}
+                <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 210 }}>
+                  <Typography
+                    variant="overline"
+                    sx={{
+                      fontWeight: 700,
+                      color: 'text.secondary',
+                      lineHeight: 1,
+                      textAlign: 'center',
+                      mb: 1,
+                    }}
+                  >
+                    Wave {i + 1}
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {wave.map(node => (
+                      <NodeCard
+                        key={node.id}
+                        node={node}
+                        item={byId.get(node.id)}
+                        emphasis={emphasisOf(node.id)}
+                        {...cardProps}
+                      />
+                    ))}
+                  </Box>
+                </Box>
+              </React.Fragment>
+            ))}
           </Box>
           {cycles.length > 0 && (
             <Box sx={{ mt: 2 }}>
@@ -531,30 +519,29 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
                     key={node.id}
                     node={node}
                     item={byId.get(node.id)}
-                    kind={kindDef.kind}
                     emphasis={emphasisOf(node.id)}
-                    onSelect={onSelect}
+                    {...cardProps}
                   />
                 ))}
               </Box>
             </Box>
           )}
-          <Popover
-            open={!!selection && !!selectedNode}
-            anchorEl={selection?.anchor}
-            onClose={() => setSelection(null)}
-            anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          <Popper
+            open={!!hovered && !!hoveredNode}
+            anchorEl={hovered?.anchor}
+            placement="bottom-start"
+            sx={{ zIndex: theme => theme.zIndex.tooltip }}
           >
-            {selectedNode && (
-              <NodePopoverContent
-                item={byId.get(selectedNode.id)}
-                node={selectedNode}
-                kind={kindDef.kind}
-                upstreamCount={upstream.size}
-                downstreamCount={downstream.size}
-              />
-            )}
-          </Popover>
+            <Box onMouseEnter={cancelClose} onMouseLeave={onHoverEnd} sx={{ pt: 0.5 }}>
+              {hoveredNode && (
+                <NodeHoverCard
+                  item={byId.get(hoveredNode.id)}
+                  node={hoveredNode}
+                  kind={kindDef.kind}
+                />
+              )}
+            </Box>
+          </Popper>
         </Box>
       )}
     </Section>

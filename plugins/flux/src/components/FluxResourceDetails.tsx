@@ -15,6 +15,7 @@
  */
 
 import { Icon } from '@iconify/react';
+import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import {
   DetailsGrid,
   NameValueTable,
@@ -23,12 +24,18 @@ import {
   StatusLabel,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { localeDate } from '@kinvolk/headlamp-plugin/lib/Utils';
-import { Box, Chip, Typography } from '@mui/material';
+import { Box, Chip, Link as MuiLink, Typography } from '@mui/material';
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { Link as RouterLink, useParams } from 'react-router-dom';
 import { FluxActionButtons } from '../flux/actions';
-import { ICONS } from '../flux/icon';
-import { diagnose, getFailureCounts } from '../flux/insights';
+import { ICONS, kindIcon } from '../flux/icon';
+import {
+  CONDITION_MEANINGS,
+  diagnose,
+  extractMentionedResources,
+  getFailureCounts,
+  getTargetNamespaces,
+} from '../flux/insights';
 import { fluxClass, FluxKind, kindsInCategory, SOURCE_KINDS } from '../flux/kinds';
 import {
   getCommitWebUrl,
@@ -43,14 +50,14 @@ import {
   CommitAuthorLabel,
   FluxLink,
   FluxStatusLabel,
-  healthToStatus,
+  healthPresentation,
   RevisionLabel,
   SectionEmpty,
   SourceUrlLink,
 } from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
 import { HelmReleaseInventorySection, KustomizationInventorySection } from './Inventory';
-import { ConsumerLineageRow, LineageSection } from './Lineage';
+import { LineageSection, NamespaceChips } from './Lineage';
 import { Pill, Surface, useAccents } from './ui';
 
 function commonInfoRows(item: any) {
@@ -282,27 +289,23 @@ function sourceLink(item: any) {
   );
 }
 
-/** Chip linking to another Flux object, colored by its live status. */
+/**
+ * A link to another Flux object with a small live-status dot, styled like
+ * the rest of the design system (soft tinted pill, no hard outline).
+ */
 function ObjectChip(props: { kind: string; object: any }) {
   const { kind, object } = props;
   const info = getStatusInfo(object.jsonData);
+  const p = healthPresentation(info.health);
   return (
     <FluxLink kind={kind} name={object.metadata.name} namespace={object.metadata.namespace}>
-      <Chip
-        size="small"
-        clickable
-        label={`${kind}/${object.metadata.name}`}
-        color={
-          healthToStatus(info.health) === 'success'
-            ? 'success'
-            : healthToStatus(info.health) === 'error'
-            ? 'error'
-            : healthToStatus(info.health) === 'warning'
-            ? 'warning'
-            : 'default'
-        }
-        variant="outlined"
-      />
+      <Pill
+        tone={p.tone}
+        icon={p.icon}
+        title={`${p.label}${info.message ? `: ${info.message}` : ''}`}
+      >
+        {kind}/{object.metadata.name}
+      </Pill>
     </FluxLink>
   );
 }
@@ -439,15 +442,51 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
           }
         />
       ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-          {found.map(({ kind, object }) => (
-            <ConsumerLineageRow
-              key={`${kind}-${object.metadata.uid}`}
-              consumerKind={kind}
-              consumer={object}
-            />
-          ))}
-        </Box>
+        <Surface sx={{ px: 2, py: 0.5 }}>
+          <SimpleTable
+            columns={[
+              {
+                label: 'Kind',
+                getter: (row: { kind: string; object: any }) => (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Icon icon={kindIcon(row.kind)} width="1.2rem" />
+                    <span>{row.kind}</span>
+                  </Box>
+                ),
+              },
+              {
+                label: 'Name',
+                getter: (row: { kind: string; object: any }) => (
+                  <FluxLink
+                    kind={row.kind}
+                    name={row.object.metadata?.name ?? ''}
+                    namespace={row.object.metadata?.namespace}
+                  >
+                    {row.object.metadata?.name}
+                  </FluxLink>
+                ),
+              },
+              {
+                label: 'Namespace',
+                getter: (row: { kind: string; object: any }) =>
+                  row.object.metadata?.namespace ?? '-',
+              },
+              {
+                label: 'Status',
+                getter: (row: { kind: string; object: any }) => (
+                  <FluxStatusLabel object={row.object.jsonData} />
+                ),
+              },
+              {
+                label: 'Deploys to',
+                getter: (row: { kind: string; object: any }) => (
+                  <NamespaceChips namespaces={getTargetNamespaces(row.object.jsonData)} />
+                ),
+              },
+            ]}
+            data={found}
+          />
+        </Surface>
       )}
     </SectionBox>
   );
@@ -522,8 +561,64 @@ function DependenciesSection(props: { item: any; kindDef: FluxKind }) {
   );
 }
 
-/** Kubernetes conditions as a table, newest transition first. */
-function ConditionsSection(props: { conditions: any[] }) {
+/** Links to the Kubernetes objects a condition message mentions (failing pods, workloads, ...). */
+function MentionedResourceLinks(props: { message?: string; fallbackNamespace?: string }) {
+  const refs = extractMentionedResources(props.message);
+  if (refs.length === 0) {
+    return null;
+  }
+  return (
+    <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 0.5, alignItems: 'center' }}>
+      <Typography variant="caption" color="text.secondary">
+        Involved:
+      </Typography>
+      {refs.map(ref => {
+        const namespace = ref.namespace ?? props.fallbackNamespace;
+        const cls = (K8s.ResourceClasses as Record<string, any>)[ref.kind];
+        let url = '';
+        if (cls) {
+          try {
+            const obj = new cls({
+              kind: ref.kind,
+              apiVersion: cls.apiGroupName ? `${cls.apiGroupName}/v1` : 'v1',
+              metadata: { name: ref.name, namespace },
+            });
+            url = obj.getDetailsLink();
+          } catch (e) {
+            url = '';
+          }
+        }
+        const label = (
+          <Pill tone="neutral" icon={kindIcon(ref.kind)}>
+            {ref.kind}/{ref.name}
+          </Pill>
+        );
+        const key = `${ref.kind}/${namespace}/${ref.name}`;
+        if (url) {
+          return (
+            <MuiLink key={key} component={RouterLink} to={url} underline="none">
+              {label}
+            </MuiLink>
+          );
+        }
+        // Flux kinds route by kind name.
+        return (
+          <FluxLink key={key} kind={ref.kind} name={ref.name} namespace={namespace}>
+            {label}
+          </FluxLink>
+        );
+      })}
+    </Box>
+  );
+}
+
+/**
+ * Kubernetes conditions as a table, newest transition first — with a plain
+ * explanation of what each condition type means and direct links to the
+ * objects a failure message mentions, so "Not Ready" is always followed by
+ * "and here is where to look".
+ */
+function ConditionsSection(props: { conditions: any[]; namespace?: string }) {
   const conditions = [...props.conditions].sort((a, b) =>
     (b.lastTransitionTime ?? '').localeCompare(a.lastTransitionTime ?? '')
   );
@@ -531,18 +626,36 @@ function ConditionsSection(props: { conditions: any[] }) {
     <SectionBox title="Conditions">
       <SimpleTable
         columns={[
-          { label: 'Type', getter: (c: any) => c.type },
+          {
+            label: 'Type',
+            getter: (c: any) => {
+              const meaning = CONDITION_MEANINGS[c.type];
+              if (!meaning) {
+                return c.type;
+              }
+              return (
+                <Box
+                  component="span"
+                  title={meaning}
+                  sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, cursor: 'help' }}
+                >
+                  {c.type}
+                  <Icon icon={ICONS.info} width="0.85rem" style={{ opacity: 0.6 }} />
+                </Box>
+              );
+            },
+          },
           {
             label: 'Status',
             getter: (c: any) => (
               <StatusLabel
                 status={
                   c.status === 'True'
-                    ? c.type === 'Stalled'
+                    ? c.type === 'Stalled' || c.type === 'FetchFailed'
                       ? 'error'
                       : 'success'
                     : c.status === 'False'
-                    ? c.type === 'Ready'
+                    ? c.type === 'Ready' || c.type === 'Healthy'
                       ? 'error'
                       : ''
                     : 'warning'
@@ -553,7 +666,15 @@ function ConditionsSection(props: { conditions: any[] }) {
             ),
           },
           { label: 'Reason', getter: (c: any) => c.reason ?? '-' },
-          { label: 'Message', getter: (c: any) => c.message ?? '-' },
+          {
+            label: 'Message',
+            getter: (c: any) => (
+              <Box>
+                <span>{c.message ?? '-'}</span>
+                <MentionedResourceLinks message={c.message} fallbackNamespace={props.namespace} />
+              </Box>
+            ),
+          },
           {
             label: 'Last transition',
             getter: (c: any) => (c.lastTransitionTime ? localeDate(c.lastTransitionTime) : '-'),
@@ -651,7 +772,13 @@ export default function FluxResourceDetails(props: { kindDef: FluxKind }) {
         }
         const conditions = item.jsonData?.status?.conditions;
         if (Array.isArray(conditions) && conditions.length > 0) {
-          sections.push(<ConditionsSection key="flux-conditions" conditions={conditions} />);
+          sections.push(
+            <ConditionsSection
+              key="flux-conditions"
+              conditions={conditions}
+              namespace={item.metadata?.namespace}
+            />
+          );
         }
         if (kindDef.category === 'sources') {
           sections.push(<ArtifactSection key="flux-artifact" item={item} />);
