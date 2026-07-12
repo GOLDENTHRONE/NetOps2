@@ -27,7 +27,8 @@ import { useHistory } from 'react-router-dom';
 import { ICONS } from '../flux/icon';
 import { FLUX_KINDS, FluxCategory, fluxClass, FluxKind } from '../flux/kinds';
 import { FluxHealth, getStatusInfo } from '../flux/utils';
-import { ReadySummary, SectionEmpty } from './common';
+import { ApplicationsSection } from './Applications';
+import { NA, ReadySummary, SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
 import {
   AllFluxObjects,
@@ -133,7 +134,7 @@ function StatTile(props: {
 /**
  * The at-a-glance answer strip. Instead of resource counts it answers the
  * operator's first questions: is the cluster healthy, is anything failing,
- * is anything deploying, is anything stuck waiting — each tile jumping
+ * is anything deploying, is anything stuck waiting; each tile jumping
  * straight to the resources behind the number.
  */
 function FluxHealthHero(props: { data: AllFluxObjects; cluster?: string }) {
@@ -189,7 +190,7 @@ function FluxHealthHero(props: { data: AllFluxObjects; cluster?: string }) {
       label: 'Controllers degraded',
       color: accents.error,
       icon: ICONS.statusError,
-      detail: `${controllersReady} of ${controllersTotal} Flux controllers are ready — deployments may stall until this is fixed.`,
+      detail: `${controllersReady} of ${controllersTotal} Flux controllers are ready; deployments may stall until this is fixed.`,
     };
   } else if (!nothingFailing) {
     overall = {
@@ -351,7 +352,7 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
     const version =
       d.jsonData.metadata?.labels?.['app.kubernetes.io/version'] ||
       (spec.template?.spec?.containers?.[0]?.image ?? '').split(':')[1] ||
-      '-';
+      '';
     return { deployment: d, name: d.jsonData.metadata.name, wanted, ready, version };
   });
 
@@ -386,7 +387,7 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
             ),
           },
           { label: 'Namespace', getter: (row: any) => row.deployment.metadata.namespace },
-          { label: 'Version', getter: (row: any) => row.version },
+          { label: 'Version', getter: (row: any) => row.version || <NA /> },
           {
             label: 'Pods',
             getter: (row: any) => `${row.ready}/${row.wanted}`,
@@ -427,6 +428,7 @@ export default function FluxOverview() {
           <CategoryCard key={category.category} category={category} />
         ))}
       </Box>
+      <ApplicationsSection data={data} />
       {data.loading ? (
         <FeedLoader />
       ) : (

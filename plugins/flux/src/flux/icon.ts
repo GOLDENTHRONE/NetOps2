@@ -193,6 +193,18 @@ const LUCIDE_ICONS: [string, string][] = [
     `<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m15 18l-6-6l6-6"/>`,
   ],
   [
+    'lucide:star',
+    `<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>`,
+  ],
+  [
+    'lucide:star-filled',
+    `<path fill="currentColor" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>`,
+  ],
+  [
+    'lucide:container',
+    `<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.7 0l-10.3 6c-.5.2-.9.8-.9 1.4v6.6c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.7 0l10.3-6c.5-.3.9-1 .9-1.5Z"/><path d="M10 21.9V14L2.1 9.1"/><path d="m10 14 11.9-6.9"/><path d="M14 19.8v-8.1"/><path d="M18 17.5V9.4"/></g>`,
+  ],
+  [
     'lucide:chevron-down',
     `<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m6 9l6 6l6-6"/>`,
   ],
@@ -296,9 +308,10 @@ export const ICONS = {
   overview: 'lucide:layout-dashboard',
   sources: 'lucide:git-branch',
   gitRepository: 'lucide:git-branch',
-  ociRepository: 'lucide:package',
-  helmRepository: 'lucide:database',
+  ociRepository: 'lucide:container',
+  helmRepository: HELM_ICON,
   helmChart: HELM_ICON,
+  registry: 'lucide:container',
   bucket: 'lucide:archive',
   kustomization: 'lucide:layers',
   helmRelease: HELM_ICON,
@@ -359,6 +372,9 @@ export const ICONS = {
   cronJob: 'lucide:calendar-clock',
   vault: VAULT_ICON,
   helm: HELM_ICON,
+  star: 'lucide:star',
+  starFilled: 'lucide:star-filled',
+  application: 'lucide:boxes',
 } as const;
 
 /** Icons for the Kubernetes kinds that appear in Flux inventories. */
@@ -387,8 +403,11 @@ const K8S_KIND_ICONS: Record<string, string> = {
   NetworkPolicy: ICONS.service,
   HelmRelease: ICONS.helmRelease,
   HelmChart: HELM_ICON,
+  HelmRepository: HELM_ICON,
   Kustomization: ICONS.kustomization,
   GitRepository: ICONS.gitRepository,
+  OCIRepository: ICONS.ociRepository,
+  Bucket: ICONS.bucket,
 };
 
 /**

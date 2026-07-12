@@ -80,7 +80,7 @@ export function FluxSourcesPage() {
           icon={KIND_ICON[kindDef.kind]}
           description={
             kindDef.kind === 'HelmChart'
-              ? 'Charts pulled from the Helm repositories above — each row links to its source repository.'
+              ? 'Charts pulled from the Helm repositories above; each row links to its source repository.'
               : undefined
           }
         />

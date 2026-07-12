@@ -17,7 +17,7 @@
 /**
  * The operational heart of the Flux UI: one cluster-wide feed of everything
  * that needs an operator's attention right now, what is deploying, and what
- * recently changed — in plain language, not Kubernetes conditions.
+ * recently changed; in plain language, not Kubernetes conditions.
  */
 
 import { Icon } from '@iconify/react';
@@ -37,7 +37,7 @@ import {
   getStatusInfo,
   parseRevision,
 } from '../flux/utils';
-import { FluxLink, healthPresentation } from './common';
+import { FluxLink, healthPresentation, NA } from './common';
 import { Pill, Section, Surface, useAccents } from './ui';
 
 /** One Flux object together with everything the UI needs to present it. */
@@ -228,14 +228,14 @@ function FeedOverflowLink(props: { hidden: number }) {
   return (
     <Typography variant="body2" sx={{ mt: 1 }}>
       <MuiLink component={RouterLink} to="/flux/search">
-        …and {props.hidden} more — open search to see everything
+        …and {props.hidden} more; open search to see everything
       </MuiLink>
     </Typography>
   );
 }
 
 /**
- * "What needs my attention right now?" — every failing resource with a
+ * "What needs my attention right now?"; every failing resource with a
  * plain-language cause and next step, followed by the resources queued
  * behind them, so operators fix root causes instead of symptoms.
  * Renders nothing at all when nothing needs attention.
@@ -263,7 +263,7 @@ export function NeedsAttentionSection(props: { data: AllFluxObjects }) {
   );
 }
 
-/** "Is anything deploying right now?" — live reconciliations, with context. */
+/** "Is anything deploying right now?"; live reconciliations, with context. */
 export function InProgressSection(props: { data: AllFluxObjects }) {
   const { rows, loading } = props.data;
   const { progressing } = splitAttention(rows);
@@ -285,7 +285,7 @@ export function InProgressSection(props: { data: AllFluxObjects }) {
 }
 
 /**
- * "What changed recently?" — the latest successful syncs of sources and
+ * "What changed recently?"; the latest successful syncs of sources and
  * appliers with their revision and commit info, newest first. Rendered as
  * a table so it reads exactly like the Controllers table below it.
  */
@@ -330,7 +330,7 @@ export function RecentActivitySection(props: { data: AllFluxObjects }) {
             },
             {
               label: 'Namespace',
-              getter: ({ row }: { row: FluxRow }) => row.object.metadata?.namespace ?? '-',
+              getter: ({ row }: { row: FluxRow }) => row.object.metadata?.namespace ?? <NA />,
             },
             {
               label: 'Revision',
@@ -344,7 +344,7 @@ export function RecentActivitySection(props: { data: AllFluxObjects }) {
                     {text}
                   </Pill>
                 ) : (
-                  '-'
+                  <NA />
                 );
               },
             },
@@ -352,8 +352,8 @@ export function RecentActivitySection(props: { data: AllFluxObjects }) {
               label: 'Change',
               getter: ({ row }: { row: FluxRow }) => {
                 const commit = getCommitInfo(row.object);
-                const text = [commit.author, commit.message].filter(Boolean).join(' — ');
-                return text || '-';
+                const text = [commit.author, commit.message].filter(Boolean).join(' · ');
+                return text || <NA />;
               },
             },
             {

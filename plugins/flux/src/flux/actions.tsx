@@ -268,7 +268,7 @@ export interface FluxActionButtonsProps {
    * - 'menu' (default): a single overflow button that opens a labeled menu.
    * - 'buttons': a labeled outlined-button row for the details header.
    * - 'inline': compact, always-visible pill buttons (icon + label, color
-   *   coded) for table rows — no hover/overflow menu.
+   *   coded) for table rows; no hover/overflow menu.
    */
   variant?: 'menu' | 'buttons' | 'inline';
   /** Trigger icon for the 'menu' variant (defaults to the ellipsis). */

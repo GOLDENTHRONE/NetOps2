@@ -23,7 +23,7 @@ import { useHistory, useLocation } from 'react-router-dom';
 import { FluxActionButtons } from '../flux/actions';
 import { ICONS, kindIcon } from '../flux/icon';
 import { getLastSyncTime, getSourceRef, parseRevision } from '../flux/utils';
-import { FluxLink, FluxStatusLabel } from './common';
+import { FluxLink, FluxStatusLabel, NA } from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
 import { FluxRow, useAllFluxObjects } from './operations';
 import { EmptyState, NamespaceBar, RADII, Surface, useAccents } from './ui';
@@ -140,7 +140,7 @@ function FilterChip(props: {
 /**
  * One search across everything Flux manages, sliced by operational state
  * instead of resource kind: failed deployments, resources stuck behind
- * dependencies, live rollouts, suspended objects — plus free-text search
+ * dependencies, live rollouts, suspended objects; plus free-text search
  * over names, namespaces, commits, sources and failure messages.
  */
 export default function FluxSearchPage() {
@@ -293,7 +293,7 @@ export default function FluxSearchPage() {
               {
                 label: 'Namespace',
                 gridTemplate: 'min-content',
-                getter: (row: FluxRow) => row.object.metadata?.namespace ?? '-',
+                getter: (row: FluxRow) => row.object.metadata?.namespace ?? <NA />,
               },
               {
                 label: 'Status',
@@ -307,7 +307,7 @@ export default function FluxSearchPage() {
                   row.diagnosis.category === 'ok'
                     ? row.diagnosis.headline
                     : `${row.diagnosis.headline}${
-                        row.diagnosis.explanation ? ` — ${row.diagnosis.explanation}` : ''
+                        row.diagnosis.explanation ? `: ${row.diagnosis.explanation}` : ''
                       }`,
               },
               {
@@ -315,7 +315,7 @@ export default function FluxSearchPage() {
                 gridTemplate: 'min-content',
                 getter: (row: FluxRow) => {
                   const lastSync = getLastSyncTime(row.object);
-                  return lastSync ? <DateLabel date={lastSync} format="mini" /> : '-';
+                  return lastSync ? <DateLabel date={lastSync} format="mini" /> : <NA />;
                 },
               },
               {

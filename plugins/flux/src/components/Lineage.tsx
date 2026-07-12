@@ -16,13 +16,14 @@
 
 /**
  * The deployment lineage: one strip that answers "where did this come from
- * and where did it land?" — from the Git/OCI source, through the Flux object
+ * and where did it land?"; from the Git/OCI source, through the Flux object
  * that defines it, to the namespaces and workloads it ultimately deploys.
  * Namespaces are shown as metadata along the way, never as a navigation
  * boundary: every step is clickable regardless of where it lives.
  */
 
 import { Icon } from '@iconify/react';
+import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import { Link as HeadlampLink, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { alpha, Box, Typography, useTheme } from '@mui/material';
 import React from 'react';
@@ -30,7 +31,7 @@ import { ICONS } from '../flux/icon';
 import { getTargetNamespaces } from '../flux/insights';
 import { fluxClass, FluxKind, kindByName } from '../flux/kinds';
 import { FluxObject, getSourceRef, getStatusInfo, parseRevision } from '../flux/utils';
-import { FluxLink, healthPresentation } from './common';
+import { FluxLink, healthPresentation, NA } from './common';
 import { parseInventoryEntries } from './Inventory';
 import { Pill, RADII, Surface, useAccents } from './ui';
 
@@ -123,10 +124,62 @@ function LiveStatusPill(props: { kindDef: FluxKind; name: string; namespace?: st
   if (!obj) {
     return null;
   }
-  const p = healthPresentation(getStatusInfo(obj.jsonData).health);
+  const info = getStatusInfo(obj.jsonData);
+  const p = healthPresentation(info.health);
   return (
-    <Pill tone={p.tone} icon={p.icon}>
+    <Pill
+      tone={p.tone}
+      icon={p.icon}
+      title={[info.reason, info.message].filter(Boolean).join(': ')}
+    >
       {p.label}
+    </Pill>
+  );
+}
+
+/**
+ * Live readiness of the workloads this applier created, found through the
+ * labels the Flux controllers stamp on everything they apply: "3/4
+ * workloads ready" tells the operator the real state of the deployment,
+ * not just whether the manifests were applied.
+ */
+function WorkloadsHealthPill(props: { labelSelector: string }) {
+  const kinds = ['Deployment', 'StatefulSet', 'DaemonSet'] as const;
+  let total = 0;
+  let ready = 0;
+  let loading = false;
+  for (const kind of kinds) {
+    const cls = (K8s.ResourceClasses as Record<string, any>)[kind];
+    // Constant kind list, so the hook order is stable.
+    const [objs] = cls.useList({ labelSelector: props.labelSelector });
+    if (objs === null) {
+      loading = true;
+    }
+    for (const o of objs ?? []) {
+      total += 1;
+      const wanted =
+        kind === 'DaemonSet'
+          ? o.jsonData?.status?.desiredNumberScheduled ?? 0
+          : o.jsonData?.spec?.replicas ?? 1;
+      const readyReplicas =
+        kind === 'DaemonSet'
+          ? o.jsonData?.status?.numberReady ?? 0
+          : o.jsonData?.status?.readyReplicas ?? 0;
+      if (readyReplicas >= wanted) {
+        ready += 1;
+      }
+    }
+  }
+  if (total === 0 || loading) {
+    return null;
+  }
+  return ready === total ? (
+    <Pill tone="success" icon={ICONS.statusReady}>
+      {total} workload{total === 1 ? '' : 's'} ready
+    </Pill>
+  ) : (
+    <Pill tone="warning" icon={ICONS.statusReconciling}>
+      {ready}/{total} workloads ready
     </Pill>
   );
 }
@@ -134,7 +187,7 @@ function LiveStatusPill(props: { kindDef: FluxKind; name: string; namespace?: st
 export function NamespaceChips(props: { namespaces: string[] }) {
   const accents = useAccents();
   if (props.namespaces.length === 0) {
-    return <span>-</span>;
+    return <NA />;
   }
   return (
     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
@@ -183,7 +236,7 @@ const WORKLOAD_KINDS = new Set([
 /**
  * Lineage for a Kustomization or HelmRelease: the source it pulls from, the
  * Kustomization that defines it (when Flux applied it from Git), itself, and
- * the namespaces/workloads it deploys — crossing namespaces transparently.
+ * the namespaces/workloads it deploys; crossing namespaces transparently.
  */
 export function LineageSection(props: { item: any; kindDef: FluxKind }) {
   const { item, kindDef } = props;
@@ -199,6 +252,7 @@ export function LineageSection(props: { item: any; kindDef: FluxKind }) {
     kindDef.kind === 'Kustomization' &&
     definedBy?.name === object.metadata?.name &&
     definedBy?.namespace === object.metadata?.namespace;
+  const kustomizationKindDef = kindByName('Kustomization');
   if (definedBy && !isSelfReference) {
     steps.push({
       role: 'Defined by',
@@ -208,7 +262,18 @@ export function LineageSection(props: { item: any; kindDef: FluxKind }) {
           {definedBy.name}
         </FluxLink>
       ),
-      detail: `Kustomization · ${definedBy.namespace || '-'}`,
+      detail: (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+          <span>Kustomization · {definedBy.namespace || 'n/a'}</span>
+          {kustomizationKindDef && definedBy.namespace && (
+            <LiveStatusPill
+              kindDef={kustomizationKindDef}
+              name={definedBy.name}
+              namespace={definedBy.namespace}
+            />
+          )}
+        </Box>
+      ),
     });
   }
 
@@ -267,16 +332,26 @@ export function LineageSection(props: { item: any; kindDef: FluxKind }) {
   const namespaces = getTargetNamespaces(object);
   const entries = parseInventoryEntries(object?.status?.inventory?.entries);
   const workloads = entries.filter(e => WORKLOAD_KINDS.has(e.kind)).length;
+  const appliedLabelSelector =
+    kindDef.kind === 'HelmRelease'
+      ? `helm.toolkit.fluxcd.io/name=${object.metadata?.name},helm.toolkit.fluxcd.io/namespace=${object.metadata?.namespace}`
+      : `${KUSTOMIZE_NAME_LABEL}=${object.metadata?.name},${KUSTOMIZE_NAMESPACE_LABEL}=${object.metadata?.namespace}`;
   steps.push({
     role: 'Deploys to',
     icon: ICONS.namespace,
     content: <NamespaceChips namespaces={namespaces} />,
-    detail:
-      entries.length > 0
-        ? `${entries.length} object${entries.length === 1 ? '' : 's'}${
-            workloads > 0 ? `, ${workloads} workload${workloads === 1 ? '' : 's'}` : ''
-          } — listed under “Managed objects” below`
-        : undefined,
+    detail: (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+        {entries.length > 0 && (
+          <span>
+            {entries.length} object{entries.length === 1 ? '' : 's'}
+            {workloads > 0 ? `, ${workloads} workload${workloads === 1 ? '' : 's'}` : ''}
+            {' (see "Managed objects" below)'}
+          </span>
+        )}
+        <WorkloadsHealthPill labelSelector={appliedLabelSelector} />
+      </Box>
+    ),
   });
 
   return (

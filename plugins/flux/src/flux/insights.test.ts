@@ -15,6 +15,8 @@
  */
 
 import {
+  Application,
+  buildApplications,
   collectDownstream,
   collectUpstream,
   diagnose,
@@ -23,6 +25,8 @@ import {
   getTargetNamespaces,
   isBlockedOnDependency,
   pluralizeKind,
+  summarizeApplication,
+  summarizeAppPods,
   summarizeWave,
 } from './insights';
 import { FluxObject, makeDependencyNodes } from './utils';
@@ -236,6 +240,131 @@ describe('pluralizeKind', () => {
     expect(pluralizeKind('Ingress')).toBe('ingresses');
     expect(pluralizeKind('NetworkPolicy')).toBe('networkpolicies');
     expect(pluralizeKind('Gateway')).toBe('gateways');
+  });
+});
+
+describe('buildApplications', () => {
+  const root: FluxObject = {
+    kind: 'Kustomization',
+    metadata: { name: 'app-root', namespace: 'flux-system' },
+    status: {
+      inventory: {
+        entries: [{ id: 'apps_web_apps_Deployment' }, { id: 'apps_cfg__ConfigMap' }],
+      },
+    },
+  };
+  const child: FluxObject = {
+    kind: 'HelmRelease',
+    metadata: {
+      name: 'db',
+      namespace: 'apps',
+      labels: {
+        'kustomize.toolkit.fluxcd.io/name': 'app-root',
+        'kustomize.toolkit.fluxcd.io/namespace': 'flux-system',
+      },
+    },
+    spec: { targetNamespace: 'apps' },
+  };
+  const standalone: FluxObject = {
+    kind: 'HelmRelease',
+    metadata: { name: 'solo', namespace: 'tools' },
+  };
+
+  it('groups defined-by children under their root', () => {
+    const apps = buildApplications([
+      { kind: 'Kustomization', object: root },
+      { kind: 'HelmRelease', object: child },
+      { kind: 'HelmRelease', object: standalone },
+    ]);
+    expect(apps.map(a => a.name).sort()).toEqual(['app-root', 'solo']);
+
+    const rootApp = apps.find(a => a.name === 'app-root')!;
+    expect(rootApp.rootKind).toBe('Kustomization');
+    expect(rootApp.members).toHaveLength(2);
+    expect(rootApp.targetNamespaces).toEqual(['apps']);
+    expect(rootApp.workloadPrefixes).toContainEqual({ namespace: 'apps', prefix: 'web' });
+    expect(rootApp.workloadPrefixes).toContainEqual({ namespace: 'apps', prefix: 'db' });
+
+    const soloApp = apps.find(a => a.name === 'solo')!;
+    expect(soloApp.rootKind).toBe('HelmRelease');
+    expect(soloApp.targetNamespaces).toEqual(['tools']);
+  });
+});
+
+describe('summarizeAppPods', () => {
+  const app: Application = {
+    id: 'Kustomization/flux-system/app-root',
+    name: 'app-root',
+    namespace: 'flux-system',
+    rootKind: 'Kustomization',
+    members: [],
+    targetNamespaces: ['apps'],
+    workloadPrefixes: [{ namespace: 'apps', prefix: 'web' }],
+  };
+  const pods: FluxObject[] = [
+    {
+      metadata: { name: 'web-abc', namespace: 'apps' },
+      status: { phase: 'Running', containerStatuses: [{ ready: true }] },
+    },
+    {
+      metadata: { name: 'web-def', namespace: 'apps' },
+      status: {
+        phase: 'Pending',
+        containerStatuses: [{ ready: false, state: { waiting: { reason: 'ImagePullBackOff' } } }],
+      },
+    },
+    // Same namespace, different workload: not this app's pod.
+    {
+      metadata: { name: 'other-1', namespace: 'apps' },
+      status: { phase: 'Running', containerStatuses: [{ ready: true }] },
+    },
+    // Different namespace entirely.
+    {
+      metadata: { name: 'web-zzz', namespace: 'monitoring' },
+      status: { phase: 'Running', containerStatuses: [{ ready: true }] },
+    },
+  ];
+
+  it('counts ready pods and surfaces concrete issues', () => {
+    const summary = summarizeAppPods(app, pods);
+    expect(summary.total).toBe(2);
+    expect(summary.ready).toBe(1);
+    expect(summary.issues).toEqual([
+      { name: 'web-def', namespace: 'apps', reason: 'ImagePullBackOff' },
+    ]);
+  });
+});
+
+describe('summarizeApplication', () => {
+  const makeApp = (members: FluxObject[]): Application => ({
+    id: 'x',
+    name: 'x',
+    namespace: 'ns',
+    rootKind: 'Kustomization',
+    members: members.map(object => ({ kind: object.kind ?? 'Kustomization', object })),
+    targetNamespaces: [],
+    workloadPrefixes: [],
+  });
+  const ready: FluxObject = {
+    status: { conditions: [{ type: 'Ready', status: 'True' }] },
+  };
+  const failing: FluxObject = {
+    status: { conditions: [{ type: 'Ready', status: 'False', reason: 'BuildFailed' }] },
+  };
+  const reconciling: FluxObject = {
+    status: { conditions: [{ type: 'Ready', status: 'Unknown', reason: 'Progressing' }] },
+  };
+
+  it('judges the whole application', () => {
+    expect(summarizeApplication(makeApp([ready, failing])).health).toBe('Failing');
+    expect(summarizeApplication(makeApp([ready, reconciling])).health).toBe('Deploying');
+    expect(summarizeApplication(makeApp([ready, ready])).health).toBe('Healthy');
+    expect(summarizeApplication(makeApp([ready]), { total: 3, ready: 2, issues: [] }).health).toBe(
+      'Degraded'
+    );
+    expect(summarizeApplication(makeApp([ready]), { total: 3, ready: 3, issues: [] }).health).toBe(
+      'Healthy'
+    );
   });
 });
 

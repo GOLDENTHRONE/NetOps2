@@ -17,11 +17,12 @@
 /**
  * A VS-Code-style commit graph for GitRepository sources: the recent commits
  * of the tracked branch straight from the Git host, with the commit that is
- * currently deployed by Flux highlighted — so "what changed and where are
+ * currently deployed by Flux highlighted; so "what changed and where are
  * we" is answered visually, without leaving the page.
  */
 
 import { Icon } from '@iconify/react';
+import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import { DateLabel, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { alpha, Box, Link as MuiLink, Typography, useTheme } from '@mui/material';
 import React from 'react';
@@ -43,6 +44,51 @@ type FetchState =
   | { phase: 'unsupported' }
   | { phase: 'error'; message: string }
   | { phase: 'ready'; commits: CommitEntry[] };
+
+/**
+ * The credentials Flux itself uses for this repository, read from the
+ * Secret referenced by spec.secretRef (visible only to users whose RBAC
+ * allows reading it). HTTPS tokens can authenticate the Git host API from
+ * the browser; SSH keys cannot.
+ */
+type GitAuth =
+  | { phase: 'loading' }
+  | { phase: 'none' }
+  | { phase: 'ssh' }
+  | { phase: 'token'; token: string };
+
+function useGitAuth(object: FluxObject): GitAuth {
+  const secretName = object?.spec?.secretRef?.name;
+  const namespace = object?.metadata?.namespace;
+  // The hook must run unconditionally; without a secretRef we ask for a
+  // name that cannot exist and ignore the result.
+  const [secret, error] = (K8s.ResourceClasses as any).Secret.useGet(
+    secretName ?? 'flux-no-credentials-secret',
+    namespace
+  );
+  if (!secretName || error) {
+    return { phase: 'none' };
+  }
+  if (secret === null) {
+    return { phase: 'loading' };
+  }
+  const data = secret.jsonData?.data ?? {};
+  const decode = (value?: string) => {
+    try {
+      return value ? atob(value).trim() : undefined;
+    } catch (e) {
+      return undefined;
+    }
+  };
+  const token = decode(data.password) ?? decode(data.bearerToken) ?? decode(data.token);
+  if (token) {
+    return { phase: 'token', token };
+  }
+  if (data.identity) {
+    return { phase: 'ssh' };
+  }
+  return { phase: 'none' };
+}
 
 /** Builds the commit-list API request for the known Git hosts. */
 export function commitApiUrl(repoUrl?: string, branch?: string): string | undefined {
@@ -89,39 +135,68 @@ function normalizeCommits(host: 'github' | 'gitlab', data: any[]): CommitEntry[]
   }));
 }
 
-function useCommitHistory(repoUrl?: string, branch?: string): FetchState {
+function useCommitHistory(repoUrl?: string, branch?: string, auth?: GitAuth): FetchState {
   const [state, setState] = React.useState<FetchState>({ phase: 'loading' });
   const apiUrl = commitApiUrl(repoUrl, branch);
+  const authPhase = auth?.phase ?? 'none';
+  const token = auth?.phase === 'token' ? auth.token : undefined;
 
   React.useEffect(() => {
     if (!apiUrl) {
       setState({ phase: 'unsupported' });
       return;
     }
+    if (authPhase === 'loading') {
+      // Wait for the credentials secret so private repos work on the first try.
+      setState({ phase: 'loading' });
+      return;
+    }
+    const isGitHub = apiUrl.startsWith('https://api.github.com');
+    // Use the same credentials Flux uses, sent only to the repository's own
+    // Git host (GitHub's API host for github.com repositories).
+    const headers: Record<string, string> = token
+      ? isGitHub
+        ? { Authorization: `Bearer ${token}` }
+        : { 'PRIVATE-TOKEN': token }
+      : {};
     const controller = new AbortController();
     setState({ phase: 'loading' });
-    fetch(apiUrl, { signal: controller.signal })
+    fetch(apiUrl, { signal: controller.signal, headers })
       .then(async response => {
         if (!response.ok) {
-          throw new Error(`${response.status}`);
+          throw new Error(`HTTP ${response.status}`);
         }
         const data = await response.json();
-        const host = apiUrl.startsWith('https://api.github.com') ? 'github' : 'gitlab';
-        setState({ phase: 'ready', commits: normalizeCommits(host, data) });
+        setState({
+          phase: 'ready',
+          commits: normalizeCommits(isGitHub ? 'github' : 'gitlab', data),
+        });
       })
       .catch(error => {
         if (controller.signal.aborted) {
           return;
         }
-        setState({
-          phase: 'error',
-          message:
-            'Commit history could not be loaded from the Git host — the repository may be ' +
-            `private, or the API rate limit was reached (${String(error?.message ?? error)}).`,
-        });
+        const detail = String(error?.message ?? error);
+        let message: string;
+        if (authPhase === 'ssh') {
+          message =
+            'This repository is accessed with SSH credentials, which the dashboard cannot use ' +
+            `to query the Git host API from the browser (${detail}). Add an HTTPS token secret ` +
+            'to see the commit history here.';
+        } else if (token) {
+          message =
+            `The Git host rejected the request even with the Flux credentials secret (${detail}). ` +
+            'The token may lack read access to this repository or to the commits API.';
+        } else {
+          message =
+            `The Git host rejected the request (${detail}). The repository may be private ` +
+            '(no usable HTTPS token was found in the Flux credentials secret) or the API rate ' +
+            'limit was reached.';
+        }
+        setState({ phase: 'error', message });
       });
     return () => controller.abort();
-  }, [apiUrl]);
+  }, [apiUrl, authPhase, token]);
 
   return state;
 }
@@ -245,7 +320,8 @@ export function GitCommitHistorySection(props: { item: any }) {
   const branch = object?.spec?.ref?.branch ?? object?.spec?.ref?.name;
   const deployedHash = parseRevision(object?.status?.artifact?.revision).hash;
 
-  const state = useCommitHistory(repoUrl, branch);
+  const auth = useGitAuth(object);
+  const state = useCommitHistory(repoUrl, branch, auth);
 
   if (state.phase === 'unsupported') {
     // Not a host we can query from the browser; stay quiet.
