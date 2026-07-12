@@ -290,6 +290,46 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
     return ordersById.get(id) ?? 999;
   };
 
+  // Secondary/wide columns are available via the column chooser but hidden by
+  // default so the table fits without a horizontal scrollbar.
+  const HIDDEN_BY_DEFAULT = new Set([
+    'url',
+    'ref',
+    'revision',
+    'interval',
+    'message',
+    'lastChange',
+    'path',
+    'endpoint',
+    'bucket',
+    'image',
+    'tags',
+    'latestImage',
+    'dependsOn',
+    'webhookPath',
+    'imageRepository',
+  ]);
+
+  // A few kinds carry an extra column that would push the table into a
+  // horizontal scroll; hide those by default (still reachable via the column
+  // chooser). Scoped per-kind so shared column ids stay visible where they
+  // are the primary information (e.g. "Chart" on the Helm Charts list).
+  const EXTRA_HIDDEN: Partial<Record<string, Set<string>>> = {
+    // HelmRelease shows three inline actions (sync/force/suspend), so trim its
+    // wider secondary columns to keep the row within the viewport.
+    HelmRelease: new Set(['chart', 'version']),
+    // On the Helm Charts list the resolved revision already conveys the
+    // version; the spec constraint column is redundant.
+    HelmChart: new Set(['version']),
+  };
+  const extraHidden = EXTRA_HIDDEN[kindDef.kind];
+
+  const kindCols = kindColumns(kindDef).map((c: Column) =>
+    typeof c === 'object' && (HIDDEN_BY_DEFAULT.has(c.id) || extraHidden?.has(c.id))
+      ? { ...c, show: false }
+      : c
+  );
+
   const columns: Column[] = [
     ...(ordersById
       ? [
@@ -297,6 +337,7 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
             id: 'order',
             label: 'Wave',
             getValue: (item: any) => orderOf(item) + 1,
+            render: (item: any) => `Wave ${orderOf(item) + 1}`,
             gridTemplate: 'min-content',
             sort: (a: any, b: any) => orderOf(a) - orderOf(b),
           },
@@ -304,24 +345,12 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
       : []),
     'name',
     'namespace',
-    ...kindColumns(kindDef),
+    ...kindCols,
     {
       id: 'status',
       label: 'Status',
       getValue: (item: any) => getStatusInfo(item.jsonData).health,
       render: (item: any) => <FluxStatusLabel object={item.jsonData} />,
-      gridTemplate: 'min-content',
-    },
-    {
-      id: 'message',
-      label: 'Message',
-      getValue: (item: any) => getStatusInfo(item.jsonData).message ?? '',
-      show: false,
-    },
-    {
-      id: 'interval',
-      label: 'Interval',
-      getValue: (item: any) => item.jsonData?.spec?.interval ?? '-',
       gridTemplate: 'min-content',
     },
     {
@@ -339,15 +368,19 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
       gridTemplate: 'min-content',
       sort: false,
       disableFiltering: true,
+      show: false,
     },
     {
       id: 'fluxActions',
       label: 'Actions',
       getValue: () => '',
-      render: (item: any) => <FluxActionButtons item={item} />,
+      render: (item: any) => <FluxActionButtons item={item} variant="inline" />,
       sort: false,
       disableFiltering: true,
-      gridTemplate: 'min-content',
+      // Size to the buttons so all of them (up to three for HelmReleases)
+      // stay fully visible instead of being clipped by the cell.
+      gridTemplate: 'max-content',
+      cellProps: { style: { textAlign: 'right', whiteSpace: 'nowrap' } },
     },
     'age',
   ];
@@ -371,26 +404,25 @@ export function FluxKindListSection(props: FluxKindListSectionProps) {
   }
 
   return (
-    <Section title={sectionTitle} icon={icon} description={description}>
-      <Surface sx={{ px: 2, pb: 1, pt: 0.5 }}>
-        <ResourceListView
-          title=""
-          data={items}
-          errors={error ? [error] : null}
-          columns={columns}
-          defaultSortingColumn={ordersById ? { id: 'order', desc: false } : undefined}
-          // enableColumnOrdering is available at runtime (compiled against the app),
-          // but not in the published plugin types; pass it untyped.
-          {...({ enableColumnOrdering: false } as any)}
-          headerProps={{
-            titleSideActions: [<CreateFluxButton key="create" kindDef={kindDef} />],
-            // We pass data directly (not a resourceClass), so re-enable the
-            // namespace filter that ResourceListView would otherwise hide.
-            noNamespaceFilter: false,
-          }}
-          id={`headlamp-flux-${kindDef.plural}`}
-        />
-      </Surface>
+    <Section
+      title={sectionTitle}
+      icon={icon}
+      description={description}
+      actions={<CreateFluxButton kindDef={kindDef} />}
+    >
+      <ResourceListView
+        title={<React.Fragment />}
+        data={items}
+        errors={error ? [error] : null}
+        columns={columns}
+        defaultSortingColumn={ordersById ? { id: 'order', desc: false } : undefined}
+        // enableColumnOrdering / enableRowActions are available at runtime
+        // (compiled against the app) but not in the published plugin types.
+        // enableRowActions=false removes the built-in row menu so there is only
+        // the single Flux actions column.
+        {...({ enableColumnOrdering: false, enableRowActions: false } as any)}
+        id={`headlamp-flux-${kindDef.plural}`}
+      />
     </Section>
   );
 }

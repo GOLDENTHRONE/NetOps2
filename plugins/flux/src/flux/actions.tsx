@@ -31,11 +31,13 @@ import {
   ListItemText,
   Menu,
   MenuItem,
+  Theme,
   Tooltip,
   useTheme,
 } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import React from 'react';
+import { accentsFor, RADII } from '../components/ui';
 import { ICONS } from '../flux/icon';
 import { fluxClass, kindByName } from './kinds';
 import { FORCE_ANNOTATION, getSourceRef, isSuspended, RECONCILE_ANNOTATION } from './utils';
@@ -99,14 +101,16 @@ interface FluxAction {
   run: () => Promise<any>;
 }
 
-function severityColor(theme: any, severity: Severity): string {
+/** Maps an action's severity to a vibrant accent color (mode-aware). */
+function severityColor(theme: Theme, severity: Severity): string {
+  const a = accentsFor(theme);
   if (severity === 'danger') {
-    return theme.palette.error.main;
+    return a.error;
   }
   if (severity === 'warning') {
-    return theme.palette.warning.main;
+    return a.warning;
   }
-  return theme.palette.text.primary;
+  return a.info;
 }
 
 /** Builds the list of Flux operations available for a resource. */
@@ -216,7 +220,21 @@ function ConfirmDialog(props: {
       : ICONS.statusUnknown;
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    // A blocking confirmation: the backdrop and Escape key do NOT dismiss it,
+    // so the only way out is an explicit Cancel or confirm click. Nothing else
+    // in the UI is interactive while it is open.
+    <Dialog
+      open={open}
+      onClose={(_event, reason) => {
+        if (reason === 'backdropClick' || reason === 'escapeKeyDown') {
+          return;
+        }
+        onClose();
+      }}
+      disableEscapeKeyDown
+      maxWidth="xs"
+      fullWidth
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Icon icon={icon} color={color} width="1.4rem" />
         {title}
@@ -246,12 +264,25 @@ export interface FluxActionButtonsProps {
   /** Show edit/delete buttons too (used on details pages). */
   withEditDelete?: boolean;
   /**
-   * 'menu' (default) renders a single overflow button that opens a labeled
-   * menu — safer for dense table rows. 'buttons' renders a labeled button row
-   * for the details header.
+   * How the actions are rendered:
+   * - 'menu' (default): a single overflow button that opens a labeled menu.
+   * - 'buttons': a labeled outlined-button row for the details header.
+   * - 'inline': compact, always-visible pill buttons (icon + label, color
+   *   coded) for table rows — no hover/overflow menu.
    */
-  variant?: 'menu' | 'buttons';
+  variant?: 'menu' | 'buttons' | 'inline';
 }
+
+/** Short labels for the compact inline (table row) buttons. */
+const INLINE_LABELS: Record<string, string> = {
+  sync: 'Sync',
+  force: 'Force',
+  suspend: 'Suspend',
+  resume: 'Resume',
+};
+
+/** The subset of actions shown inline in table rows (the rest live on the details page). */
+const INLINE_ACTION_IDS = new Set(Object.keys(INLINE_LABELS));
 
 /**
  * The Flux operations for a resource: sync, sync with source, force reconcile
@@ -332,6 +363,57 @@ export function FluxActionButtons(props: FluxActionButtonsProps) {
             <DeleteButton item={item} />
           </>
         )}
+        {confirmDialog}
+      </Box>
+    );
+  }
+
+  if (variant === 'inline') {
+    const dark = theme.palette.mode === 'dark';
+    const inlineActions = actions.filter(a => INLINE_ACTION_IDS.has(a.id));
+    return (
+      <Box
+        sx={{ display: 'inline-flex', gap: 0.5, justifyContent: 'flex-end', flexWrap: 'nowrap' }}
+      >
+        {inlineActions.map(action => {
+          const color = severityColor(theme, action.severity);
+          return (
+            <Tooltip key={action.id} title={action.description}>
+              <Box
+                component="button"
+                type="button"
+                disabled={action.disabled}
+                aria-label={`${action.label} ${name}`}
+                onClick={() => trigger(action)}
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  px: 1,
+                  py: '4px',
+                  border: 'none',
+                  borderRadius: RADII.pill,
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  lineHeight: 1.5,
+                  whiteSpace: 'nowrap',
+                  color,
+                  backgroundColor: alpha(color, dark ? 0.2 : 0.13),
+                  cursor: action.disabled ? 'default' : 'pointer',
+                  opacity: action.disabled ? 0.45 : 1,
+                  transition: 'background-color 0.15s ease',
+                  '&:hover': action.disabled
+                    ? {}
+                    : { backgroundColor: alpha(color, dark ? 0.32 : 0.22) },
+                }}
+              >
+                <Icon icon={action.icon} width="0.9rem" height="0.9rem" />
+                {INLINE_LABELS[action.id] ?? action.label}
+              </Box>
+            </Tooltip>
+          );
+        })}
         {confirmDialog}
       </Box>
     );

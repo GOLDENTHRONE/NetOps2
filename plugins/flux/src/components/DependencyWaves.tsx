@@ -15,8 +15,8 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Loader, NamespacesAutocomplete } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { alpha, Box, Divider, Paper, Popover, Typography, useTheme } from '@mui/material';
+import { Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { alpha, Box, Divider, Paper, Popover, Theme, Typography, useTheme } from '@mui/material';
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { FluxActionButtons } from '../flux/actions';
@@ -34,7 +34,7 @@ import {
 } from '../flux/utils';
 import { FluxLink, FluxStatusLabel, healthToStatus, LastSyncLabel, NextSyncLabel } from './common';
 import { ErrorState } from './errors';
-import { EmptyState, RADII, Section, Surface } from './ui';
+import { accentsFor, EmptyState, RADII, Section, Surface } from './ui';
 
 const HEALTH_ICON: Record<string, string> = {
   Ready: ICONS.statusReady,
@@ -44,12 +44,17 @@ const HEALTH_ICON: Record<string, string> = {
   Unknown: ICONS.statusUnknown,
 };
 
-function statusColor(theme: any, status: 'success' | 'warning' | 'error' | '') {
+/** Vibrant, mode-aware status color for the wave cards. */
+function statusColor(theme: Theme, status: 'success' | 'warning' | 'error' | '') {
+  const a = accentsFor(theme);
   if (status === '') {
-    return theme.palette.text.disabled;
+    return a.muted;
   }
-  return theme.palette[status].main;
+  return a[status];
 }
+
+/** Height reserved for each wave's header, so the arrows line up with the cards. */
+const WAVE_HEADER_HEIGHT = 26;
 
 /** Countdown chip shown on the node card (e.g. "next sync in 4m"). */
 function NextReconcileHint(props: { object?: FluxObject }) {
@@ -286,18 +291,11 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
   if (!hasNamespace) {
     return (
       <Section title={sectionTitle} icon={ICONS.graph}>
-        <Surface sx={{ p: 2 }}>
-          <EmptyState
-            icon={ICONS.graph}
-            title="Select a namespace to see the deployment order"
-            description="The dependency graph is scoped to a namespace so it stays readable. Choose one or more namespaces to visualize the order in which Flux applies these resources."
-            action={
-              <Box sx={{ minWidth: 280 }}>
-                <NamespacesAutocomplete />
-              </Box>
-            }
-          />
-        </Surface>
+        <EmptyState
+          icon={ICONS.graph}
+          title="Pick a namespace to see the deployment order"
+          description="Use the Namespace filter at the top of the page. The graph is scoped to a namespace so it stays readable — change or clear the filter there at any time."
+        />
       </Section>
     );
   }
@@ -326,55 +324,48 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
           />
         </Surface>
       ) : (
-        <Surface sx={{ p: 2 }}>
-          <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
-            Each column is a wave: everything in a wave reconciles in parallel, and each wave waits
-            for the previous one to become ready. Click a card for details and actions.
-          </Typography>
+        <Box>
           <Box sx={{ display: 'flex', alignItems: 'stretch', gap: 1.5, overflowX: 'auto', pb: 1 }}>
             {waves.map((wave, i) => (
               <React.Fragment key={i}>
                 {i > 0 && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.disabled' }}>
-                    <Icon icon={ICONS.arrowRight} width="1.8rem" />
-                  </Box>
-                )}
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 200 }}>
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                      color: 'text.secondary',
-                    }}
-                  >
+                  <Box sx={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+                    {/* Spacer matching the wave header, so the arrow centers on
+                        the cards band rather than the whole column. */}
+                    <Box sx={{ height: WAVE_HEADER_HEIGHT }} />
                     <Box
                       sx={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: '50%',
+                        flex: 1,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        backgroundColor: theme => alpha(theme.palette.primary.main, 0.12),
-                        fontSize: '0.75rem',
-                        fontWeight: 700,
+                        color: 'text.disabled',
+                        px: 0.5,
                       }}
                     >
-                      {i + 1}
+                      <Icon icon={ICONS.arrowRight} width="1.8rem" />
                     </Box>
-                    <Typography variant="overline">
-                      {i === 0 ? 'Deploys first' : `Wave ${i + 1}`}
+                  </Box>
+                )}
+                <Box sx={{ display: 'flex', flexDirection: 'column', minWidth: 200 }}>
+                  <Box sx={{ height: WAVE_HEADER_HEIGHT, display: 'flex', alignItems: 'center' }}>
+                    <Typography
+                      variant="overline"
+                      sx={{ fontWeight: 700, color: 'text.secondary', lineHeight: 1 }}
+                    >
+                      Wave {i + 1}
                     </Typography>
                   </Box>
-                  {wave.map(node => (
-                    <NodeCard
-                      key={node.id}
-                      node={node}
-                      item={byId.get(node.id)}
-                      kind={kindDef.kind}
-                    />
-                  ))}
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {wave.map(node => (
+                      <NodeCard
+                        key={node.id}
+                        node={node}
+                        item={byId.get(node.id)}
+                        kind={kindDef.kind}
+                      />
+                    ))}
+                  </Box>
                 </Box>
               </React.Fragment>
             ))}
@@ -397,7 +388,7 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
               </Box>
             </Box>
           )}
-        </Surface>
+        </Box>
       )}
     </Section>
   );
