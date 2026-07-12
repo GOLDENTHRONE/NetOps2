@@ -27,6 +27,7 @@ import {
   FluxNotificationsPage,
   FluxSourcesPage,
 } from './components/pages';
+import FluxSearchPage from './components/SearchPage';
 import { FLUX_ICON, registerFluxIcon } from './flux/icon';
 import { FLUX_KINDS } from './flux/kinds';
 
@@ -46,6 +47,7 @@ registerSidebarEntry({
 
 const SUB_ENTRIES = [
   { name: 'fluxOverview', label: 'Overview', url: '/flux' },
+  { name: 'fluxSearch', label: 'Search', url: '/flux/search' },
   { name: 'fluxSources', label: 'Sources', url: '/flux/sources' },
   { name: 'fluxKustomizations', label: 'Kustomizations', url: '/flux/kustomizations' },
   { name: 'fluxHelmReleases', label: 'Helm Releases', url: '/flux/helmreleases' },
@@ -64,6 +66,14 @@ registerRoute({
   sidebar: 'fluxOverview',
   exact: true,
   component: () => <FluxOverview />,
+});
+
+registerRoute({
+  path: '/flux/search',
+  name: 'fluxSearch',
+  sidebar: 'fluxSearch',
+  exact: true,
+  component: () => <FluxSearchPage />,
 });
 
 registerRoute({

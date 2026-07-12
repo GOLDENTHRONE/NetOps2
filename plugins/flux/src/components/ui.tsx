@@ -114,6 +114,43 @@ export function NamespaceBar() {
   );
 }
 
+/**
+ * A searchable, single-pick namespace selector for pages that need a
+ * namespace before they can render (graphs, waves). Picking one sets the
+ * same global namespace context the rest of the Flux pages use, so the
+ * choice follows the user across pages until they change it.
+ */
+export function NamespacePicker(props: { placeholder?: string }) {
+  const dispatch = useDispatch();
+  const [namespaces] = (K8s.ResourceClasses as any).Namespace.useList();
+  const options: string[] = React.useMemo(
+    () =>
+      (namespaces ?? [])
+        .map((n: any) => n.metadata?.name)
+        .filter(Boolean)
+        .sort((a: string, b: string) => a.localeCompare(b)),
+    [namespaces]
+  );
+  return (
+    <Autocomplete
+      size="small"
+      options={options}
+      value={null}
+      onChange={(_e, newValue) =>
+        dispatch({ type: 'filter/setNamespaceFilter', payload: newValue ? [newValue] : [] })
+      }
+      sx={{ minWidth: 280, maxWidth: 360 }}
+      renderInput={params => (
+        <TextField
+          {...params}
+          variant="outlined"
+          placeholder={props.placeholder ?? 'Search namespaces…'}
+        />
+      )}
+    />
+  );
+}
+
 /** Shared radii — soft, modern corners. */
 export const RADII = {
   card: '14px',
@@ -195,11 +232,11 @@ export function Surface(props: SurfaceProps) {
         // border in dark mode where shadows are invisible.
         border: dark ? surfaceBorder(theme) : 'none',
         backgroundColor:
-          tinted && accent
-            ? alpha(accent, dark ? 0.14 : 0.08)
-            : theme.palette.background.paper,
+          tinted && accent ? alpha(accent, dark ? 0.14 : 0.08) : theme.palette.background.paper,
         borderLeft: accent ? `3px solid ${accent}` : undefined,
-        boxShadow: dark ? 'none' : '0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04)',
+        boxShadow: dark
+          ? 'none'
+          : '0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04)',
         transition: 'box-shadow 0.18s ease, transform 0.18s ease',
         ...(interactive
           ? {
