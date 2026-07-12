@@ -25,46 +25,149 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Router } from '@kinvolk/headlamp-plugin/lib';
+import { K8s, Router } from '@kinvolk/headlamp-plugin/lib';
 import {
   alpha,
+  Autocomplete,
   Box,
   Breadcrumbs,
+  Chip,
   Link as MuiLink,
+  TextField,
   Theme,
   Typography,
   useTheme,
 } from '@mui/material';
 import React from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { Link as RouterLink } from 'react-router-dom';
 import { ICONS } from '../flux/icon';
 
 const { createRouteURL } = Router;
 
+/**
+ * A single, wide namespace filter for a whole page. It reads and writes the
+ * same global namespace filter the rest of Headlamp uses, so one selection at
+ * the top of the page scopes every list and the dependency graph below — no
+ * need to pick a namespace per section. Full namespace names stay visible as
+ * chips (unlike the truncated built-in filter).
+ */
+export function NamespaceBar() {
+  const theme = useTheme();
+  const dispatch = useDispatch();
+  const selected = useSelector((state: any) => state.filter?.namespaces as Set<string> | undefined);
+  const [namespaces] = (K8s.ResourceClasses as any).Namespace.useList();
+  const options: string[] = React.useMemo(
+    () =>
+      (namespaces ?? [])
+        .map((n: any) => n.metadata?.name)
+        .filter(Boolean)
+        .sort((a: string, b: string) => a.localeCompare(b)),
+    [namespaces]
+  );
+  const value = React.useMemo(() => Array.from(selected ?? []), [selected]);
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, color: 'text.secondary' }}>
+        <Icon icon={ICONS.namespace} width="1.1rem" />
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          Namespace
+        </Typography>
+      </Box>
+      <Autocomplete
+        multiple
+        size="small"
+        options={options}
+        value={value}
+        onChange={(_e, newValue) =>
+          dispatch({ type: 'filter/setNamespaceFilter', payload: newValue })
+        }
+        disableCloseOnSelect
+        limitTags={6}
+        sx={{ minWidth: 340, maxWidth: 720, flex: '1 1 340px' }}
+        renderTags={(tags, getTagProps) =>
+          tags.map((tag, index) => (
+            <Chip
+              size="small"
+              label={tag}
+              {...getTagProps({ index })}
+              key={tag}
+              sx={{
+                borderRadius: RADII.control,
+                backgroundColor: alpha(accentsFor(theme).primary, 0.12),
+                color: accentsFor(theme).primary,
+                fontWeight: 600,
+              }}
+            />
+          ))
+        }
+        renderInput={params => (
+          <TextField
+            {...params}
+            variant="outlined"
+            placeholder={value.length === 0 ? 'All namespaces' : ''}
+          />
+        )}
+      />
+    </Box>
+  );
+}
+
 /** Shared radii — soft, modern corners. */
 export const RADII = {
-  card: '12px',
-  control: '8px',
+  card: '14px',
+  control: '10px',
   pill: '999px',
 };
 
-/** A refined, mode-aware accent palette used for semantic coloring. */
-export function useAccents() {
-  const theme = useTheme();
-  return {
-    primary: theme.palette.primary.main,
-    success: theme.palette.success.main,
-    warning: theme.palette.warning.main,
-    error: theme.palette.error.main,
-    info: theme.palette.info.main,
-    neutral: theme.palette.text.secondary,
-    muted: theme.palette.text.disabled,
-  };
+/**
+ * A vibrant-but-tasteful accent palette (Tailwind-ish hues), independent of
+ * Headlamp's muted default theme so the Flux UI reads fresh and modern. Tuned
+ * per light/dark mode for good contrast on either background.
+ */
+export type Accents = {
+  primary: string;
+  success: string;
+  warning: string;
+  error: string;
+  info: string;
+  neutral: string;
+  muted: string;
+};
+
+const LIGHT_ACCENTS: Accents = {
+  primary: '#6366f1', // indigo-500
+  success: '#10b981', // emerald-500
+  warning: '#f59e0b', // amber-500
+  error: '#ef4444', // red-500
+  info: '#3b82f6', // blue-500
+  neutral: '#64748b', // slate-500
+  muted: '#94a3b8', // slate-400
+};
+
+const DARK_ACCENTS: Accents = {
+  primary: '#a5b4fc', // indigo-300
+  success: '#34d399', // emerald-400
+  warning: '#fbbf24', // amber-400
+  error: '#f87171', // red-400
+  info: '#60a5fa', // blue-400
+  neutral: '#94a3b8', // slate-400
+  muted: '#64748b', // slate-500
+};
+
+export function accentsFor(theme: Theme): Accents {
+  return theme.palette.mode === 'dark' ? DARK_ACCENTS : LIGHT_ACCENTS;
 }
 
-/** The subtle border used on surfaces. */
+/** Hook form of {@link accentsFor}. */
+export function useAccents(): Accents {
+  return accentsFor(useTheme());
+}
+
+/** A whisper-soft border used only where a card genuinely needs separation. */
 export function surfaceBorder(theme: Theme) {
-  return `1px solid ${alpha(theme.palette.divider, theme.palette.mode === 'dark' ? 0.6 : 0.8)}`;
+  return `1px solid ${alpha(theme.palette.divider, theme.palette.mode === 'dark' ? 0.5 : 0.6)}`;
 }
 
 export interface SurfaceProps {
@@ -82,24 +185,29 @@ export interface SurfaceProps {
 export function Surface(props: SurfaceProps) {
   const { children, accent, tinted, interactive, onClick, sx } = props;
   const theme = useTheme();
+  const dark = theme.palette.mode === 'dark';
   return (
     <Box
       onClick={onClick}
       sx={{
         borderRadius: RADII.card,
-        border: surfaceBorder(theme),
-        backgroundColor: tinted && accent ? alpha(accent, 0.06) : theme.palette.background.paper,
+        // Rely on a soft shadow rather than a hard outline; only a hairline
+        // border in dark mode where shadows are invisible.
+        border: dark ? surfaceBorder(theme) : 'none',
+        backgroundColor:
+          tinted && accent
+            ? alpha(accent, dark ? 0.14 : 0.08)
+            : theme.palette.background.paper,
         borderLeft: accent ? `3px solid ${accent}` : undefined,
-        boxShadow: theme.palette.mode === 'dark' ? 'none' : '0 1px 2px rgba(16, 24, 40, 0.04)',
-        transition: 'box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease',
+        boxShadow: dark ? 'none' : '0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04)',
+        transition: 'box-shadow 0.18s ease, transform 0.18s ease',
         ...(interactive
           ? {
               cursor: 'pointer',
               '&:hover': {
-                boxShadow:
-                  theme.palette.mode === 'dark'
-                    ? `0 0 0 1px ${alpha(theme.palette.primary.main, 0.4)}`
-                    : '0 6px 20px rgba(16, 24, 40, 0.10)',
+                boxShadow: dark
+                  ? `0 0 0 1px ${alpha(accent ?? theme.palette.primary.main, 0.5)}`
+                  : '0 8px 24px rgba(16, 24, 40, 0.12)',
                 transform: 'translateY(-2px)',
               },
             }
@@ -112,9 +220,15 @@ export function Surface(props: SurfaceProps) {
   );
 }
 
-export type PillTone = 'success' | 'warning' | 'error' | 'info' | 'neutral';
+export type PillTone = 'success' | 'warning' | 'error' | 'info' | 'neutral' | 'primary';
 
-/** A compact, Ant-style status tag: tinted background, colored text, soft dot. */
+/** Resolves a tone to its vibrant accent color. */
+export function toneColor(theme: Theme, tone: PillTone): string {
+  const a = accentsFor(theme);
+  return a[tone] ?? a.neutral;
+}
+
+/** A compact, modern status tag: tinted background, vibrant text, soft dot. */
 export function Pill(props: {
   tone: PillTone;
   icon?: string;
@@ -123,7 +237,7 @@ export function Pill(props: {
 }) {
   const { tone, icon, children, title } = props;
   const theme = useTheme();
-  const color = tone === 'neutral' ? theme.palette.text.secondary : theme.palette[tone].main;
+  const color = toneColor(theme, tone);
   return (
     <Box
       component="span"
@@ -133,14 +247,13 @@ export function Pill(props: {
         alignItems: 'center',
         gap: 0.5,
         px: 1,
-        py: '2px',
+        py: '3px',
         borderRadius: RADII.pill,
         fontSize: '0.75rem',
         fontWeight: 600,
-        lineHeight: 1.6,
+        lineHeight: 1.5,
         color,
-        backgroundColor: alpha(color, 0.12),
-        border: `1px solid ${alpha(color, 0.24)}`,
+        backgroundColor: alpha(color, theme.palette.mode === 'dark' ? 0.2 : 0.13),
         whiteSpace: 'nowrap',
       }}
     >

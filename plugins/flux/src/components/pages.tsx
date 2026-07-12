@@ -20,7 +20,7 @@ import { ICONS } from '../flux/icon';
 import { kindByName, kindsInCategory } from '../flux/kinds';
 import { DependencyWavesSection } from './DependencyWaves';
 import { FluxKindListSection } from './FluxKindList';
-import { PageHeader } from './ui';
+import { NamespaceBar, PageHeader } from './ui';
 
 const TITLES: Record<string, string> = {
   GitRepository: 'Git Repositories',
@@ -68,6 +68,7 @@ export function FluxSourcesPage() {
         description="The repositories, charts and buckets Flux watches for changes."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Sources' }]}
       />
+      <NamespaceBar />
       {kindsInCategory('sources').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
@@ -95,6 +96,7 @@ export function FluxKustomizationsPage() {
         description="Sets of manifests Flux applies to the cluster, in dependency order."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Kustomizations' }]}
       />
+      <NamespaceBar />
       <DependencyWavesSection kindDef={kindDef} />
       <FluxKindListSection
         kindDef={kindDef}
@@ -115,6 +117,7 @@ export function FluxHelmReleasesPage() {
         description="Helm charts Flux installs and upgrades, in dependency order."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Helm Releases' }]}
       />
+      <NamespaceBar />
       <DependencyWavesSection kindDef={kindDef} />
       <FluxKindListSection kindDef={kindDef} title={TITLES.HelmRelease} icon={ICONS.helmRelease} />
     </Page>
@@ -130,6 +133,7 @@ export function FluxNotificationsPage() {
         description="Alerts, providers and receivers that report Flux events to the outside world."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Notifications' }]}
       />
+      <NamespaceBar />
       {kindsInCategory('notifications').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
@@ -151,6 +155,7 @@ export function FluxImageAutomationPage() {
         description="Scans container registries for new image versions and updates Git automatically."
         crumbs={[{ label: 'Flux', route: 'fluxOverview' }, { label: 'Image Automation' }]}
       />
+      <NamespaceBar />
       {kindsInCategory('imageautomation').map(kindDef => (
         <FluxKindListSection
           key={kindDef.kind}
