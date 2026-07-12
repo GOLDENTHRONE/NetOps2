@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { Icon } from '@iconify/react';
 import {
   DetailsGrid,
   NameValueTable,
@@ -22,10 +23,12 @@ import {
   StatusLabel,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { localeDate } from '@kinvolk/headlamp-plugin/lib/Utils';
-import { Box, Chip } from '@mui/material';
+import { Box, Chip, Typography } from '@mui/material';
 import React from 'react';
 import { useParams } from 'react-router-dom';
 import { FluxActionButtons } from '../flux/actions';
+import { ICONS } from '../flux/icon';
+import { diagnose, getFailureCounts } from '../flux/insights';
 import { fluxClass, FluxKind, kindsInCategory, SOURCE_KINDS } from '../flux/kinds';
 import {
   getCommitWebUrl,
@@ -47,11 +50,14 @@ import {
 } from './common';
 import { ErrorState, pickMostRelevantError } from './errors';
 import { HelmReleaseInventorySection, KustomizationInventorySection } from './Inventory';
+import { ConsumerLineageRow, LineageSection } from './Lineage';
+import { Pill, Surface, useAccents } from './ui';
 
 function commonInfoRows(item: any) {
   const json = item.jsonData;
   const next = getNextSyncTime(json);
   const last = getLastSyncTime(json);
+  const failures = getFailureCounts(json);
   return [
     {
       name: 'Status',
@@ -60,6 +66,20 @@ function commonInfoRows(item: any) {
     {
       name: 'Status message',
       value: getStatusInfo(json).message ?? '-',
+    },
+    {
+      name: 'Failed attempts',
+      value: [
+        failures.total !== undefined ? `${failures.total} consecutive` : null,
+        failures.install !== undefined ? `${failures.install} install` : null,
+        failures.upgrade !== undefined ? `${failures.upgrade} upgrade` : null,
+      ]
+        .filter(Boolean)
+        .join(', '),
+      hide:
+        failures.total === undefined &&
+        failures.install === undefined &&
+        failures.upgrade === undefined,
     },
     {
       name: 'Suspended',
@@ -288,6 +308,82 @@ function ObjectChip(props: { kind: string; object: any }) {
 }
 
 /**
+ * Plain-language banner explaining what is happening with this resource,
+ * why, what it is waiting for and what to do next — shown whenever the
+ * resource is not simply healthy, so nobody has to decode conditions.
+ */
+function DiagnosisSection(props: { item: any }) {
+  const accents = useAccents();
+  const object = props.item?.jsonData;
+  const diagnosis = diagnose(object);
+  if (diagnosis.category === 'ok') {
+    return null;
+  }
+  const color =
+    diagnosis.category === 'progressing'
+      ? accents.info
+      : diagnosis.category === 'suspended'
+      ? accents.neutral
+      : diagnosis.category === 'dependency'
+      ? accents.warning
+      : accents.error;
+  const icon =
+    diagnosis.category === 'progressing'
+      ? ICONS.statusReconciling
+      : diagnosis.category === 'suspended'
+      ? ICONS.statusSuspended
+      : diagnosis.category === 'dependency'
+      ? ICONS.clock
+      : ICONS.statusError;
+
+  return (
+    <SectionBox title="What's happening">
+      <Surface accent={color} tinted sx={{ p: 2, display: 'flex', gap: 1.5 }}>
+        <Icon icon={icon} color={color} width="1.6rem" style={{ flexShrink: 0, marginTop: 2 }} />
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.3 }}>
+            {diagnosis.headline}
+          </Typography>
+          {diagnosis.explanation && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {diagnosis.explanation}
+            </Typography>
+          )}
+          {diagnosis.action && (
+            <Typography variant="body2" sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
+              <Icon icon={ICONS.arrowRight} width="1rem" style={{ flexShrink: 0, marginTop: 2 }} />
+              {diagnosis.action}
+            </Typography>
+          )}
+          {diagnosis.blockedOn && diagnosis.blockedOn.length > 0 && (
+            <Box sx={{ display: 'flex', gap: 0.75, mt: 1, flexWrap: 'wrap' }}>
+              <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+                Waiting for:
+              </Typography>
+              {diagnosis.blockedOn.map(id => {
+                const [depNamespace, depName] = id.split('/');
+                return (
+                  <FluxLink
+                    key={id}
+                    kind={object?.kind ?? 'Kustomization'}
+                    name={depName}
+                    namespace={depNamespace}
+                  >
+                    <Pill tone="warning" icon={ICONS.clock}>
+                      {id}
+                    </Pill>
+                  </FluxLink>
+                );
+              })}
+            </Box>
+          )}
+        </Box>
+      </Surface>
+    </SectionBox>
+  );
+}
+
+/**
  * For a source: everything Flux discovered/derived from it — the
  * Kustomizations, HelmCharts, HelmReleases and image automations that
  * reference this source, shown as clickable tags.
@@ -331,7 +427,7 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
   const allFailed = errors.length === consumers.length;
 
   return (
-    <SectionBox title={`Used by (${found.length})`}>
+    <SectionBox title={`What this source deploys (${found.length})`}>
       {allFailed ? (
         <ErrorState error={pickMostRelevantError(errors)} what="the objects that use this source" />
       ) : found.length === 0 ? (
@@ -343,9 +439,13 @@ function ReferencedBySection(props: { item: any; kindDef: FluxKind }) {
           }
         />
       ) : (
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
           {found.map(({ kind, object }) => (
-            <ObjectChip key={`${kind}-${object.metadata.uid}`} kind={kind} object={object} />
+            <ConsumerLineageRow
+              key={`${kind}-${object.metadata.uid}`}
+              consumerKind={kind}
+              consumer={object}
+            />
           ))}
         </Box>
       )}
@@ -545,6 +645,10 @@ export default function FluxResourceDetails(props: { kindDef: FluxKind }) {
           return [];
         }
         const sections: React.ReactNode[] = [];
+        sections.push(<DiagnosisSection key="flux-diagnosis" item={item} />);
+        if (kindDef.kind === 'Kustomization' || kindDef.kind === 'HelmRelease') {
+          sections.push(<LineageSection key="flux-lineage" item={item} kindDef={kindDef} />);
+        }
         const conditions = item.jsonData?.status?.conditions;
         if (Array.isArray(conditions) && conditions.length > 0) {
           sections.push(<ConditionsSection key="flux-conditions" conditions={conditions} />);

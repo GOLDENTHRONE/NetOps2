@@ -29,7 +29,16 @@ import { FLUX_KINDS, FluxCategory, fluxClass, FluxKind } from '../flux/kinds';
 import { FluxHealth, getStatusInfo } from '../flux/utils';
 import { ReadySummary, SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
-import { PageHeader, Pill, RADII, Section, Surface } from './ui';
+import {
+  AllFluxObjects,
+  FeedLoader,
+  InProgressSection,
+  NeedsAttentionSection,
+  RecentActivitySection,
+  splitAttention,
+  useAllFluxObjects,
+} from './operations';
+import { PageHeader, Pill, RADII, Section, Surface, useAccents } from './ui';
 
 const { ResourceClasses } = K8s;
 const { createRouteURL } = Router;
@@ -81,12 +90,17 @@ function StatTile(props: {
   value: React.ReactNode;
   color?: string;
   sub?: React.ReactNode;
+  onClick?: () => void;
 }) {
-  const { icon, label, value, color, sub } = props;
+  const { icon, label, value, color, sub, onClick } = props;
   const theme = useTheme();
   const c = color ?? theme.palette.text.primary;
   return (
-    <Surface sx={{ flex: '1 1 180px', minWidth: 170, p: 2 }}>
+    <Surface
+      interactive={!!onClick}
+      onClick={onClick}
+      sx={{ flex: '1 1 150px', minWidth: 140, p: 2 }}
+    >
       <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
         <Box
           sx={{
@@ -117,20 +131,21 @@ function StatTile(props: {
 }
 
 /**
- * The at-a-glance health banner: overall state, Flux version, controllers and
- * a tally of what Flux manages — designed to be understandable without any
- * prior Flux knowledge.
+ * The at-a-glance answer strip. Instead of resource counts it answers the
+ * operator's first questions: is the cluster healthy, is anything failing,
+ * is anything deploying, is anything stuck waiting — each tile jumping
+ * straight to the resources behind the number.
  */
-function FluxHealthHero(props: { cluster?: string }) {
+function FluxHealthHero(props: { data: AllFluxObjects; cluster?: string }) {
   const theme = useTheme();
+  const accents = useAccents();
+  const history = useHistory();
   const [deployments, deploymentsError] = ResourceClasses.Deployment.useList({
     labelSelector: 'app.kubernetes.io/part-of=flux',
     ...(props.cluster ? { cluster: props.cluster } : {}),
   });
 
-  const results = FLUX_KINDS.map(kindDef => useKindList(kindDef, props.cluster));
-  const objects = results.flatMap(r => (r.items ?? []).map((i: any) => i.jsonData));
-
+  const { rows, loading } = props.data;
   const counts: Record<FluxHealth, number> = {
     Ready: 0,
     NotReady: 0,
@@ -138,7 +153,8 @@ function FluxHealthHero(props: { cluster?: string }) {
     Suspended: 0,
     Unknown: 0,
   };
-  objects.forEach(o => (counts[getStatusInfo(o).health] += 1));
+  rows.forEach(r => (counts[r.info.health] += 1));
+  const { failing, blocked, progressing } = splitAttention(rows);
 
   const controllersTotal = deployments?.length ?? 0;
   const controllersReady = (deployments ?? []).filter((d: any) => {
@@ -158,7 +174,7 @@ function FluxHealthHero(props: { cluster?: string }) {
   const nothingFailing = counts.NotReady === 0;
 
   const loadingControllers = deployments === null && !deploymentsError;
-  const notInstalled = !loadingControllers && controllersTotal === 0 && objects.length === 0;
+  const notInstalled = !loadingControllers && controllersTotal === 0 && rows.length === 0;
 
   let overall: { label: string; color: string; icon: string; detail: string };
   if (notInstalled) {
@@ -168,43 +184,51 @@ function FluxHealthHero(props: { cluster?: string }) {
       icon: ICONS.statusUnknown,
       detail: 'No Flux controllers or resources were found in this cluster.',
     };
-  } else if (controllersHealthy && nothingFailing) {
-    overall = {
-      label: 'Healthy',
-      color: theme.palette.success.main,
-      icon: ICONS.statusReady,
-      detail: 'All controllers are running and every resource is reconciled.',
-    };
   } else if (!controllersHealthy && controllersTotal > 0) {
     overall = {
       label: 'Controllers degraded',
-      color: theme.palette.error.main,
+      color: accents.error,
       icon: ICONS.statusError,
-      detail: `${controllersReady} of ${controllersTotal} Flux controllers are ready.`,
+      detail: `${controllersReady} of ${controllersTotal} Flux controllers are ready — deployments may stall until this is fixed.`,
     };
   } else if (!nothingFailing) {
     overall = {
       label: 'Attention needed',
-      color: theme.palette.error.main,
+      color: accents.error,
       icon: ICONS.statusError,
-      detail: `${counts.NotReady} resource${
-        counts.NotReady === 1 ? '' : 's'
-      } failing to reconcile.`,
+      detail:
+        `${failing.length} resource${failing.length === 1 ? ' is' : 's are'} failing` +
+        (blocked.length > 0
+          ? ` and ${blocked.length} more ${
+              blocked.length === 1 ? 'is' : 'are'
+            } waiting behind them.`
+          : '.'),
+    };
+  } else if (progressing.length > 0) {
+    overall = {
+      label: 'Deploying',
+      color: accents.info,
+      icon: ICONS.statusReconciling,
+      detail: `${progressing.length} resource${
+        progressing.length === 1 ? ' is' : 's are'
+      } reconciling right now. Everything else is healthy.`,
     };
   } else {
     overall = {
-      label: 'Reconciling',
-      color: theme.palette.warning.main,
-      icon: ICONS.statusReconciling,
-      detail: 'Flux is applying changes.',
+      label: 'Healthy',
+      color: accents.success,
+      icon: ICONS.statusReady,
+      detail: 'All controllers are running and every deployment is up to date.',
     };
   }
+
+  const goToSearch = (filter: string) => () => history.push(`/flux/search?state=${filter}`);
 
   return (
     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 1 }}>
       {/* Overall status hero */}
-      <Surface accent={overall.color} tinted sx={{ flex: '2 1 320px', minWidth: 280, p: 2.5 }}>
-        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+      <Surface accent={overall.color} tinted sx={{ flex: '2 1 300px', minWidth: 280, p: 2.5 }}>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', height: '100%' }}>
           <Icon icon={overall.icon} width="2.6rem" color={overall.color} />
           <Box>
             <Typography variant="h5" sx={{ fontWeight: 700 }}>
@@ -213,38 +237,42 @@ function FluxHealthHero(props: { cluster?: string }) {
             <Typography variant="body2" color="textSecondary">
               {overall.detail}
             </Typography>
+            {version && (
+              <Typography variant="caption" color="textSecondary">
+                Flux {version} · {controllersReady}/{controllersTotal} controllers ready
+              </Typography>
+            )}
           </Box>
         </Box>
       </Surface>
 
       <StatTile
-        icon={FLUX_ICON}
-        label="Flux version"
-        value={loadingControllers ? '…' : version ?? 'unknown'}
-        color={theme.palette.primary.main}
+        icon={ICONS.statusError}
+        label="Failing"
+        value={loading ? '…' : failing.length}
+        color={failing.length > 0 ? accents.error : accents.muted}
+        onClick={goToSearch('failing')}
       />
       <StatTile
-        icon={ICONS.controllers}
-        label="Controllers ready"
-        value={loadingControllers ? '…' : `${controllersReady}/${controllersTotal}`}
-        color={controllersHealthy ? theme.palette.success.main : theme.palette.error.main}
+        icon={ICONS.clock}
+        label="Waiting on dependencies"
+        value={loading ? '…' : blocked.length}
+        color={blocked.length > 0 ? accents.warning : accents.muted}
+        onClick={goToSearch('blocked')}
       />
       <StatTile
-        icon={ICONS.resources}
-        label="Managed resources"
-        value={objects.length}
-        color={theme.palette.info.main}
-        sub={
-          counts.NotReady > 0 ? (
-            <Typography variant="caption" color="error">
-              {counts.NotReady} failing
-            </Typography>
-          ) : counts.Suspended > 0 ? (
-            <Typography variant="caption" color="textSecondary">
-              {counts.Suspended} suspended
-            </Typography>
-          ) : null
-        }
+        icon={ICONS.statusReconciling}
+        label="Deploying now"
+        value={loading ? '…' : progressing.length}
+        color={progressing.length > 0 ? accents.info : accents.muted}
+        onClick={goToSearch('progressing')}
+      />
+      <StatTile
+        icon={ICONS.statusSuspended}
+        label="Suspended"
+        value={loading ? '…' : counts.Suspended}
+        color={counts.Suspended > 0 ? accents.neutral : accents.muted}
+        onClick={goToSearch('suspended')}
       />
     </Box>
   );
@@ -390,15 +418,26 @@ export function FluxControllersSection(props: { cluster?: string } = {}) {
 }
 
 export default function FluxOverview() {
+  const data = useAllFluxObjects();
   return (
     <Box sx={{ p: { xs: 2, sm: 3 }, maxWidth: 1600, mx: 'auto' }}>
       <PageHeader
         icon={FLUX_ICON}
         title="Flux"
-        description="A live view of everything Flux manages in this cluster — sources, kustomizations, Helm releases and automation."
+        description="The operational state of every deployment Flux manages in this cluster — what needs attention, what is deploying, and what changed."
         crumbs={[{ label: 'Flux' }, { label: 'Overview' }]}
       />
-      <FluxHealthHero />
+      <FluxHealthHero data={data} />
+      <Box sx={{ mt: 3 }} />
+      {data.loading ? (
+        <FeedLoader />
+      ) : (
+        <>
+          <NeedsAttentionSection data={data} />
+          <InProgressSection data={data} />
+          <RecentActivitySection data={data} />
+        </>
+      )}
       <Section title="What Flux manages" sx={{ mt: 3 }}>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
           {CATEGORY_PAGES.map(category => (
