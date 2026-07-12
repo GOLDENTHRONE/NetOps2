@@ -15,24 +15,21 @@
  */
 
 import { Icon } from '@iconify/react';
-import { K8s, Router } from '@kinvolk/headlamp-plugin/lib';
+import { K8s } from '@kinvolk/headlamp-plugin/lib';
 import {
+  DateLabel,
   Link as HeadlampLink,
   SectionBox,
   SimpleTable,
-  StatusLabel,
 } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { Box, Link as MuiLink, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
 import { ICONS, kindIcon } from '../flux/icon';
-import { pluralizeKind } from '../flux/insights';
-import { SectionEmpty } from './common';
+import { K8sRefLink, SectionEmpty } from './common';
 import { ErrorState, InlineError, pickMostRelevantError } from './errors';
-import { Surface } from './ui';
+import { Pill, Surface } from './ui';
 
 const { ResourceClasses } = K8s;
-const { createRouteURL } = Router;
 
 /** One object managed by a Kustomization or Helm release. */
 export interface ManagedEntry {
@@ -70,53 +67,19 @@ export function parseInventoryEntries(
 }
 
 /**
- * Details page link for a managed object. Built-in kinds link to their
- * regular Headlamp pages; custom resources (Vault secrets, cert-manager
- * objects, ...) link to Headlamp's generic custom-resource page, so every
- * row stays navigable.
+ * Link for a managed object: Flux kinds (HelmRelease, Kustomization, ...)
+ * go to their rich Flux pages; everything else — built-in kinds and custom
+ * resources alike — opens in Headlamp's split-right details panel.
  */
 function entryLink(entry: ManagedEntry): React.ReactNode {
-  const cls = (ResourceClasses as Record<string, any>)[entry.kind];
-  if (cls && (cls.apiGroupName ?? '') === entry.group) {
-    let url = '';
-    try {
-      const obj = new cls({
-        kind: entry.kind,
-        apiVersion: entry.group ? `${entry.group}/v1` : 'v1',
-        metadata: { name: entry.name, namespace: entry.namespace },
-      });
-      url = obj.getDetailsLink();
-    } catch (e) {
-      url = '';
-    }
-    if (url) {
-      return (
-        <MuiLink component={RouterLink} to={url}>
-          {entry.name}
-        </MuiLink>
-      );
-    }
-  }
-  // Not a built-in kind: link to the generic custom-resource page.
-  if (entry.group) {
-    try {
-      const url = createRouteURL('customresource', {
-        crd: `${pluralizeKind(entry.kind)}.${entry.group}`,
-        namespace: entry.namespace ?? '-',
-        crName: entry.name,
-      });
-      if (url) {
-        return (
-          <MuiLink component={RouterLink} to={url}>
-            {entry.name}
-          </MuiLink>
-        );
-      }
-    } catch (e) {
-      // Fall through to plain text.
-    }
-  }
-  return <span>{entry.name}</span>;
+  return (
+    <K8sRefLink
+      kind={entry.kind}
+      group={entry.group}
+      name={entry.name}
+      namespace={entry.namespace}
+    />
+  );
 }
 
 /** Live pods of a workload, resolved through the workload's label selector. */
@@ -168,64 +131,55 @@ function WorkloadPods(props: { entry: ManagedEntry }) {
     );
   }
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-      {pods.map((pod: any) => {
-        const phase = pod.jsonData?.status?.phase;
-        return (
-          <Box key={pod.metadata.uid} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <HeadlampLink kubeObject={pod}>{pod.metadata.name}</HeadlampLink>
-            <StatusLabel
-              status={
-                phase === 'Running' || phase === 'Succeeded'
-                  ? 'success'
-                  : phase === 'Pending'
-                  ? 'warning'
-                  : 'error'
-              }
-            >
-              {phase ?? 'Unknown'}
-            </StatusLabel>
-          </Box>
-        );
-      })}
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, py: 0.25 }}>
+      {pods.map((pod: any) => (
+        <PodRow key={pod.metadata.uid} pod={pod} />
+      ))}
     </Box>
   );
 }
 
-/** The "Pods" cell of a workload row: collapsed by default, expands to live pods. */
-function PodsCell(props: { entry: ManagedEntry }) {
-  const { entry } = props;
-  const [expanded, setExpanded] = React.useState(false);
-  const expandable = WORKLOAD_KINDS.includes(entry.kind) && !!entry.namespace;
+/** One live pod, compact but complete: status, ready containers, restarts, age, node. */
+function PodRow(props: { pod: any }) {
+  const { pod } = props;
+  const json = pod.jsonData ?? {};
+  const phase = json.status?.phase;
+  const containerStatuses: any[] = json.status?.containerStatuses ?? [];
+  const readyCount = containerStatuses.filter(c => c?.ready).length;
+  const totalCount = json.spec?.containers?.length ?? containerStatuses.length;
+  const restarts = containerStatuses.reduce(
+    (sum, c) => sum + (typeof c?.restartCount === 'number' ? c.restartCount : 0),
+    0
+  );
+  const node = json.spec?.nodeName;
+  const created = json.metadata?.creationTimestamp;
+  const tone =
+    phase === 'Running' || phase === 'Succeeded'
+      ? 'success'
+      : phase === 'Pending'
+      ? 'warning'
+      : 'error';
 
-  if (!expandable) {
-    return <>-</>;
-  }
-  if (!expanded) {
-    return (
-      <MuiLink
-        component="button"
-        type="button"
-        onClick={() => setExpanded(true)}
-        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, fontSize: '0.8rem' }}
-      >
-        <Icon icon={ICONS.chevronRight} width="0.9rem" />
-        Show pods
-      </MuiLink>
-    );
-  }
   return (
-    <Box>
-      <MuiLink
-        component="button"
-        type="button"
-        onClick={() => setExpanded(false)}
-        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4, fontSize: '0.8rem', mb: 0.5 }}
-      >
-        <Icon icon={ICONS.chevronDown} width="0.9rem" />
-        Hide pods
-      </MuiLink>
-      <WorkloadPods entry={entry} />
+    <Box sx={{ minWidth: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Icon icon={ICONS.pod} width="0.95rem" style={{ opacity: 0.6, flexShrink: 0 }} />
+        <HeadlampLink kubeObject={pod}>{pod.metadata.name}</HeadlampLink>
+        <Pill tone={tone} icon={tone === 'success' ? ICONS.statusReady : undefined}>
+          {phase ?? 'Unknown'}
+        </Pill>
+      </Box>
+      <Typography variant="caption" color="text.secondary" component="div" sx={{ pl: '1.6rem' }}>
+        {readyCount}/{totalCount || '?'} ready
+        {restarts > 0 && ` · ${restarts} restart${restarts === 1 ? '' : 's'}`}
+        {created && (
+          <>
+            {' · '}
+            <DateLabel date={created} format="mini" /> old
+          </>
+        )}
+        {node && ` · on ${node}`}
+      </Typography>
     </Box>
   );
 }
@@ -254,6 +208,7 @@ export function ManagedResourcesTable(props: { entries: ManagedEntry[] }) {
         columns={[
           {
             label: 'Kind',
+            gridTemplate: 'min-content',
             getter: (entry: ManagedEntry) => (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Icon icon={kindIcon(entry.kind, entry.group)} width="1.2rem" />
@@ -261,10 +216,27 @@ export function ManagedResourcesTable(props: { entries: ManagedEntry[] }) {
               </Box>
             ),
           },
-          { label: 'Name', getter: (entry: ManagedEntry) => entryLink(entry) },
-          { label: 'Namespace', getter: (entry: ManagedEntry) => entry.namespace ?? '-' },
-          { label: 'API group', getter: (entry: ManagedEntry) => entry.group || 'core' },
-          { label: 'Pods', getter: (entry: ManagedEntry) => <PodsCell entry={entry} /> },
+          { label: 'Name', gridTemplate: '1fr', getter: (entry: ManagedEntry) => entryLink(entry) },
+          {
+            label: 'Namespace',
+            gridTemplate: 'min-content',
+            getter: (entry: ManagedEntry) => entry.namespace ?? '-',
+          },
+          {
+            label: 'API group',
+            gridTemplate: 'min-content',
+            getter: (entry: ManagedEntry) => entry.group || 'core',
+          },
+          {
+            label: 'Pods',
+            gridTemplate: '1.6fr',
+            getter: (entry: ManagedEntry) =>
+              WORKLOAD_KINDS.includes(entry.kind) && entry.namespace ? (
+                <WorkloadPods entry={entry} />
+              ) : (
+                '-'
+              ),
+          },
         ]}
         data={sorted}
       />

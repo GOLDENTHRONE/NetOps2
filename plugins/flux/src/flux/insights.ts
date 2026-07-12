@@ -203,7 +203,15 @@ export function diagnose(obj: FluxObject): Diagnosis {
     return { category: 'ok', headline: 'Up to date' };
   }
 
-  if (info.health === 'Reconciling' || info.health === 'Unknown') {
+  if (info.health === 'Unknown') {
+    return {
+      category: 'unknown',
+      headline: 'No status reported yet',
+      explanation: message || undefined,
+    };
+  }
+
+  if (info.health === 'Reconciling') {
     const blockedOn = parseBlockedDependencies(message, namespace);
     if (reason === 'DependencyNotReady' || blockedOn.length > 0) {
       return {

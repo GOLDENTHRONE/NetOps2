@@ -177,10 +177,12 @@ export function surfaceBorder(theme: Theme) {
 
 export interface SurfaceProps {
   children: React.ReactNode;
-  /** Left accent bar color, e.g. a status color. */
+  /** Accent color, used for the tinted background and (optional) side bar. */
   accent?: string;
   /** Tinted background using the accent color. */
   tinted?: boolean;
+  /** Draw the accent as a side bar. Off by default; list rows opt in. */
+  stripe?: boolean;
   interactive?: boolean;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   sx?: any;
@@ -188,7 +190,7 @@ export interface SurfaceProps {
 
 /** A soft, elevated card — the base building block of the UI. */
 export function Surface(props: SurfaceProps) {
-  const { children, accent, tinted, interactive, onClick, sx } = props;
+  const { children, accent, tinted, stripe, interactive, onClick, sx } = props;
   const theme = useTheme();
   const dark = theme.palette.mode === 'dark';
   return (
@@ -201,7 +203,7 @@ export function Surface(props: SurfaceProps) {
         border: dark ? surfaceBorder(theme) : 'none',
         backgroundColor:
           tinted && accent ? alpha(accent, dark ? 0.14 : 0.08) : theme.palette.background.paper,
-        borderLeft: accent ? `3px solid ${accent}` : undefined,
+        borderLeft: accent && stripe ? `3px solid ${accent}` : undefined,
         boxShadow: dark
           ? 'none'
           : '0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04)',

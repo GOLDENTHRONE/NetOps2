@@ -15,13 +15,19 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Router } from '@kinvolk/headlamp-plugin/lib';
-import { DateLabel, HoverInfoLabel } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { K8s, Router } from '@kinvolk/headlamp-plugin/lib';
+import {
+  DateLabel,
+  HoverInfoLabel,
+  Link as HeadlampLink,
+} from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import { localeDate } from '@kinvolk/headlamp-plugin/lib/Utils';
 import { Box, Link as MuiLink, Tooltip, Typography } from '@mui/material';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { ICONS } from '../flux/icon';
+import { pluralizeKind } from '../flux/insights';
+import { kindByName } from '../flux/kinds';
 import {
   FluxHealth,
   FluxObject,
@@ -221,6 +227,68 @@ export function FluxLink(props: {
       {children ?? name}
     </MuiLink>
   );
+}
+
+/**
+ * The one way to link to any Kubernetes object from the Flux UI:
+ * - Flux kinds go to their rich Flux details pages;
+ * - built-in kinds open in Headlamp's split-right details panel (when the
+ *   drawer is enabled) instead of navigating away;
+ * - custom resources (Vault secrets, cert-manager, ...) open the same way
+ *   through Headlamp's generic custom-resource view.
+ */
+export function K8sRefLink(props: {
+  kind: string;
+  /** API group when known; leave undefined to match by kind name only. */
+  group?: string;
+  name: string;
+  namespace?: string;
+  children?: React.ReactNode;
+}) {
+  const { kind, group, name, namespace, children } = props;
+
+  const fluxKind = kindByName(kind, group || undefined);
+  if (fluxKind && (group === undefined || group === fluxKind.group)) {
+    return (
+      <FluxLink kind={kind} name={name} namespace={namespace}>
+        {children ?? name}
+      </FluxLink>
+    );
+  }
+
+  const cls = (K8s.ResourceClasses as Record<string, any>)[kind];
+  if (cls && (group === undefined || (cls.apiGroupName ?? '') === group)) {
+    let obj: any = null;
+    try {
+      obj = new cls({
+        kind,
+        apiVersion: cls.apiGroupName ? `${cls.apiGroupName}/v1` : 'v1',
+        metadata: { name, namespace },
+      });
+    } catch (e) {
+      obj = null;
+    }
+    if (obj) {
+      return <HeadlampLink kubeObject={obj}>{children ?? name}</HeadlampLink>;
+    }
+  }
+
+  if (group) {
+    return (
+      <HeadlampLink
+        routeName="customresource"
+        params={{
+          crd: `${pluralizeKind(kind)}.${group}`,
+          namespace: namespace ?? '-',
+          crName: name,
+        }}
+      >
+        {children ?? name}
+      </HeadlampLink>
+    );
+  }
+
+  return <>{children ?? name}</>;
 }
 
 /** Small "n Ready / n Failed / n Suspended" summary used on overview cards. */

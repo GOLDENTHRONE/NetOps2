@@ -271,6 +271,7 @@ export default function FluxSearchPage() {
             columns={[
               {
                 label: 'Resource',
+                gridTemplate: '1.4fr',
                 getter: (row: FluxRow) => (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Icon icon={kindIcon(row.kindDef.kind, row.kindDef.group)} width="1.2rem" />
@@ -284,17 +285,24 @@ export default function FluxSearchPage() {
                   </Box>
                 ),
               },
-              { label: 'Kind', getter: (row: FluxRow) => row.kindDef.kind },
+              {
+                label: 'Kind',
+                gridTemplate: 'min-content',
+                getter: (row: FluxRow) => row.kindDef.kind,
+              },
               {
                 label: 'Namespace',
+                gridTemplate: 'min-content',
                 getter: (row: FluxRow) => row.object.metadata?.namespace ?? '-',
               },
               {
                 label: 'Status',
+                gridTemplate: 'min-content',
                 getter: (row: FluxRow) => <FluxStatusLabel object={row.object} />,
               },
               {
                 label: 'Why',
+                gridTemplate: '2fr',
                 getter: (row: FluxRow) =>
                   row.diagnosis.category === 'ok'
                     ? row.diagnosis.headline
@@ -304,6 +312,7 @@ export default function FluxSearchPage() {
               },
               {
                 label: 'Last sync',
+                gridTemplate: 'min-content',
                 getter: (row: FluxRow) => {
                   const lastSync = getLastSyncTime(row.object);
                   return lastSync ? <DateLabel date={lastSync} format="mini" /> : '-';
@@ -311,6 +320,8 @@ export default function FluxSearchPage() {
               },
               {
                 label: 'Actions',
+                gridTemplate: 'max-content',
+                cellProps: { style: { whiteSpace: 'nowrap' } },
                 getter: (row: FluxRow) => <FluxActionButtons item={row.item} variant="inline" />,
               },
             ]}

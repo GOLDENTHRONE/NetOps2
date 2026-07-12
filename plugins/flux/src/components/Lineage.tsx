@@ -23,11 +23,9 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Router } from '@kinvolk/headlamp-plugin/lib';
-import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import { alpha, Box, Link as MuiLink, Typography, useTheme } from '@mui/material';
+import { Link as HeadlampLink, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { alpha, Box, Typography, useTheme } from '@mui/material';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
 import { ICONS } from '../flux/icon';
 import { getTargetNamespaces } from '../flux/insights';
 import { fluxClass, FluxKind, kindByName } from '../flux/kinds';
@@ -35,8 +33,6 @@ import { FluxObject, getSourceRef, getStatusInfo, parseRevision } from '../flux/
 import { FluxLink, healthPresentation } from './common';
 import { parseInventoryEntries } from './Inventory';
 import { Pill, RADII, Surface, useAccents } from './ui';
-
-const { createRouteURL } = Router;
 
 /** Labels Flux's kustomize-controller stamps on everything it applies. */
 const KUSTOMIZE_NAME_LABEL = 'kustomize.toolkit.fluxcd.io/name';
@@ -135,14 +131,6 @@ function LiveStatusPill(props: { kindDef: FluxKind; name: string; namespace?: st
   );
 }
 
-function namespaceUrl(name: string): string | undefined {
-  try {
-    return createRouteURL('namespace', { name });
-  } catch (e) {
-    return undefined;
-  }
-}
-
 export function NamespaceChips(props: { namespaces: string[] }) {
   const accents = useAccents();
   if (props.namespaces.length === 0) {
@@ -150,9 +138,13 @@ export function NamespaceChips(props: { namespaces: string[] }) {
   }
   return (
     <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-      {props.namespaces.map(namespace => {
-        const url = namespaceUrl(namespace);
-        const chip = (
+      {props.namespaces.map(namespace => (
+        <HeadlampLink
+          key={namespace}
+          routeName="namespace"
+          params={{ name: namespace }}
+          underline="none"
+        >
           <Box
             component="span"
             sx={{
@@ -172,15 +164,8 @@ export function NamespaceChips(props: { namespaces: string[] }) {
             <Icon icon={ICONS.namespace} width="0.8rem" />
             {namespace}
           </Box>
-        );
-        return url ? (
-          <MuiLink key={namespace} component={RouterLink} to={url} underline="none">
-            {chip}
-          </MuiLink>
-        ) : (
-          <React.Fragment key={namespace}>{chip}</React.Fragment>
-        );
-      })}
+        </HeadlampLink>
+      ))}
     </Box>
   );
 }

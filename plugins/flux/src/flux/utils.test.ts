@@ -90,6 +90,21 @@ describe('getStatusInfo', () => {
     expect(info.health).toBe('Reconciling');
     expect(info.message).toBe('working on it');
   });
+
+  it('treats condition-less OCI Helm repositories as Ready', () => {
+    const info = getStatusInfo({
+      kind: 'HelmRepository',
+      spec: { type: 'oci', url: 'oci://ghcr.io/org/charts' },
+    });
+    expect(info.health).toBe('Ready');
+    expect(info.message).toContain('OCI');
+  });
+
+  it('explains resources with no status at all', () => {
+    const info = getStatusInfo({ kind: 'Kustomization' });
+    expect(info.health).toBe('Unknown');
+    expect(info.message).toContain('not reported any status');
+  });
 });
 
 describe('getNextSyncTime', () => {
