@@ -182,6 +182,18 @@ const defaultRoutes: { [routeName: string]: Route } = {
     noAuthRequired: true,
     component: React.lazy(() => import('../../components/project/ProjectDetails')),
   },
+  applicationDetails: {
+    path: '/application/:name',
+    exact: true,
+    name: 'Application Details',
+    sidebar: {
+      item: 'home',
+      sidebar: DefaultSidebars.HOME,
+    },
+    useClusterURL: false,
+    noAuthRequired: true,
+    component: React.lazy(() => import('../../components/applications/ApplicationDetails')),
+  },
   cluster: {
     path: '/',
     exact: true,

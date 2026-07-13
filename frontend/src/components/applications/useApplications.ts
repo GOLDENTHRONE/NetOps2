@@ -18,7 +18,12 @@ import { useMemo } from 'react';
 import { useClustersConf } from '../../lib/k8s';
 import { ApiError } from '../../lib/k8s/api/v2/ApiError';
 import Namespace from '../../lib/k8s/namespace';
-import { ApplicationInfo, buildApplications } from './applicationUtils';
+import {
+  ApplicationDefinition,
+  ApplicationInfo,
+  buildApplications,
+  groupApplications,
+} from './applicationUtils';
 
 /**
  * Fetch applications (namespaces) across every configured cluster.
@@ -44,4 +49,32 @@ export function useApplications(): {
     errors: errors ?? [],
     isLoading: isLoading && applications.length === 0,
   };
+}
+
+/**
+ * Applications grouped one-per-namespace-name across all clusters, ready for
+ * the Applications table and details page.
+ */
+export function useApplicationDefinitions(): {
+  applications: ApplicationDefinition[];
+  errors: ApiError[];
+  isLoading: boolean;
+} {
+  const { applications: rows, errors, isLoading } = useApplications();
+  const applications = useMemo(() => groupApplications(rows), [rows]);
+  return { applications, errors, isLoading };
+}
+
+/** Look up a single application (namespace) by name across all clusters. */
+export function useApplication(name: string): {
+  application?: ApplicationDefinition;
+  errors: ApiError[];
+  isLoading: boolean;
+} {
+  const { applications, errors, isLoading } = useApplicationDefinitions();
+  const application = useMemo(
+    () => applications.find(app => app.id === name),
+    [applications, name]
+  );
+  return { application, errors, isLoading };
 }

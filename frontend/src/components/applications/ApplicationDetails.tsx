@@ -14,258 +14,376 @@
  * limitations under the License.
  */
 
-import { Box, Link as MuiLink } from '@mui/material';
-import React, { useMemo } from 'react';
+import { Icon } from '@iconify/react';
+import {
+  Box,
+  Card,
+  CardContent,
+  Grid,
+  Link as MuiLink,
+  Tab,
+  Tabs,
+  Typography,
+} from '@mui/material';
+import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useHistory } from 'react-router-dom';
-import { formatClusterPathParam, getSelectedClusters } from '../../lib/cluster';
-import DaemonSet from '../../lib/k8s/daemonSet';
-import Deployment from '../../lib/k8s/deployment';
+import { Link as RouterLink, useParams } from 'react-router-dom';
 import { KubeObject } from '../../lib/k8s/KubeObject';
-import Namespace from '../../lib/k8s/namespace';
-import Pod from '../../lib/k8s/pod';
 import ResourceQuota from '../../lib/k8s/resourceQuota';
-import Service from '../../lib/k8s/service';
-import StatefulSet from '../../lib/k8s/statefulSet';
-import { createRouteURL } from '../../lib/router/createRouteURL';
-import { Activity, useActivity } from '../activity/Activity';
+import { SelectedClustersContext } from '../../lib/k8s/SelectedClustersContext';
 import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
-import { DateLabel, StatusLabel } from '../common/Label';
+import { DateLabel, EditButton, Loader, StatusLabel } from '../common';
 import Link from '../common/Link';
-import NameValueTable from '../common/NameValueTable';
-import { MetadataDictGrid } from '../common/Resource/MetadataDisplay';
 import SectionBox from '../common/SectionBox';
 import Table, { TableColumn } from '../common/Table/Table';
-import { makePodStatusLabel } from '../pod/List';
-import {
-  APP_DEPLOYMENT_TYPE_KEY,
-  APP_VERSION_KEY,
-  getAppMetadataValue,
-  NOT_AVAILABLE,
-} from './applicationUtils';
+import { ProjectResourcesTab, useResourceCategoriesList } from '../project/ProjectResourcesTab';
+import { getHealthIcon, getResourcesHealth } from '../project/projectUtils';
+import { ResourceCategoriesList } from '../project/ResourceCategoriesList';
+import { useProjectItems } from '../project/useProjectResources';
+import { GraphFilter } from '../resourceMap/graph/graphFiltering';
+import { GraphView } from '../resourceMap/GraphView';
+import { ResourceQuotaTable } from '../resourceQuota/Details';
+import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
+import { useApplication } from './useApplications';
 
-// The panel is transient, so poll instead of holding watch connections open.
-const REFETCH_INTERVAL_MS = 60_000;
+// Tab IDs, mirroring the Project details page this page is modeled on.
+const TAB_IDS = {
+  OVERVIEW: 'headlamp-applications.tabs.overview',
+  RESOURCES: 'headlamp-applications.tabs.resources',
+  ACCESS: 'headlamp-applications.tabs.access',
+  MAP: 'headlamp-applications.tabs.map',
+} as const;
 
-export interface ApplicationDetailsProps {
-  /** The application (display) name. */
-  appName: string;
-  /** The namespace backing this application. */
-  namespace: string;
-  /** The cluster the namespace lives in. */
-  cluster: string;
+interface ApplicationDetailsParams {
+  name: string;
 }
 
 /**
- * Rich details for one application (a namespace in a specific cluster),
- * shown in a side panel. Every resource listed links to its own details
- * page in the right cluster.
+ * Application details page at /application/:name — the same layout as the
+ * Project details page (Overview, Resources, Access and Map tabs), for one
+ * application, i.e. one business namespace across every cluster it exists in.
+ *
+ * Unlike the Projects page, everything clickable here redirects to the actual
+ * object's own page (the way clicking a cluster on the Home page enters the
+ * cluster) instead of opening details in a drawer on top of this page.
  */
-export default function ApplicationDetails({
-  appName,
-  namespace,
-  cluster,
-}: ApplicationDetailsProps) {
+export default function ApplicationDetails() {
   const { t } = useTranslation(['translation', 'glossary']);
-  const history = useHistory();
-  // Content rendered by Activity.launch is wrapped in an ActivityContext, so
-  // this returns the current panel; falls back to an id-less object if this
-  // component is ever rendered outside an Activity (e.g. in a story/test).
-  const [activity] = useActivity();
+  const { name } = useParams<ApplicationDetailsParams>();
+  const { application, errors, isLoading } = useApplication(name);
 
-  const [namespaceObj, namespaceError] = Namespace.useGet(namespace, undefined, { cluster });
+  if (isLoading && !application) {
+    return <Loader title={t('translation|Loading')} />;
+  }
 
-  const listParams = { clusters: [cluster], namespace, refetchInterval: REFETCH_INTERVAL_MS };
-  const deployments = Deployment.useList(listParams);
-  const statefulSets = StatefulSet.useList(listParams);
-  const daemonSets = DaemonSet.useList(listParams);
-  const pods = Pod.useList(listParams);
-  const services = Service.useList(listParams);
-  const resourceQuotas = ResourceQuota.useList(listParams);
-
-  const workloads = useMemo(
-    () => [
-      ...(deployments.items ?? []),
-      ...(statefulSets.items ?? []),
-      ...(daemonSets.items ?? []),
-    ],
-    [deployments.items, statefulSets.items, daemonSets.items]
-  );
-
-  const errors = useMemo(
-    () =>
-      [
-        ...(deployments.errors ?? []),
-        ...(statefulSets.errors ?? []),
-        ...(daemonSets.errors ?? []),
-        ...(pods.errors ?? []),
-        ...(services.errors ?? []),
-        ...(resourceQuotas.errors ?? []),
-      ].filter(Boolean),
-    [
-      deployments.errors,
-      statefulSets.errors,
-      daemonSets.errors,
-      pods.errors,
-      services.errors,
-      resourceQuotas.errors,
-    ]
-  );
-
-  const status = namespaceObj?.status?.phase;
-
-  // Unlike the resource links below (which intentionally open in the
-  // split-right drawer, matching the rest of Headlamp), this link is meant to
-  // behave like the cluster row on the Home page: a real navigation to the
-  // namespace's own page, not another drawer swapped on top of this panel.
-  // Bypassing the generic <Link> (which would intercept the click and open
-  // yet another temporary Activity, silently replacing this one) and closing
-  // this temporary panel makes that "redirect" behavior explicit.
-  const goToNamespace = () => {
-    history.push(
-      createRouteURL('namespace', {
-        name: namespace,
-        cluster: formatClusterPathParam(getSelectedClusters(), cluster),
-      })
+  if (!application) {
+    return (
+      <SectionBox backLink title={name}>
+        <ClusterGroupErrorMessage errors={errors} />
+        <Typography sx={{ my: 2 }}>{t('translation|No applications found')}</Typography>
+      </SectionBox>
     );
-    if (activity.id) {
-      Activity.close(activity.id);
-    }
-  };
+  }
 
-  const mainRows = [
-    { name: t('translation|Application'), value: appName },
-    {
-      name: t('glossary|Namespace'),
-      value: (
-        <MuiLink
-          component="button"
-          variant="body2"
-          sx={{ textAlign: 'left', verticalAlign: 'baseline' }}
-          onClick={goToNamespace}
-        >
-          {namespace}
-        </MuiLink>
-      ),
-    },
-    { name: t('glossary|Cluster'), value: cluster },
-    {
-      name: t('translation|Status'),
-      value: status ? (
-        <StatusLabel status={status === 'Active' ? 'success' : 'error'}>{status}</StatusLabel>
-      ) : (
-        NOT_AVAILABLE
-      ),
-    },
-    {
-      name: t('translation|Version'),
-      value: namespaceObj ? getAppMetadataValue(namespaceObj, APP_VERSION_KEY) : NOT_AVAILABLE,
-    },
-    {
-      name: t('translation|Deployment Type'),
-      value: namespaceObj
-        ? getAppMetadataValue(namespaceObj, APP_DEPLOYMENT_TYPE_KEY)
-        : NOT_AVAILABLE,
-    },
-    {
-      name: t('translation|Creation'),
-      value: namespaceObj?.metadata?.creationTimestamp ? (
-        <DateLabel date={namespaceObj.metadata.creationTimestamp} format="brief" />
-      ) : (
-        NOT_AVAILABLE
-      ),
-    },
-    {
-      name: t('translation|Labels'),
-      value: namespaceObj?.metadata?.labels ? (
-        <MetadataDictGrid dict={namespaceObj.metadata.labels} />
-      ) : (
-        NOT_AVAILABLE
-      ),
-    },
+  // Key forces a remount when switching applications, which is required
+  // because useProjectItems calls hooks per resource in a loop (the array
+  // length must stay stable per mount).
+  return <ApplicationDetailsContent key={application.id} application={application} />;
+}
+
+/** Small subdued value for metadata that is not available (yet). */
+function MetadataValue({ value }: { value: string }) {
+  if (value === NOT_AVAILABLE) {
+    return (
+      <Typography component="span" variant="caption" color="text.secondary">
+        {NOT_AVAILABLE}
+      </Typography>
+    );
+  }
+  return <Typography component="span">{value}</Typography>;
+}
+
+function ApplicationDetailsContent({ application }: { application: ApplicationDefinition }) {
+  const { t } = useTranslation(['translation', 'glossary']);
+  const [selectedTab, setSelectedTab] = useState<string>(TAB_IDS.OVERVIEW);
+  const [selectedCategoryName, setSelectedCategoryName] = useState<string>();
+
+  const { items, errors: resourceErrors, isLoading } = useProjectItems(application);
+  // useProjectItems reports errors per resource type; flatten them for display.
+  const errors = useMemo(() => resourceErrors.flatMap(it => it.errors), [resourceErrors]);
+
+  const tabs = [
+    { id: TAB_IDS.OVERVIEW, icon: 'mdi:view-dashboard', label: t('translation|Overview') },
+    { id: TAB_IDS.RESOURCES, icon: 'mdi:format-list-bulleted', label: t('translation|Resources') },
+    { id: TAB_IDS.ACCESS, icon: 'mdi:account-lock', label: t('translation|Access') },
+    { id: TAB_IDS.MAP, icon: 'mdi:map', label: t('translation|Map') },
   ];
 
-  const workloadColumns = useMemo<TableColumn<KubeObject>[]>(
-    () => [
-      {
-        id: 'name',
-        header: t('translation|Name'),
-        accessorFn: item => item.getName(),
-        Cell: ({ row: { original } }) => <Link kubeObject={original} />,
-      },
-      {
-        id: 'kind',
-        header: t('translation|Kind'),
-        accessorFn: item => item.kind,
-        gridTemplate: 'min-content',
-      },
-      {
-        id: 'age',
-        header: t('translation|Age'),
-        gridTemplate: 'min-content',
-        accessorFn: item => item.metadata.creationTimestamp,
-        Cell: ({ row: { original } }) => <DateLabel date={original.metadata.creationTimestamp} />,
-      },
-    ],
-    [t]
+  if (isLoading) {
+    return <Loader title={t('translation|Loading')} />;
+  }
+
+  return (
+    <Box
+      sx={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'flex-start' }}
+    >
+      <SectionBox
+        outterBoxProps={{
+          sx: { flexGrow: 1, display: 'flex', flexDirection: 'column', width: '100%' },
+        }}
+        sx={{
+          flexGrow: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          mb: 3,
+        }}
+        backLink
+        title={
+          <Box display="flex" alignItems="center" gap={1} sx={{ py: 2 }}>
+            <Typography variant="h5" component="span" sx={{ mr: 'auto' }}>
+              {application.id}
+            </Typography>
+          </Box>
+        }
+      >
+        <ClusterGroupErrorMessage errors={errors} />
+        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+          <Tabs value={selectedTab} onChange={(event, newValue) => setSelectedTab(newValue)}>
+            {tabs.map(tab => (
+              <Tab
+                key={tab.id}
+                value={tab.id}
+                label={
+                  <>
+                    <Icon icon={tab.icon} />
+                    <Typography>{tab.label}</Typography>
+                  </>
+                }
+                sx={{
+                  flexDirection: 'row',
+                  gap: 1,
+                  fontSize: '1.25rem',
+                }}
+              />
+            ))}
+          </Tabs>
+        </Box>
+        {selectedTab === TAB_IDS.OVERVIEW && (
+          <ApplicationOverview
+            application={application}
+            applicationResources={items}
+            onCategoryClick={category => {
+              setSelectedCategoryName(category);
+              setSelectedTab(TAB_IDS.RESOURCES);
+            }}
+          />
+        )}
+        {selectedTab === TAB_IDS.RESOURCES && (
+          <ProjectResourcesTab
+            projectResources={items}
+            showClusterColumn={application.clusters.length > 1}
+            selectedCategoryName={selectedCategoryName}
+            setSelectedCategoryName={setSelectedCategoryName}
+            directObjectLinks
+          />
+        )}
+        {selectedTab === TAB_IDS.ACCESS && (
+          <ApplicationAccess application={application} applicationResources={items} />
+        )}
+        {selectedTab === TAB_IDS.MAP && <ApplicationMap application={application} />}
+      </SectionBox>
+    </Box>
+  );
+}
+
+/** Overview tab: status, resource categories and resource quotas. */
+function ApplicationOverview({
+  application,
+  applicationResources,
+  onCategoryClick,
+}: {
+  application: ApplicationDefinition;
+  applicationResources: KubeObject[];
+  onCategoryClick: (categoryName: string) => void;
+}) {
+  const { t } = useTranslation(['translation', 'glossary']);
+
+  const resourceQuotas = useMemo(
+    () =>
+      (applicationResources?.filter(it => it.kind === 'ResourceQuota') as ResourceQuota[]) ?? [],
+    [applicationResources]
   );
 
-  const podColumns = useMemo<TableColumn<Pod>[]>(
-    () => [
-      {
-        id: 'name',
-        header: t('translation|Name'),
-        accessorFn: item => item.getName(),
-        Cell: ({ row: { original } }) => <Link kubeObject={original} />,
-      },
-      {
-        id: 'status',
-        header: t('translation|Status'),
-        accessorFn: item => item.status?.phase,
-        gridTemplate: 'min-content',
-        Cell: ({ row: { original } }) => makePodStatusLabel(original, false, t),
-      },
-      {
-        id: 'age',
-        header: t('translation|Age'),
-        gridTemplate: 'min-content',
-        accessorFn: item => item.metadata.creationTimestamp,
-        Cell: ({ row: { original } }) => <DateLabel date={original.metadata.creationTimestamp} />,
-      },
-    ],
-    [t]
+  const categoryList = useResourceCategoriesList(applicationResources);
+
+  const health = useMemo(() => getResourcesHealth(applicationResources), [applicationResources]);
+
+  return (
+    <Grid container spacing={3} sx={{ pt: 2 }}>
+      <Grid item xs={12} md={4}>
+        <Card sx={{ height: '100%' }}>
+          <CardContent>
+            <Typography variant="h6">{t('translation|Status')}</Typography>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <Box>
+                <Typography variant="body2" color="text.secondary">
+                  {t('translation|Application Status')}
+                </Typography>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <StatusLabel
+                    status={health.error > 0 ? 'error' : health.warning > 0 ? 'warning' : 'success'}
+                  >
+                    <Icon
+                      icon={getHealthIcon(health.success, health.error, health.warning)}
+                      style={{
+                        fontSize: 24,
+                      }}
+                    />
+                    {health.success === 0
+                      ? t('translation|No Workloads')
+                      : health.error > 0
+                      ? t('translation|Unhealthy')
+                      : health.warning > 0
+                      ? t('translation|Degraded')
+                      : t('translation|Healthy')}
+                  </StatusLabel>
+                </Box>
+              </Box>
+              <Box>
+                <Typography variant="body2" color="text.secondary">
+                  {t('translation|Resources')}
+                </Typography>
+                {applicationResources.length > 0 && (
+                  <Box display="flex" flexWrap="wrap" gap={1}>
+                    {health.success > 0 && (
+                      <StatusLabel status="success">
+                        {health.success} {t('translation|Healthy')}
+                      </StatusLabel>
+                    )}
+                    {health.warning > 0 && (
+                      <StatusLabel status="warning">
+                        {health.warning} {t('translation|Warning')}
+                      </StatusLabel>
+                    )}
+                    {health.error > 0 && (
+                      <StatusLabel status="error">
+                        {health.error} {t('translation|Unhealthy')}
+                      </StatusLabel>
+                    )}
+                  </Box>
+                )}
+              </Box>
+            </Box>
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                {application.clusters.length === 1
+                  ? t('translation|Cluster')
+                  : t('translation|Clusters')}
+              </Typography>
+              <Box display="flex" flexWrap="wrap" gap={1} sx={{ mt: 0.5 }}>
+                {application.clusters.map(cluster => (
+                  <Link key={cluster} routeName="cluster" params={{ cluster }}>
+                    {cluster}
+                  </Link>
+                ))}
+              </Box>
+            </Box>
+            <Box sx={{ mt: 2, display: 'flex', gap: 4 }}>
+              <Box>
+                <Typography variant="body2" color="text.secondary">
+                  {t('translation|Version')}
+                </Typography>
+                <MetadataValue value={application.version} />
+              </Box>
+              <Box>
+                <Typography variant="body2" color="text.secondary">
+                  {t('translation|Deployment Type')}
+                </Typography>
+                <MetadataValue value={application.deploymentType} />
+              </Box>
+            </Box>
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid item xs={12} md={4}>
+        <Card sx={{ height: '100%' }}>
+          <CardContent>
+            <Typography variant="h6">{t('translation|Resources')}</Typography>
+            <ResourceCategoriesList categoryList={categoryList} onCategoryClick={onCategoryClick} />
+          </CardContent>
+        </Card>
+      </Grid>
+
+      <Grid item xs={12} md={4}>
+        <Card sx={{ height: '100%' }}>
+          <CardContent>
+            <Typography variant="h6">{t('translation|Resource Quotas')}</Typography>
+            <Box>
+              {resourceQuotas.map(it => (
+                <Box sx={{ mb: 2 }} key={it.metadata.uid}>
+                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Typography variant="h6" sx={{ mr: 'auto' }}>
+                      {it.metadata.name}
+                    </Typography>
+                    <EditButton item={it} />
+                  </Box>
+                  <ResourceQuotaTable resourceStats={it.resourceStats} />
+                </Box>
+              ))}
+
+              {resourceQuotas.length === 0 && (
+                <Typography variant="body2" color="text.secondary" sx={{ my: 2 }}>
+                  {NOT_AVAILABLE}
+                </Typography>
+              )}
+            </Box>
+          </CardContent>
+        </Card>
+      </Grid>
+    </Grid>
+  );
+}
+
+/**
+ * Access tab: the application's Roles and RoleBindings. Names redirect to the
+ * object's own details page rather than opening a drawer here.
+ */
+function ApplicationAccess({
+  application,
+  applicationResources,
+}: {
+  application: ApplicationDefinition;
+  applicationResources: KubeObject[];
+}) {
+  const { t } = useTranslation(['translation', 'glossary']);
+
+  const roles = useMemo(
+    () => applicationResources.filter(it => it.kind === 'Role'),
+    [applicationResources]
+  );
+  const roleBindings = useMemo(
+    () => applicationResources.filter(it => it.kind === 'RoleBinding'),
+    [applicationResources]
   );
 
-  const serviceColumns = useMemo<TableColumn<Service>[]>(
+  const columns = useMemo<TableColumn<KubeObject>[]>(
     () => [
       {
         id: 'name',
         header: t('translation|Name'),
-        accessorFn: item => item.getName(),
-        Cell: ({ row: { original } }) => <Link kubeObject={original} />,
+        accessorFn: item => item.metadata.name,
+        Cell: ({ row: { original } }) => (
+          <MuiLink component={RouterLink} to={original.getDetailsLink()}>
+            {original.metadata.name}
+          </MuiLink>
+        ),
       },
       {
-        id: 'type',
-        header: t('translation|Type'),
-        accessorFn: item => item.spec?.type ?? NOT_AVAILABLE,
+        id: 'cluster',
+        header: t('glossary|Cluster'),
         gridTemplate: 'min-content',
-      },
-      {
-        id: 'clusterIp',
-        header: t('glossary|Cluster IP'),
-        accessorFn: item => item.spec?.clusterIP ?? NOT_AVAILABLE,
-      },
-    ],
-    [t]
-  );
-
-  const quotaColumns = useMemo<TableColumn<ResourceQuota>[]>(
-    () => [
-      {
-        id: 'name',
-        header: t('translation|Name'),
-        accessorFn: item => item.getName(),
-        Cell: ({ row: { original } }) => <Link kubeObject={original} />,
+        accessorFn: item => item.cluster,
       },
       {
         id: 'age',
@@ -279,51 +397,47 @@ export default function ApplicationDetails({
   );
 
   return (
-    <Box sx={{ p: 2, overflowY: 'auto', height: '100%' }}>
-      <SectionBox title={appName} headerProps={{ headerStyle: 'main' }}>
-        {namespaceError && (
-          <ClusterGroupErrorMessage errors={namespaceError ? [namespaceError] : []} />
-        )}
-        <NameValueTable rows={mainRows} />
-      </SectionBox>
+    <Box sx={{ my: 3 }}>
+      <SelectedClustersContext.Provider value={application.clusters}>
+        <Typography variant="h6">{t('glossary|Roles')}</Typography>
+        <Table columns={columns} data={roles} emptyMessage={NOT_AVAILABLE} />
+        <Typography variant="h6" sx={{ mt: 2 }}>
+          {t('glossary|Role Bindings')}
+        </Typography>
+        <Table columns={columns} data={roleBindings} emptyMessage={NOT_AVAILABLE} />
+      </SelectedClustersContext.Provider>
+    </Box>
+  );
+}
 
-      <ClusterGroupErrorMessage errors={errors} />
-
-      <SectionBox title={t('glossary|Workloads')}>
-        <Table
-          columns={workloadColumns}
-          data={workloads}
-          loading={deployments.items === null && workloads.length === 0}
-          emptyMessage={NOT_AVAILABLE}
-        />
-      </SectionBox>
-
-      <SectionBox title={t('glossary|Pods')}>
-        <Table
-          columns={podColumns}
-          data={pods.items ?? []}
-          loading={pods.items === null}
-          emptyMessage={NOT_AVAILABLE}
-        />
-      </SectionBox>
-
-      <SectionBox title={t('glossary|Services')}>
-        <Table
-          columns={serviceColumns}
-          data={services.items ?? []}
-          loading={services.items === null}
-          emptyMessage={NOT_AVAILABLE}
-        />
-      </SectionBox>
-
-      <SectionBox title={t('glossary|Resource Quotas')}>
-        <Table
-          columns={quotaColumns}
-          data={resourceQuotas.items ?? []}
-          loading={resourceQuotas.items === null}
-          emptyMessage={NOT_AVAILABLE}
-        />
-      </SectionBox>
+/** Map tab: the resource map filtered down to the application's namespace. */
+function ApplicationMap({ application }: { application: ApplicationDefinition }) {
+  const filters = useMemo(
+    () =>
+      [
+        application.namespaces.length > 0
+          ? {
+              type: 'namespace',
+              namespaces: new Set(application.namespaces),
+            }
+          : undefined,
+      ].filter(Boolean) as GraphFilter[],
+    [application.namespaces]
+  );
+  return (
+    <Box
+      sx={{
+        border: '1px solid',
+        borderColor: 'divider',
+        borderTop: 0,
+        flexGrow: 1,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <SelectedClustersContext.Provider value={application.clusters}>
+        <GraphView defaultFilters={filters} />
+      </SelectedClustersContext.Provider>
     </Box>
   );
 }
