@@ -295,11 +295,27 @@ function CommitRow(props: {
             </Pill>
           )}
         </Box>
-        <Typography variant="caption" color="text.secondary" component="div">
-          {commit.author ?? 'unknown'}
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          component="div"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            mt: 0.25,
+            // DateLabel renders its own Typography; keep every piece of this
+            // line at the same size.
+            '& .MuiTypography-root': { fontSize: 'inherit', lineHeight: 'inherit' },
+          }}
+        >
+          <Icon icon={ICONS.author} width="0.85rem" style={{ flexShrink: 0 }} />
+          <span>{commit.author ?? 'unknown'}</span>
           {commit.date && (
             <>
-              {' · '}
+              <Box component="span" sx={{ opacity: 0.5 }}>
+                |
+              </Box>
               <DateLabel date={commit.date} format="mini" />
             </>
           )}

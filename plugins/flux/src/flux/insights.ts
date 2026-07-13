@@ -20,7 +20,14 @@
  * Pure logic, free of Headlamp imports, so it can be unit tested.
  */
 
-import { DependencyNode, FluxHealth, FluxObject, getStatusInfo, isSuspended } from './utils';
+import {
+  DependencyNode,
+  FluxHealth,
+  FluxObject,
+  getSourceRef,
+  getStatusInfo,
+  isSuspended,
+} from './utils';
 
 /** Broad cause categories, used for grouping, filtering and icon/color choice. */
 export type DiagnosisCategory =
@@ -479,17 +486,20 @@ export interface WorkloadPrefix {
 }
 
 /**
- * One "application" as an operator thinks of it: a root Kustomization or
- * HelmRelease plus everything it (transitively) defines, regardless of how
- * many Flux objects or namespaces are involved under the hood.
+ * One "application" as an operator thinks of it: everything deployed from
+ * one source (Git/OCI repository or bucket), no matter how many
+ * Kustomizations, HelmReleases or namespaces are involved under the hood.
+ * Standalone HelmReleases (not defined by any Kustomization) form their
+ * own application.
  */
 export interface Application {
-  /** "Kind/namespace/name" of the root object. */
+  /** "Kind/namespace/name" of the grouping object (source or root applier). */
   id: string;
   name: string;
   namespace: string;
+  /** The kind the card represents: GitRepository, OCIRepository, Bucket, Kustomization or HelmRelease. */
   rootKind: string;
-  /** All Flux appliers in this application, including the root. */
+  /** All Flux appliers in this application. */
   members: { kind: string; object: FluxObject }[];
   /** The namespaces the application actually deploys into. */
   targetNamespaces: string[];
@@ -509,10 +519,15 @@ function definedById(obj: FluxObject): string | undefined {
 
 const APP_WORKLOAD_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
 
+/** Source kinds an application groups under: one repository, one card. */
+const APP_SOURCE_KINDS = new Set(['GitRepository', 'OCIRepository', 'Bucket']);
+
 /**
- * Groups Kustomizations and HelmReleases into applications: each root (an
- * applier not created by another Kustomization) collects everything whose
- * defined-by chain leads back to it.
+ * Groups Kustomizations and HelmReleases into applications. Roots (appliers
+ * not created by another Kustomization) collect everything whose defined-by
+ * chain leads back to them; roots pulling from the same Git/OCI source are
+ * then merged, so one repository reads as one application no matter how
+ * many Kustomizations it is split into.
  */
 export function buildApplications(objects: { kind: string; object: FluxObject }[]): Application[] {
   const appliers = objects.filter(o => o.kind === 'Kustomization' || o.kind === 'HelmRelease');
@@ -552,19 +567,30 @@ export function buildApplications(objects: { kind: string; object: FluxObject }[
   for (const { kind, object } of appliers) {
     const root = rootOf(object);
     const rootKind = root === object ? kind : 'Kustomization';
-    const rootId = `${rootKind}/${root.metadata?.namespace ?? ''}/${root.metadata?.name ?? ''}`;
-    let app = apps.get(rootId);
+
+    // Merge roots that pull from the same repository: the source is the
+    // application, its Kustomizations are implementation detail.
+    const sourceRef = rootKind === 'Kustomization' ? getSourceRef(root) : undefined;
+    const groupsBySource = !!sourceRef && APP_SOURCE_KINDS.has(sourceRef.kind);
+    const groupKind = groupsBySource ? sourceRef!.kind : rootKind;
+    const groupNamespace = groupsBySource
+      ? sourceRef!.namespace ?? root.metadata?.namespace ?? ''
+      : root.metadata?.namespace ?? '';
+    const groupName = groupsBySource ? sourceRef!.name : root.metadata?.name ?? '';
+
+    const appId = `${groupKind}/${groupNamespace}/${groupName}`;
+    let app = apps.get(appId);
     if (!app) {
       app = {
-        id: rootId,
-        name: root.metadata?.name ?? '',
-        namespace: root.metadata?.namespace ?? '',
-        rootKind,
+        id: appId,
+        name: groupName,
+        namespace: groupNamespace,
+        rootKind: groupKind,
         members: [],
         targetNamespaces: [],
         workloadPrefixes: [],
       };
-      apps.set(rootId, app);
+      apps.set(appId, app);
     }
     app.members.push({ kind, object });
   }

@@ -608,23 +608,32 @@ export function DependencyWavesSection(props: DependencyWavesSectionProps) {
 function ScrollArrow(props: { direction: 1 | -1; onClick: () => void }) {
   const { direction, onClick } = props;
   const theme = useTheme();
+  const accents = accentsFor(theme);
   return (
     <IconButton
-      size="small"
       onClick={onClick}
       aria-label={direction === 1 ? 'Scroll right' : 'Scroll left'}
       sx={{
         position: 'absolute',
         top: '50%',
         transform: 'translateY(-50%)',
-        [direction === 1 ? 'right' : 'left']: -6,
+        [direction === 1 ? 'right' : 'left']: -4,
         zIndex: 2,
+        width: 38,
+        height: 38,
+        color: accents.primary,
         backgroundColor: theme.palette.background.paper,
-        boxShadow: '0 2px 8px rgba(16, 24, 40, 0.25)',
-        '&:hover': { backgroundColor: theme.palette.background.paper },
+        border: `1px solid ${alpha(accents.primary, 0.35)}`,
+        boxShadow: '0 4px 14px rgba(16, 24, 40, 0.28)',
+        transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+        '&:hover': {
+          backgroundColor: theme.palette.background.paper,
+          transform: 'translateY(-50%) scale(1.08)',
+          boxShadow: '0 6px 18px rgba(16, 24, 40, 0.35)',
+        },
       }}
     >
-      <Icon icon={direction === 1 ? ICONS.chevronRight : ICONS.chevronLeft} width="1.2rem" />
+      <Icon icon={direction === 1 ? ICONS.chevronRight : ICONS.chevronLeft} width="1.4rem" />
     </IconButton>
   );
 }

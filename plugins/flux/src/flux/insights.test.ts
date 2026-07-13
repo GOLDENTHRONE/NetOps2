@@ -244,14 +244,21 @@ describe('pluralizeKind', () => {
 });
 
 describe('buildApplications', () => {
-  const root: FluxObject = {
+  const gitSource = { kind: 'GitRepository', name: 'cnf-gitops' };
+  const rootA: FluxObject = {
     kind: 'Kustomization',
-    metadata: { name: 'app-root', namespace: 'flux-system' },
+    metadata: { name: 'infra', namespace: 'flux-system' },
+    spec: { sourceRef: gitSource },
     status: {
       inventory: {
         entries: [{ id: 'apps_web_apps_Deployment' }, { id: 'apps_cfg__ConfigMap' }],
       },
     },
+  };
+  const rootB: FluxObject = {
+    kind: 'Kustomization',
+    metadata: { name: 'apps', namespace: 'flux-system' },
+    spec: { sourceRef: gitSource },
   };
   const child: FluxObject = {
     kind: 'HelmRelease',
@@ -259,7 +266,7 @@ describe('buildApplications', () => {
       name: 'db',
       namespace: 'apps',
       labels: {
-        'kustomize.toolkit.fluxcd.io/name': 'app-root',
+        'kustomize.toolkit.fluxcd.io/name': 'apps',
         'kustomize.toolkit.fluxcd.io/namespace': 'flux-system',
       },
     },
@@ -270,20 +277,22 @@ describe('buildApplications', () => {
     metadata: { name: 'solo', namespace: 'tools' },
   };
 
-  it('groups defined-by children under their root', () => {
+  it('merges everything from one source into one application', () => {
     const apps = buildApplications([
-      { kind: 'Kustomization', object: root },
+      { kind: 'Kustomization', object: rootA },
+      { kind: 'Kustomization', object: rootB },
       { kind: 'HelmRelease', object: child },
       { kind: 'HelmRelease', object: standalone },
     ]);
-    expect(apps.map(a => a.name).sort()).toEqual(['app-root', 'solo']);
+    expect(apps.map(a => a.name).sort()).toEqual(['cnf-gitops', 'solo']);
 
-    const rootApp = apps.find(a => a.name === 'app-root')!;
-    expect(rootApp.rootKind).toBe('Kustomization');
-    expect(rootApp.members).toHaveLength(2);
-    expect(rootApp.targetNamespaces).toEqual(['apps']);
-    expect(rootApp.workloadPrefixes).toContainEqual({ namespace: 'apps', prefix: 'web' });
-    expect(rootApp.workloadPrefixes).toContainEqual({ namespace: 'apps', prefix: 'db' });
+    const repoApp = apps.find(a => a.name === 'cnf-gitops')!;
+    expect(repoApp.rootKind).toBe('GitRepository');
+    expect(repoApp.namespace).toBe('flux-system');
+    expect(repoApp.members).toHaveLength(3);
+    expect(repoApp.targetNamespaces).toEqual(['apps']);
+    expect(repoApp.workloadPrefixes).toContainEqual({ namespace: 'apps', prefix: 'web' });
+    expect(repoApp.workloadPrefixes).toContainEqual({ namespace: 'apps', prefix: 'db' });
 
     const soloApp = apps.find(a => a.name === 'solo')!;
     expect(soloApp.rootKind).toBe('HelmRelease');

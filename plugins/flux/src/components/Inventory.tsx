@@ -169,17 +169,60 @@ function PodRow(props: { pod: any }) {
           {phase ?? 'Unknown'}
         </Pill>
       </Box>
-      <Typography variant="caption" color="text.secondary" component="div" sx={{ pl: '1.6rem' }}>
-        {readyCount}/{totalCount || '?'} ready
-        {restarts > 0 && ` · ${restarts} restart${restarts === 1 ? '' : 's'}`}
-        {created && (
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        component="div"
+        sx={{
+          pl: '1.6rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          flexWrap: 'wrap',
+          // DateLabel renders its own Typography; keep every piece of this
+          // line at the same size.
+          '& .MuiTypography-root': { fontSize: 'inherit', lineHeight: 'inherit' },
+        }}
+      >
+        <span>
+          {readyCount}/{totalCount || '?'} ready
+        </span>
+        {restarts > 0 && (
           <>
-            {' · '}
-            <DateLabel date={created} format="mini" /> old
+            <PodInfoDivider />
+            <span>
+              {restarts} restart{restarts === 1 ? '' : 's'}
+            </span>
           </>
         )}
-        {node && ` · on ${node}`}
+        {created && (
+          <>
+            <PodInfoDivider />
+            <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4 }}>
+              <Icon icon={ICONS.clock} width="0.8rem" />
+              <DateLabel date={created} format="mini" />
+            </Box>
+          </>
+        )}
+        {node && (
+          <>
+            <PodInfoDivider />
+            <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.4 }}>
+              <Icon icon={ICONS.node} width="0.8rem" />
+              {node}
+            </Box>
+          </>
+        )}
       </Typography>
+    </Box>
+  );
+}
+
+/** A quiet vertical separator between the pod info segments. */
+function PodInfoDivider() {
+  return (
+    <Box component="span" sx={{ opacity: 0.4 }}>
+      |
     </Box>
   );
 }
