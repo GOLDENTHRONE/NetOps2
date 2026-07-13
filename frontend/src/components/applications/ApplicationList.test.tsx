@@ -51,8 +51,9 @@ vi.mock('./useApplications', () => ({
   useApplicationDefinitions: () => ({ applications, errors: [], isLoading: false }),
 }));
 
-vi.mock('../project/useProjectResources', () => ({
-  useProjectItems: () => ({ items: [], errors: [], isLoading: false }),
+vi.mock('./useApplicationResources', async importOriginal => ({
+  ...(await importOriginal<typeof import('./useApplicationResources')>()),
+  useAllApplicationResources: () => ({ items: [], errors: [], isLoading: false }),
 }));
 
 import { TestContext } from '../../test';

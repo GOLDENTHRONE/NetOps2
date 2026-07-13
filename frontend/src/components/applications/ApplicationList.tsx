@@ -19,6 +19,7 @@ import {
   Autocomplete,
   Box,
   Checkbox,
+  Skeleton,
   TextField,
   Tooltip,
   Typography,
@@ -31,8 +32,8 @@ import { StatusLabel } from '../common/Label';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
 import { getHealthIcon, getResourcesHealth } from '../project/projectUtils';
-import { useProjectItems } from '../project/useProjectResources';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
+import { groupResourcesByApplication, useAllApplicationResources } from './useApplicationResources';
 import { useApplicationDefinitions } from './useApplications';
 
 /**
@@ -177,6 +178,17 @@ export default function ApplicationList() {
   const { applications, errors, isLoading } = useApplicationDefinitions();
   const [selectedApplications, setSelectedApplications] = useState<string[]>([]);
 
+  // One shared fetch for the whole table (one request per resource kind per
+  // cluster, live-watched) instead of a fetch per row: rows read their counts
+  // from this map, so the column fills in as fast as the lists arrive and
+  // matches exactly what the application details page shows.
+  const {
+    items: allResources,
+    errors: resourceErrors,
+    isLoading: resourcesLoading,
+  } = useAllApplicationResources();
+  const resourcesByApp = useMemo(() => groupResourcesByApplication(allResources), [allResources]);
+
   const applicationNames = useMemo(() => applications.map(app => app.id), [applications]);
 
   // No selection means show every application (all namespaces).
@@ -203,9 +215,14 @@ export default function ApplicationList() {
         id: 'resources',
         header: t('translation|Resources'),
         gridTemplate: 'min-content',
+        accessorFn: app => resourcesByApp.get(app.id)?.length ?? 0,
         Cell: ({ row: { original } }) => {
-          const { items } = useProjectItems(original, { disableWatch: true });
-          return items.length;
+          const items = resourcesByApp.get(original.id);
+          // Don't show a misleading 0 while the lists are still arriving.
+          if (!items && resourcesLoading) {
+            return <Skeleton variant="text" width={32} />;
+          }
+          return items?.length ?? 0;
         },
       },
       {
@@ -213,8 +230,11 @@ export default function ApplicationList() {
         header: t('translation|Health'),
         gridTemplate: 'min-content',
         Cell: ({ row: { original } }) => {
-          const { items } = useProjectItems(original, { disableWatch: true });
-          const health = getResourcesHealth(items);
+          const items = resourcesByApp.get(original.id);
+          if (!items && resourcesLoading) {
+            return <Skeleton variant="text" width={96} />;
+          }
+          const health = getResourcesHealth(items ?? []);
           return (
             <StatusLabel
               status={health.error > 0 ? 'error' : health.warning > 0 ? 'warning' : 'success'}
@@ -225,7 +245,7 @@ export default function ApplicationList() {
                   fontSize: 24,
                 }}
               />
-              {items.length === 0
+              {!items || items.length === 0
                 ? t('translation|No Resources')
                 : health.error > 0
                 ? t('translation|Unhealthy')
@@ -270,7 +290,7 @@ export default function ApplicationList() {
         Cell: ({ row: { original } }) => <MetadataValue value={original.deploymentType} />,
       },
     ],
-    [t]
+    [t, resourcesByApp, resourcesLoading]
   );
 
   if (!isLoading && applications.length === 0 && errors.length === 0) {
@@ -326,7 +346,7 @@ export default function ApplicationList() {
         />
       </Box>
 
-      <ClusterGroupErrorMessage errors={errors} />
+      <ClusterGroupErrorMessage errors={[...errors, ...resourceErrors]} />
 
       <Table
         columns={columns}

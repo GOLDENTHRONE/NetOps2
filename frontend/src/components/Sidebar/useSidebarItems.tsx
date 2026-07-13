@@ -22,7 +22,6 @@ import { getClusterAppearanceFromMeta } from '../../helpers/clusterAppearance';
 import { isElectron } from '../../helpers/isElectron';
 import { useClustersConf, useSelectedClusters } from '../../lib/k8s';
 import CRD from '../../lib/k8s/crd';
-import { createRouteURL } from '../../lib/router/createRouteURL';
 import { useTypedSelector } from '../../redux/hooks';
 import { DefaultSidebars, SidebarEntryProps, SidebarItemProps } from '.';
 import ClusterBadge from './ClusterBadge';
@@ -58,7 +57,6 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
   const customSidebarEntries = useTypedSelector(state => state.sidebar.entries);
   const customSidebarFilters = useTypedSelector(state => state.sidebar.filters);
   const customHomeSidebarFilters = useTypedSelector(state => state.sidebar.homeFilters);
-  const shouldShowHomeItem = isElectron() || Object.keys(clusters).length !== 1;
   const selectedClusters = useSelectedClusters();
   const allClustersConf = useClustersConf();
   const { t } = useTranslation();
@@ -139,14 +137,13 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
       ) : undefined;
 
     const homeItems: SidebarItemProps[] = [
+      // The Home page (with the Applications tab) is always reachable, even
+      // with a single cluster, so this always points home.
       {
         name: 'home',
-        icon: shouldShowHomeItem ? 'mdi:home' : 'mdi:hexagon-multiple-outline',
-        label: shouldShowHomeItem ? t('translation|Home') : t('glossary|Cluster'),
-        url: shouldShowHomeItem
-          ? '/'
-          : createRouteURL('cluster', { cluster: Object.keys(clusters)[0] }),
-        divider: !shouldShowHomeItem,
+        icon: 'mdi:home',
+        label: t('translation|Home'),
+        url: '/',
       },
       {
         name: 'notifications',
@@ -179,12 +176,14 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
       },
     ];
     const inClusterItems: SidebarItemProps[] = [
+      // Always shown, even with a single cluster: the Home page hosts the
+      // Applications tab, so there must always be a way back to it from
+      // inside a cluster.
       {
         name: 'home',
         icon: 'mdi:home',
         label: t('translation|Home'),
         url: '/',
-        hide: !shouldShowHomeItem,
       },
 
       {
@@ -552,7 +551,6 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     customSidebarEntries,
-    shouldShowHomeItem,
     customSidebarFilters,
     customHomeSidebarFilters,
     // eslint-disable-next-line react-hooks/exhaustive-deps
