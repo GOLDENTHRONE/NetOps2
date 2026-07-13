@@ -39,11 +39,11 @@ import Table, { TableColumn } from '../common/Table/Table';
 import { ProjectResourcesTab, useResourceCategoriesList } from '../project/ProjectResourcesTab';
 import { getHealthIcon, getResourcesHealth } from '../project/projectUtils';
 import { ResourceCategoriesList } from '../project/ResourceCategoriesList';
-import { useProjectItems } from '../project/useProjectResources';
 import { GraphFilter } from '../resourceMap/graph/graphFiltering';
 import { GraphView } from '../resourceMap/GraphView';
 import { ResourceQuotaTable } from '../resourceQuota/Details';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
+import { useAllApplicationResources } from './useApplicationResources';
 import { useApplication } from './useApplications';
 
 // Tab IDs, mirroring the Project details page this page is modeled on.
@@ -108,9 +108,16 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
   const [selectedTab, setSelectedTab] = useState<string>(TAB_IDS.OVERVIEW);
   const [selectedCategoryName, setSelectedCategoryName] = useState<string>();
 
-  const { items, errors: resourceErrors, isLoading } = useProjectItems(application);
-  // useProjectItems reports errors per resource type; flatten them for display.
-  const errors = useMemo(() => resourceErrors.flatMap(it => it.errors), [resourceErrors]);
+  // The exact same shared, watched queries the Applications table uses: the
+  // counts here always match the table, and navigating from the table to this
+  // page is instant because the data is already in the cache.
+  const { items: allResources, errors, isLoading } = useAllApplicationResources();
+  // Filter by namespace only — exactly how the Applications table groups its
+  // counts — so this page can never disagree with the table.
+  const items = useMemo(
+    () => allResources.filter(it => it.metadata.namespace === application.id),
+    [allResources, application.id]
+  );
 
   const tabs = [
     { id: TAB_IDS.OVERVIEW, icon: 'mdi:view-dashboard', label: t('translation|Overview') },
@@ -119,7 +126,10 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
     { id: TAB_IDS.MAP, icon: 'mdi:map', label: t('translation|Map') },
   ];
 
-  if (isLoading) {
+  // Only block on a loader when nothing has arrived yet (a direct deep link);
+  // coming from the Applications table the data is already cached, so the
+  // page renders immediately with the final numbers.
+  if (isLoading && items.length === 0) {
     return <Loader title={t('translation|Loading')} />;
   }
 

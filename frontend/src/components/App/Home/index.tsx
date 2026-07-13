@@ -19,15 +19,12 @@ import { Box, Tab, Tabs, Typography } from '@mui/material';
 import { isEqual } from 'lodash';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useHistory } from 'react-router-dom';
 import { setupBackstageMessageReceiver } from '../../../helpers/backstageMessageReceiver';
 import { useAutoConnectClusters } from '../../../helpers/clusterAutoConnect';
 import { isBackstage } from '../../../helpers/isBackstage';
-import { isElectron } from '../../../helpers/isElectron';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { useEventWarningList } from '../../../lib/k8s/event';
-import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { useTypedSelector } from '../../../redux/hooks';
 // The Projects tab is currently disabled in favor of the Applications tab.
 // import ProjectList from '../../project/ProjectList';
@@ -42,14 +39,11 @@ import { HomeTabsState } from './homeTabsSlice';
 import RecentClusters from './RecentClusters';
 
 export default function Home() {
-  const history = useHistory();
   const clusters = useClustersConf();
 
-  if (!isElectron() && clusters && Object.keys(clusters).length === 1) {
-    history.push(createRouteURL('cluster', { cluster: Object.keys(clusters)[0] }));
-    return null;
-  }
-
+  // Note: even with a single cluster we render the Home page (instead of
+  // redirecting into the cluster like upstream Headlamp does) because it
+  // hosts the Applications tab and is reachable via the sidebar Home item.
   return (
     <HomeComponent
       clusters={clusters}

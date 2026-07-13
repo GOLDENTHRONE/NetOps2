@@ -1,0 +1,128 @@
+/*
+ * Copyright 2025 The Kubernetes Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { uniqBy } from 'lodash';
+import { useEffect, useMemo, useState } from 'react';
+import { ResourceClasses, useClustersConf } from '../../lib/k8s';
+import { ApiError } from '../../lib/k8s/api/v2/ApiError';
+import { apiResourceId } from '../../lib/k8s/api/v2/ApiResource';
+import { KubeObject, KubeObjectClass } from '../../lib/k8s/cluster';
+import { useTypedSelector } from '../../redux/hooks';
+import { defaultApiResources } from '../project/projectUtils';
+import { isBusinessApplicationNamespace } from './applicationUtils';
+
+/**
+ * Fetches the application-relevant resources (the same resource kinds the
+ * Projects feature fetches) of ALL business namespaces across every
+ * configured cluster, with a single list request (and live watch) per
+ * resource kind per cluster.
+ *
+ * This one shared, progressively-updated result backs both the Applications
+ * table (per-application resource counts and health) and the Application
+ * details page, which guarantees the two always show the same numbers and
+ * that navigating between them is instant: the queries are identical, so the
+ * data is served from the same cache and kept fresh by the same watches.
+ *
+ * Unlike useKubeLists, results are NOT held back until every list has
+ * finished: items appear as soon as their list arrives, so the UI fills in
+ * right away instead of showing zeros until the slowest request completes.
+ */
+export function useAllApplicationResources(): {
+  /** All fetched resources living in business-application namespaces. */
+  items: KubeObject[];
+  errors: ApiError[];
+  /** True while at least one resource list has not arrived yet. */
+  isLoading: boolean;
+} {
+  const clusterConf = useClustersConf();
+  const clusters = useMemo(() => Object.keys(clusterConf ?? {}), [clusterConf]);
+
+  const pluginApiResources = useTypedSelector(state => state.projects.apiResources);
+
+  // Capture the resource list once on mount so its length stays stable across
+  // renders: hooks are called per resource in a loop below, so changing the
+  // array length mid-lifecycle would violate the Rules of Hooks.
+  const [resources] = useState(() =>
+    uniqBy([...defaultApiResources, ...pluginApiResources], r => apiResourceId(r))
+  );
+
+  const classes = useMemo(
+    () =>
+      resources.map(
+        it =>
+          (ResourceClasses as Record<string, KubeObjectClass>)[it.kind] ??
+          class extends KubeObject {
+            static kind = it.kind;
+            static apiVersion = it.apiVersion;
+            static apiName = it.pluralName;
+            static isNamespaced = it.isNamespaced;
+          }
+      ) as KubeObjectClass[],
+    [resources]
+  );
+
+  // One list query per resource kind, cluster-wide (empty namespace list means
+  // all allowed namespaces). No refetchInterval: lists are watched, so changes
+  // stream in live instead of waiting for a poll.
+  const data = classes.map(it => it.useList({ clusters, namespace: [] }));
+
+  const isLoading = data.some(it => !it.items && !it.isError);
+
+  const [items, setItems] = useState<KubeObject[]>([]);
+
+  useEffect(() => {
+    // Progressive: include whatever lists have already arrived.
+    const newItems = data
+      .flatMap(it => it.items ?? [])
+      .filter(
+        it => !!it.metadata?.namespace && isBusinessApplicationNamespace(it.metadata.namespace)
+      );
+
+    setItems(oldItems => (equal(oldItems, newItems) ? oldItems : newItems));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, classes]);
+
+  const errors = useMemo(
+    () => data.flatMap(it => (it.errors ?? []).filter(error => error.status !== 404)) as ApiError[],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data]
+  );
+
+  return { items, errors, isLoading };
+}
+
+/**
+ * Group resources by the application (namespace) they belong to. Rows for the
+ * Applications table read their resource count and health from this map.
+ */
+export function groupResourcesByApplication(items: KubeObject[]): Map<string, KubeObject[]> {
+  const byApplication = new Map<string, KubeObject[]>();
+  for (const item of items) {
+    const namespace = item.metadata.namespace!;
+    const group = byApplication.get(namespace);
+    if (group) {
+      group.push(item);
+    } else {
+      byApplication.set(namespace, [item]);
+    }
+  }
+  return byApplication;
+}
+
+const equal = (arr1: unknown[], arr2: unknown[]) => {
+  if (arr1.length !== arr2.length) return false;
+  return arr1.every((it, i) => it === arr2[i]);
+};
