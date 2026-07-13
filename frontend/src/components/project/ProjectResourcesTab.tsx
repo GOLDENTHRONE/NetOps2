@@ -15,9 +15,10 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Box, Typography } from '@mui/material';
+import { Box, Link as MuiLink, Typography } from '@mui/material';
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link as RouterLink } from 'react-router-dom';
 import DaemonSet from '../../lib/k8s/daemonSet';
 import Deployment from '../../lib/k8s/deployment';
 import { KubeObject } from '../../lib/k8s/KubeObject';
@@ -78,6 +79,13 @@ interface ProjectResourcesTabProps {
   showClusterColumn?: boolean;
   selectedCategoryName?: string;
   setSelectedCategoryName: (name: string) => void;
+  /**
+   * When set, resource names navigate straight to the resource's own details
+   * page (like clicking a cluster on the Home page) instead of going through
+   * the generic Link, which opens the details drawer in place when drawer
+   * mode is enabled. Used by the Applications details page.
+   */
+  directObjectLinks?: boolean;
 }
 
 export function ProjectResourcesTab({
@@ -85,6 +93,7 @@ export function ProjectResourcesTab({
   showClusterColumn,
   selectedCategoryName,
   setSelectedCategoryName,
+  directObjectLinks,
 }: ProjectResourcesTabProps) {
   const { t } = useTranslation();
 
@@ -115,6 +124,13 @@ export function ProjectResourcesTab({
         header: t('Name'),
         Cell: ({ row }) => {
           const resource = row.original;
+          if (directObjectLinks) {
+            return (
+              <MuiLink component={RouterLink} to={resource.getDetailsLink()}>
+                {resource.metadata?.name}
+              </MuiLink>
+            );
+          }
           return <Link kubeObject={resource}>{resource.metadata?.name}</Link>;
         },
       },
@@ -383,7 +399,7 @@ export function ProjectResourcesTab({
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, showClusterColumn]
+    [t, showClusterColumn, directObjectLinks]
   );
 
   return (

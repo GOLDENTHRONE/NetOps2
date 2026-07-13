@@ -20,6 +20,7 @@ import {
   APP_VERSION_KEY,
   buildApplications,
   getAppMetadataValue,
+  groupApplications,
   isBusinessApplicationNamespace,
   isPlatformNamespace,
   isSystemNamespace,
@@ -125,7 +126,7 @@ describe('getAppMetadataValue', () => {
     expect(getAppMetadataValue(ns, APP_DEPLOYMENT_TYPE_KEY)).toBe('Helm');
   });
 
-  it('returns NA when the key is absent or empty', () => {
+  it('returns the n/a placeholder when the key is absent or empty', () => {
     expect(getAppMetadataValue(makeNamespace('app-a', 'c1'), APP_VERSION_KEY)).toBe(NOT_AVAILABLE);
     expect(
       getAppMetadataValue(
@@ -176,7 +177,7 @@ describe('buildApplications', () => {
     expect(apps.every(a => a.name === 'app-a')).toBe(true);
   });
 
-  it('uses NA for missing version, deployment type and status', () => {
+  it('uses the n/a placeholder for missing version, deployment type and status', () => {
     const [app] = buildApplications([makeNamespace('app-a', 'cluster-1')]);
 
     expect(app.version).toBe(NOT_AVAILABLE);
@@ -206,5 +207,49 @@ describe('buildApplications', () => {
 
   it('ignores malformed items without metadata', () => {
     expect(buildApplications([{ metadata: undefined, cluster: 'c1' } as any])).toEqual([]);
+  });
+});
+
+describe('groupApplications', () => {
+  it('groups the same namespace across clusters into one application', () => {
+    const apps = groupApplications(
+      buildApplications([
+        makeNamespace('app-a', 'cluster-2'),
+        makeNamespace('app-a', 'cluster-1'),
+        makeNamespace('app-b', 'cluster-1'),
+      ])
+    );
+
+    expect(apps.map(a => a.id)).toEqual(['app-a', 'app-b']);
+    expect(apps[0].clusters).toEqual(['cluster-1', 'cluster-2']);
+    expect(apps[0].namespaces).toEqual(['app-a']);
+  });
+
+  it('uses the namespace name as the application id', () => {
+    const apps = groupApplications(
+      buildApplications([
+        makeNamespace('wnv7a0vbgw0013c', 'cluster-1', {
+          labels: { [APP_NAME_KEY]: 'VBGW' },
+        }),
+      ])
+    );
+
+    expect(apps.map(a => a.id)).toEqual(['wnv7a0vbgw0013c']);
+  });
+
+  it('takes the first available metadata across clusters, n/a otherwise', () => {
+    const apps = groupApplications(
+      buildApplications([
+        makeNamespace('app-a', 'cluster-1'),
+        makeNamespace('app-a', 'cluster-2', {
+          labels: { [APP_VERSION_KEY]: 'v2.0' },
+          annotations: { [APP_DEPLOYMENT_TYPE_KEY]: 'Helm' },
+        }),
+      ])
+    );
+
+    expect(apps[0].version).toBe('v2.0');
+    expect(apps[0].deploymentType).toBe('Helm');
+    expect(apps[0].status).toBe(NOT_AVAILABLE);
   });
 });

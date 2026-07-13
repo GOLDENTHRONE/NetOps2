@@ -44,7 +44,7 @@ export const APP_VERSION_KEY = 'uspe.dev/application-version';
 export const APP_DEPLOYMENT_TYPE_KEY = 'uspe.dev/deployment-type';
 
 /** Placeholder shown when a piece of application information is not available. */
-export const NOT_AVAILABLE = 'NA';
+export const NOT_AVAILABLE = 'n/a';
 
 /** One row of the applications table: a namespace in a specific cluster. */
 export interface ApplicationInfo {
@@ -163,4 +163,59 @@ export function buildApplications(namespaces: ReadonlyArray<NamespaceLike>): App
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.cluster.localeCompare(b.cluster));
+}
+
+/**
+ * One application as shown by the Applications tab: a business-application
+ * namespace, possibly present in several clusters. Structurally compatible
+ * with the Projects feature's ProjectDefinition ({ id, namespaces, clusters })
+ * so the project resource fetching hooks can be reused as-is.
+ */
+export interface ApplicationDefinition {
+  /** Application name — the namespace name. */
+  id: string;
+  /** Namespaces backing this application (always exactly the application name). */
+  namespaces: string[];
+  /** Every cluster in which the namespace was found. */
+  clusters: string[];
+  /** Application version from the uspe.dev key; n/a when unknown. */
+  version: string;
+  /** How the application is deployed, from the uspe.dev key; n/a when unknown. */
+  deploymentType: string;
+  /** Namespace phase (Active/Terminating); n/a when unknown. */
+  status: string;
+}
+
+/** First value that is actually set, or {@link NOT_AVAILABLE} if none is. */
+function firstAvailable(values: string[]): string {
+  return values.find(value => value !== NOT_AVAILABLE) ?? NOT_AVAILABLE;
+}
+
+/**
+ * Group per-cluster application rows into one application per namespace name:
+ * the same namespace found in several clusters is a single application that
+ * spans those clusters. Metadata (version, deployment type, status) takes the
+ * first available value across clusters.
+ */
+export function groupApplications(rows: ReadonlyArray<ApplicationInfo>): ApplicationDefinition[] {
+  const byNamespace = new Map<string, ApplicationInfo[]>();
+  rows.forEach(row => {
+    const group = byNamespace.get(row.namespace);
+    if (group) {
+      group.push(row);
+    } else {
+      byNamespace.set(row.namespace, [row]);
+    }
+  });
+
+  return [...byNamespace.entries()]
+    .map(([namespace, group]) => ({
+      id: namespace,
+      namespaces: [namespace],
+      clusters: [...new Set(group.map(it => it.cluster))].sort((a, b) => a.localeCompare(b)),
+      version: firstAvailable(group.map(it => it.version)),
+      deploymentType: firstAvailable(group.map(it => it.deploymentType)),
+      status: firstAvailable(group.map(it => it.status)),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
