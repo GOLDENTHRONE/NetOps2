@@ -38,7 +38,7 @@ import {
 } from '@mui/material';
 import React from 'react';
 import { useHistory } from 'react-router-dom';
-import { ICONS } from '../flux/icon';
+import { ICONS, kindIcon } from '../flux/icon';
 import {
   Application,
   AppHealth,
@@ -47,6 +47,7 @@ import {
   summarizeApplication,
   summarizeAppPods,
 } from '../flux/insights';
+import { kindByName } from '../flux/kinds';
 import { FluxObject } from '../flux/utils';
 import { AllFluxObjects } from './operations';
 import { Accents, Pill, PillTone, Section, Surface, useAccents } from './ui';
@@ -111,25 +112,26 @@ function AppCard(props: {
     issueCounts.set(issue.reason, (issueCounts.get(issue.reason) ?? 0) + 1);
   }
 
-  const rootUrl = () =>
-    history.push(
-      `/flux/${app.rootKind === 'HelmRelease' ? 'helmreleases' : 'kustomizations'}/${
-        app.namespace
-      }/${app.name}`
-    );
+  const openApp = () => {
+    const plural = kindByName(app.rootKind)?.plural ?? 'kustomizations';
+    history.push(`/flux/${plural}/${app.namespace}/${app.name}`);
+  };
 
   return (
     <Surface
       interactive
       accent={accent}
-      onClick={rootUrl}
+      onClick={openApp}
       sx={{ p: 2, minWidth: 260, flex: '1 1 280px', maxWidth: 420 }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }} noWrap>
-            {app.name}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+            <Icon icon={kindIcon(app.rootKind)} width="1.1rem" style={{ flexShrink: 0 }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }} noWrap>
+              {app.name}
+            </Typography>
+          </Box>
           <Typography variant="caption" color="text.secondary" noWrap component="div">
             {app.rootKind} · {app.namespace}
           </Typography>
