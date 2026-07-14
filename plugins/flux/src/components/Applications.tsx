@@ -40,17 +40,22 @@ import React from 'react';
 import { useHistory } from 'react-router-dom';
 import { ICONS, kindIcon } from '../flux/icon';
 import {
-  Application,
   AppHealth,
+  Application,
+  AppLifecycle,
+  AppOperation,
   buildApplications,
   PodsSummary,
+  RolloutProgress,
   summarizeApplication,
+  summarizeAppLifecycle,
   summarizeAppPods,
+  summarizeAppRollout,
 } from '../flux/insights';
 import { kindByName } from '../flux/kinds';
 import { FluxObject } from '../flux/utils';
 import { AllFluxObjects } from './operations';
-import { Accents, Pill, PillTone, Section, Surface, useAccents } from './ui';
+import { Accents, Pill, PillTone, RADII, Section, Surface, useAccents } from './ui';
 
 const { ResourceClasses } = K8s;
 
@@ -81,16 +86,59 @@ const HEALTH_PRESENTATION: Record<
   Degraded: { tone: 'warning', icon: ICONS.warning, accent: a => a.warning },
   Failing: { tone: 'error', icon: ICONS.statusError, accent: a => a.error },
   Deploying: { tone: 'info', icon: ICONS.statusReconciling, accent: a => a.info },
+  Terminating: { tone: 'error', icon: ICONS.delete, accent: a => a.error },
   Suspended: { tone: 'neutral', icon: ICONS.statusSuspended, accent: a => a.neutral },
 };
+
+/** How each in-flight lifecycle operation reads on the card. */
+const OPERATION_PRESENTATION: Record<
+  Exclude<AppOperation, 'idle'>,
+  { label: string; tone: PillTone; icon: string; accent: (a: Accents) => string }
+> = {
+  installing: { label: 'Installing', tone: 'info', icon: ICONS.statusReconciling, accent: a => a.info },
+  upgrading: { label: 'Upgrading', tone: 'info', icon: ICONS.syncSource, accent: a => a.info },
+  patching: { label: 'Patching', tone: 'info', icon: ICONS.sync, accent: a => a.info },
+  rollingback: { label: 'Rolling back', tone: 'warning', icon: ICONS.force, accent: a => a.warning },
+  terminating: { label: 'Terminating', tone: 'error', icon: ICONS.delete, accent: a => a.error },
+  deploying: { label: 'Deploying', tone: 'info', icon: ICONS.statusReconciling, accent: a => a.info },
+};
+
+/** A slim, subtle progress bar for real lifecycle progress (updated/desired). */
+function ProgressBar(props: { current: number; total: number; color: string; indeterminate?: boolean }) {
+  const { current, total, color, indeterminate } = props;
+  const pct = total > 0 ? Math.min(100, Math.max(0, (current / total) * 100)) : 0;
+  return (
+    <Box
+      sx={{
+        mt: 0.75,
+        height: 5,
+        width: '100%',
+        borderRadius: RADII.pill,
+        backgroundColor: alpha(color, 0.15),
+        overflow: 'hidden',
+      }}
+    >
+      <Box
+        sx={{
+          height: '100%',
+          borderRadius: RADII.pill,
+          backgroundColor: color,
+          width: indeterminate ? '40%' : `${pct}%`,
+          transition: 'width 0.4s ease',
+        }}
+      />
+    </Box>
+  );
+}
 
 function AppCard(props: {
   app: Application;
   pods: FluxObject[] | null;
+  workloads: FluxObject[] | null;
   favorite: boolean;
   onToggleFavorite: (id: string) => void;
 }) {
-  const { app, pods, favorite, onToggleFavorite } = props;
+  const { app, pods, workloads, favorite, onToggleFavorite } = props;
   const theme = useTheme();
   const accents = useAccents();
   const history = useHistory();
@@ -99,9 +147,21 @@ function AppCard(props: {
     () => (pods ? summarizeAppPods(app, pods) : undefined),
     [app, pods]
   );
+  const rollout: RolloutProgress | undefined = React.useMemo(
+    () => (workloads ? summarizeAppRollout(app, workloads) : undefined),
+    [app, workloads]
+  );
   const verdict = summarizeApplication(app, podsSummary);
+  const lifecycle: AppLifecycle = React.useMemo(
+    () => summarizeAppLifecycle(app, { rollout, pods: podsSummary }),
+    [app, rollout, podsSummary]
+  );
   const p = HEALTH_PRESENTATION[verdict.health];
   const accent = p.accent(accents);
+
+  const op = lifecycle.active && lifecycle.operation !== 'idle'
+    ? OPERATION_PRESENTATION[lifecycle.operation]
+    : undefined;
 
   const kustomizations = app.members.filter(m => m.kind === 'Kustomization').length;
   const helmReleases = app.members.filter(m => m.kind === 'HelmRelease').length;
@@ -113,6 +173,20 @@ function AppCard(props: {
   }
 
   const openApp = () => {
+    // For label-grouped apps the "root" name is the label, which may not be a
+    // real object (its root Kustomization can be gone). Navigate to a live
+    // member's details instead so the link always resolves.
+    const target =
+      app.members.find(m => m.kind === 'Kustomization') ??
+      app.members.find(m => m.kind === 'HelmRelease') ??
+      app.members[0];
+    if (target) {
+      const plural = kindByName(target.kind)?.plural ?? 'kustomizations';
+      history.push(
+        `/flux/${plural}/${target.object.metadata?.namespace}/${target.object.metadata?.name}`
+      );
+      return;
+    }
     const plural = kindByName(app.rootKind)?.plural ?? 'kustomizations';
     history.push(`/flux/${plural}/${app.namespace}/${app.name}`);
   };
@@ -129,11 +203,33 @@ function AppCard(props: {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
             <Icon icon={kindIcon(app.rootKind)} width="1.1rem" style={{ flexShrink: 0 }} />
             <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }} noWrap>
-              {app.name}
+              {app.displayName}
             </Typography>
+            {app.version && (
+              <Box
+                component="span"
+                sx={{
+                  px: 0.6,
+                  py: '1px',
+                  borderRadius: RADII.pill,
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  flexShrink: 0,
+                  color: accents.primary,
+                  backgroundColor: alpha(accents.primary, 0.12),
+                }}
+              >
+                v{app.version.replace(/^v/, '')}
+              </Box>
+            )}
           </Box>
           <Typography variant="caption" color="text.secondary" noWrap component="div">
-            {app.rootKind} · {app.namespace}
+            {[
+              `${app.members.length} object${app.members.length === 1 ? '' : 's'}`,
+              app.labelGrouped ? 'grouped by label' : app.rootKind,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </Typography>
         </Box>
         <Tooltip title={favorite ? 'Remove from favorites' : 'Add to favorites'}>
@@ -151,22 +247,60 @@ function AppCard(props: {
         </Tooltip>
       </Box>
 
-      <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1 }}>
-        <Pill tone={p.tone} icon={p.icon}>
-          {verdict.health}
-        </Pill>
-        {verdict.reconciling ? (
-          <Pill tone="info" icon={ICONS.statusReconciling}>
-            reconciling
-          </Pill>
-        ) : (
-          verdict.failingMembers === 0 && (
-            <Pill tone="neutral" icon={ICONS.sync}>
-              in sync
+      <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 1, alignItems: 'center' }}>
+        {op ? (
+          // An operation is in flight: lead with the specific action
+          // (Installing/Upgrading/…). The generic health verdict is only worth
+          // repeating when it flags a problem that runs alongside the action.
+          <>
+            <Pill tone={op.tone} icon={op.icon}>
+              {op.label}
             </Pill>
-          )
+            {(verdict.health === 'Failing' || verdict.health === 'Degraded') && (
+              <Pill tone={p.tone} icon={p.icon}>
+                {verdict.health}
+              </Pill>
+            )}
+          </>
+        ) : (
+          <>
+            <Pill tone={p.tone} icon={p.icon}>
+              {verdict.health}
+            </Pill>
+            {verdict.failingMembers === 0 && (
+              <Pill tone="neutral" icon={ICONS.sync}>
+                in sync
+              </Pill>
+            )}
+          </>
+        )}
+        {app.managedByFlux && (
+          <Pill tone="primary" icon={ICONS.flux}>
+            Managed by Flux
+          </Pill>
         )}
       </Box>
+
+      {op && (
+        <Box sx={{ mt: 0.5 }}>
+          <ProgressBar
+            current={lifecycle.progress?.current ?? 0}
+            total={lifecycle.progress?.total ?? 0}
+            color={op.accent(accents)}
+            indeterminate={!lifecycle.progress || lifecycle.operation === 'terminating'}
+          />
+          {lifecycle.progress && (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25, display: 'block' }}>
+              {lifecycle.operation === 'terminating'
+                ? `${lifecycle.progress.current} ${lifecycle.progress.unit}`
+                : `${lifecycle.progress.current}/${lifecycle.progress.total} ${lifecycle.progress.unit}`}
+              {lifecycle.operation !== 'terminating' &&
+                lifecycle.progress.total > 0 &&
+                ` · ${Math.round((lifecycle.progress.current / lifecycle.progress.total) * 100)}%`}
+            </Typography>
+          )}
+        </Box>
+      )}
 
       <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
         {[
@@ -205,9 +339,9 @@ function AppCard(props: {
         </Box>
       )}
 
-      {app.targetNamespaces.length > 0 && (
+      {app.appNamespaces.length > 0 && (
         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
-          {app.targetNamespaces.slice(0, 3).map(namespace => (
+          {app.appNamespaces.slice(0, 3).map(namespace => (
             <Box
               key={namespace}
               component="span"
@@ -228,9 +362,9 @@ function AppCard(props: {
               {namespace}
             </Box>
           ))}
-          {app.targetNamespaces.length > 3 && (
+          {app.appNamespaces.length > 3 && (
             <Typography variant="caption" color="text.secondary">
-              +{app.targetNamespaces.length - 3} more
+              +{app.appNamespaces.length - 3} more
             </Typography>
           )}
         </Box>
@@ -259,6 +393,20 @@ export function ApplicationsSection(props: { data: AllFluxObjects }) {
     [pods]
   );
 
+  // Cluster-wide workloads power the real rollout progress ("3/10 pods
+  // updated") shown while an application is installing, upgrading or patching.
+  const [deployments] = (ResourceClasses as Record<string, any>).Deployment.useList();
+  const [statefulSets] = (ResourceClasses as Record<string, any>).StatefulSet.useList();
+  const [daemonSets] = (ResourceClasses as Record<string, any>).DaemonSet.useList();
+  const workloadJsons: FluxObject[] | null = React.useMemo(() => {
+    if (deployments === null && statefulSets === null && daemonSets === null) {
+      return null;
+    }
+    return [...(deployments ?? []), ...(statefulSets ?? []), ...(daemonSets ?? [])].map(
+      (w: any) => w.jsonData
+    );
+  }, [deployments, statefulSets, daemonSets]);
+
   const apps = React.useMemo(
     () => buildApplications(rows.map(r => ({ kind: r.kindDef.kind, object: r.object }))),
     [rows]
@@ -283,7 +431,15 @@ export function ApplicationsSection(props: { data: AllFluxObjects }) {
       terms.length === 0
         ? apps
         : apps.filter(app => {
-            const haystack = [app.name, app.namespace, app.rootKind, ...app.targetNamespaces]
+            const haystack = [
+              app.displayName,
+              app.name,
+              app.version,
+              app.namespace,
+              app.rootKind,
+              ...app.targetNamespaces,
+            ]
+              .filter(Boolean)
               .join(' ')
               .toLowerCase();
             return terms.every(term => haystack.includes(term));
@@ -335,6 +491,7 @@ export function ApplicationsSection(props: { data: AllFluxObjects }) {
             key={app.id}
             app={app}
             pods={podJsons}
+            workloads={workloadJsons}
             favorite={favorites.has(app.id)}
             onToggleFavorite={onToggleFavorite}
           />

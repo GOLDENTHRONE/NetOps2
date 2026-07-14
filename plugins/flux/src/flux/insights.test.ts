@@ -24,9 +24,12 @@ import {
   getFailureCounts,
   getTargetNamespaces,
   isBlockedOnDependency,
+  memberOperation,
   pluralizeKind,
   summarizeApplication,
+  summarizeAppLifecycle,
   summarizeAppPods,
+  summarizeAppRollout,
   summarizeWave,
 } from './insights';
 import { FluxObject, makeDependencyNodes } from './utils';
@@ -305,9 +308,13 @@ describe('summarizeAppPods', () => {
     id: 'Kustomization/flux-system/app-root',
     name: 'app-root',
     namespace: 'flux-system',
+    displayName: 'app-root',
+    labelGrouped: false,
     rootKind: 'Kustomization',
     members: [],
     targetNamespaces: ['apps'],
+    appNamespaces: ['apps'],
+    managedByFlux: false,
     workloadPrefixes: [{ namespace: 'apps', prefix: 'web' }],
   };
   const pods: FluxObject[] = [
@@ -349,9 +356,13 @@ describe('summarizeApplication', () => {
     id: 'x',
     name: 'x',
     namespace: 'ns',
+    displayName: 'x',
+    labelGrouped: false,
     rootKind: 'Kustomization',
     members: members.map(object => ({ kind: object.kind ?? 'Kustomization', object })),
     targetNamespaces: [],
+    appNamespaces: [],
+    managedByFlux: false,
     workloadPrefixes: [],
   });
   const ready: FluxObject = {
@@ -385,5 +396,240 @@ describe('summarizeWave', () => {
     expect(summarizeWave(['Ready', 'Reconciling'])).toBe('active');
     expect(summarizeWave(['Unknown'])).toBe('waiting');
     expect(summarizeWave([])).toBe('waiting');
+  });
+});
+
+describe('buildApplications with application-name labels', () => {
+  const labelled = (name: string, ns: string, label: string, extra: Partial<FluxObject> = {}) => ({
+    kind: 'Kustomization',
+    object: {
+      kind: 'Kustomization',
+      metadata: { name, namespace: ns, labels: { 'uspe.dev/application-name': label } },
+      spec: { sourceRef: { kind: 'GitRepository', name: 'gitops' } },
+      ...extra,
+    } as FluxObject,
+  });
+
+  it('keeps a labelled app grouped even after its root Kustomization is gone', () => {
+    // Only the child appliers remain; the root that defined them was deleted.
+    const apps = buildApplications([
+      labelled('web', 'flux-system', 'shop', {
+        status: { inventory: { entries: [{ id: 'shop_web_apps_Deployment' }] } },
+      } as any),
+      labelled('api', 'flux-system', 'shop'),
+    ]);
+    expect(apps).toHaveLength(1);
+    expect(apps[0].displayName).toBe('shop');
+    expect(apps[0].labelGrouped).toBe(true);
+    expect(apps[0].members).toHaveLength(2);
+  });
+
+  it('surfaces the application-version label', () => {
+    const apps = buildApplications([
+      {
+        kind: 'HelmRelease',
+        object: {
+          kind: 'HelmRelease',
+          metadata: {
+            name: 'web',
+            namespace: 'flux-system',
+            labels: {
+              'uspe.dev/application-name': 'shop',
+              'uspe.dev/application-version': '1.4.2',
+            },
+          },
+          spec: { targetNamespace: 'shop' },
+        } as FluxObject,
+      },
+    ]);
+    expect(apps[0].version).toBe('1.4.2');
+    expect(apps[0].displayName).toBe('shop');
+  });
+});
+
+describe('app vs flux namespace separation', () => {
+  it('hides the flux control namespace and flags managed-by-flux', () => {
+    const apps = buildApplications([
+      {
+        kind: 'Kustomization',
+        object: {
+          kind: 'Kustomization',
+          metadata: { name: 'shop', namespace: 'flux-system' },
+          spec: { sourceRef: { kind: 'GitRepository', name: 'gitops' } },
+          status: {
+            inventory: {
+              // One child Kustomization lands in flux-system, the workload in shop.
+              entries: [
+                { id: 'flux-system_shop-inner__Kustomization' },
+                { id: 'shop_web_apps_Deployment' },
+              ],
+            },
+          },
+        } as FluxObject,
+      },
+    ]);
+    const app = apps[0];
+    expect(app.targetNamespaces).toEqual(['flux-system', 'shop']);
+    expect(app.appNamespaces).toEqual(['shop']);
+    expect(app.managedByFlux).toBe(true);
+  });
+});
+
+describe('summarizeApplication termination', () => {
+  const app = (members: FluxObject[]): Application => ({
+    id: 'x',
+    name: 'x',
+    namespace: 'ns',
+    displayName: 'x',
+    labelGrouped: false,
+    rootKind: 'Kustomization',
+    members: members.map(object => ({ kind: object.kind ?? 'HelmRelease', object })),
+    targetNamespaces: [],
+    appNamespaces: [],
+    managedByFlux: false,
+    workloadPrefixes: [],
+  });
+
+  it('reads a deleted app as Terminating, not Deploying', () => {
+    const deleting: FluxObject = {
+      kind: 'HelmRelease',
+      metadata: { name: 'a', namespace: 'ns', deletionTimestamp: '2026-01-01T00:00:00Z' },
+      status: { conditions: [{ type: 'Ready', status: 'Unknown', reason: 'Progressing' }] },
+    };
+    expect(summarizeApplication(app([deleting])).health).toBe('Terminating');
+    expect(summarizeApplication(app([deleting])).terminating).toBe(true);
+  });
+});
+
+describe('memberOperation', () => {
+  const reconciling = (kind: string, extra: any): FluxObject => ({
+    kind,
+    metadata: { name: 'x', namespace: 'ns' },
+    status: {
+      conditions: [{ type: 'Ready', status: 'Unknown', reason: 'Progressing' }],
+      ...extra,
+    },
+  });
+
+  it('detects a live deletion first', () => {
+    expect(
+      memberOperation({ metadata: { deletionTimestamp: '2026-01-01T00:00:00Z' } })
+    ).toBe('terminating');
+  });
+
+  it('reads Helm install / upgrade / rollback from real status', () => {
+    expect(memberOperation(reconciling('HelmRelease', { history: [] }))).toBe('installing');
+    expect(
+      memberOperation(reconciling('HelmRelease', { lastAttemptedReleaseAction: 'upgrade' }))
+    ).toBe('upgrading');
+    expect(
+      memberOperation(reconciling('HelmRelease', { lastAttemptedReleaseAction: 'rollback' }))
+    ).toBe('rollingback');
+  });
+
+  it('distinguishes Kustomization install from patch by applied revision', () => {
+    expect(memberOperation(reconciling('Kustomization', {}))).toBe('installing');
+    expect(memberOperation(reconciling('Kustomization', { lastAppliedRevision: 'main@sha1:abc' }))).toBe(
+      'patching'
+    );
+  });
+
+  it('is idle for a settled, ready resource', () => {
+    expect(
+      memberOperation({ status: { conditions: [{ type: 'Ready', status: 'True' }] } })
+    ).toBe('idle');
+  });
+});
+
+describe('summarizeAppRollout', () => {
+  const app: Application = {
+    id: 'x',
+    name: 'x',
+    namespace: 'ns',
+    displayName: 'x',
+    labelGrouped: false,
+    rootKind: 'Kustomization',
+    members: [],
+    targetNamespaces: ['shop'],
+    appNamespaces: ['shop'],
+    managedByFlux: false,
+    workloadPrefixes: [{ namespace: 'shop', prefix: 'web' }],
+  };
+
+  it('sums real replica counts for matching workloads', () => {
+    const rollout = summarizeAppRollout(app, [
+      {
+        kind: 'Deployment',
+        metadata: { name: 'web', namespace: 'shop' },
+        spec: { replicas: 10 },
+        status: { updatedReplicas: 3, readyReplicas: 3 },
+      },
+      // Different namespace: ignored.
+      {
+        kind: 'Deployment',
+        metadata: { name: 'web', namespace: 'other' },
+        spec: { replicas: 5 },
+        status: { updatedReplicas: 5, readyReplicas: 5 },
+      },
+    ]);
+    expect(rollout.desired).toBe(10);
+    expect(rollout.updated).toBe(3);
+    expect(rollout.rolling).toBe(true);
+  });
+});
+
+describe('summarizeAppLifecycle', () => {
+  const makeApp = (members: { kind: string; object: FluxObject }[]): Application => ({
+    id: 'x',
+    name: 'x',
+    namespace: 'ns',
+    displayName: 'x',
+    labelGrouped: false,
+    rootKind: 'HelmRelease',
+    members,
+    targetNamespaces: ['shop'],
+    appNamespaces: ['shop'],
+    managedByFlux: false,
+    workloadPrefixes: [{ namespace: 'shop', prefix: 'web' }],
+  });
+
+  it('is inactive when everything is settled', () => {
+    const ready: FluxObject = { status: { conditions: [{ type: 'Ready', status: 'True' }] } };
+    const lc = summarizeAppLifecycle(makeApp([{ kind: 'HelmRelease', object: ready }]));
+    expect(lc.active).toBe(false);
+    expect(lc.operation).toBe('idle');
+  });
+
+  it('reports member progress (5/20 releases) while installing', () => {
+    const installing: FluxObject = {
+      kind: 'HelmRelease',
+      status: { conditions: [{ type: 'Ready', status: 'Unknown', reason: 'Progressing' }], history: [] },
+    };
+    const ready: FluxObject = {
+      kind: 'HelmRelease',
+      status: { conditions: [{ type: 'Ready', status: 'True' }] },
+    };
+    const members = [
+      { kind: 'HelmRelease', object: installing },
+      ...Array.from({ length: 19 }, () => ({ kind: 'HelmRelease', object: ready })),
+    ];
+    const lc = summarizeAppLifecycle(makeApp(members));
+    expect(lc.operation).toBe('installing');
+    expect(lc.progress).toEqual({ current: 19, total: 20, unit: 'resources' });
+  });
+
+  it('prefers live pod rollout (3/10 pods) while patching', () => {
+    const patching: FluxObject = {
+      kind: 'Kustomization',
+      status: {
+        conditions: [{ type: 'Ready', status: 'Unknown', reason: 'Progressing' }],
+        lastAppliedRevision: 'main@sha1:abc',
+      },
+    };
+    const lc = summarizeAppLifecycle(makeApp([{ kind: 'Kustomization', object: patching }]), {
+      rollout: { desired: 10, updated: 3, ready: 3, rolling: true },
+    });
+    expect(lc.operation).toBe('patching');
+    expect(lc.progress).toEqual({ current: 3, total: 10, unit: 'pods' });
   });
 });
