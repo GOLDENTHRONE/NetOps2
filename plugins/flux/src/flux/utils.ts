@@ -35,6 +35,8 @@ export interface FluxObject {
     namespace?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
+    /** Set by the API server once a delete has been requested; a live deletion. */
+    deletionTimestamp?: string;
   };
   spec?: Record<string, any>;
   status?: Record<string, any>;

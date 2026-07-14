@@ -17,6 +17,7 @@
 import * as headlampLib from '@kinvolk/headlamp-plugin/lib';
 import { registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
+import CleanupPage from './components/CleanupPage';
 import FluxHomeTab from './components/FluxHomeTab';
 import FluxOverview from './components/FluxOverview';
 import FluxResourceDetails from './components/FluxResourceDetails';
@@ -53,6 +54,7 @@ const SUB_ENTRIES = [
   { name: 'fluxHelmReleases', label: 'Helm Releases', url: '/flux/helmreleases' },
   { name: 'fluxNotifications', label: 'Notifications', url: '/flux/notifications' },
   { name: 'fluxImageAutomation', label: 'Image Automation', url: '/flux/image-automation' },
+  { name: 'fluxCleanup', label: 'Cleanup', url: '/flux/cleanup' },
 ];
 
 for (const entry of SUB_ENTRIES) {
@@ -114,6 +116,14 @@ registerRoute({
   sidebar: 'fluxImageAutomation',
   exact: true,
   component: () => <FluxImageAutomationPage />,
+});
+
+registerRoute({
+  path: '/flux/cleanup',
+  name: 'fluxCleanup',
+  sidebar: 'fluxCleanup',
+  exact: true,
+  component: () => <CleanupPage />,
 });
 
 // Details route per Flux kind. The route name equals the kind, so

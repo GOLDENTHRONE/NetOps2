@@ -479,6 +479,18 @@ const LINKABLE_KINDS = new Set([
 export const KUSTOMIZE_NAME_LABEL = 'kustomize.toolkit.fluxcd.io/name';
 export const KUSTOMIZE_NAMESPACE_LABEL = 'kustomize.toolkit.fluxcd.io/namespace';
 
+/**
+ * Labels an operator stamps on every object of an application (via kustomize
+ * commonLabels or Helm chart values) so the whole application stays grouped
+ * even after its root Kustomization is deleted during a termination. The
+ * name label is the application identity; the version label is optional.
+ */
+export const APP_NAME_LABEL = 'uspe.dev/application-name';
+export const APP_VERSION_LABEL = 'uspe.dev/application-version';
+
+/** The namespace Flux itself is installed into; always treated as a control namespace. */
+export const FLUX_SYSTEM_NAMESPACE = 'flux-system';
+
 /** A workload name prefix used to attribute pods to an application. */
 export interface WorkloadPrefix {
   namespace: string;
@@ -497,14 +509,36 @@ export interface Application {
   id: string;
   name: string;
   namespace: string;
+  /**
+   * The card title: the uspe.dev/application-name label when present,
+   * otherwise the source/root name. Robust to root deletion.
+   */
+  displayName: string;
+  /** The uspe.dev/application-version label, when the operator stamps one. */
+  version?: string;
+  /** True when grouping is driven by the application-name label. */
+  labelGrouped: boolean;
   /** The kind the card represents: GitRepository, OCIRepository, Bucket, Kustomization or HelmRelease. */
   rootKind: string;
   /** All Flux appliers in this application. */
   members: { kind: string; object: FluxObject }[];
-  /** The namespaces the application actually deploys into. */
+  /** Every namespace the application touches, control namespaces included. */
   targetNamespaces: string[];
+  /** The namespaces where the application's own workloads live (control namespaces removed). */
+  appNamespaces: string[];
+  /** True when a Flux/control namespace was hidden from the app namespaces. */
+  managedByFlux: boolean;
   /** Workload name prefixes for matching this application's pods. */
   workloadPrefixes: WorkloadPrefix[];
+}
+
+/**
+ * The label value used to group this applier into an application, or
+ * undefined when it carries no application-name label.
+ */
+function appNameLabel(obj: FluxObject): string | undefined {
+  const value = (obj?.metadata as any)?.labels?.[APP_NAME_LABEL];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function definedById(obj: FluxObject): string | undefined {
@@ -565,40 +599,75 @@ export function buildApplications(objects: { kind: string; object: FluxObject }[
 
   const apps = new Map<string, Application>();
   for (const { kind, object } of appliers) {
-    const root = rootOf(object);
-    const rootKind = root === object ? kind : 'Kustomization';
+    // The application-name label wins: it groups every applier of the
+    // application together and keeps the card alive even once the root
+    // Kustomization that defined them has been deleted.
+    const label = appNameLabel(object);
 
-    // Merge roots that pull from the same repository: the source is the
-    // application, its Kustomizations are implementation detail.
-    const sourceRef = rootKind === 'Kustomization' ? getSourceRef(root) : undefined;
-    const groupsBySource = !!sourceRef && APP_SOURCE_KINDS.has(sourceRef.kind);
-    const groupKind = groupsBySource ? sourceRef!.kind : rootKind;
-    const groupNamespace = groupsBySource
-      ? sourceRef!.namespace ?? root.metadata?.namespace ?? ''
-      : root.metadata?.namespace ?? '';
-    const groupName = groupsBySource ? sourceRef!.name : root.metadata?.name ?? '';
+    let appId: string;
+    let groupKind: string;
+    let groupNamespace: string;
+    let groupName: string;
 
-    const appId = `${groupKind}/${groupNamespace}/${groupName}`;
+    if (label) {
+      appId = `app/${label}`;
+      groupName = label;
+      // The Flux objects live in a control namespace (usually flux-system);
+      // remember one so navigation and namespace filtering have an anchor.
+      groupNamespace = object.metadata?.namespace ?? '';
+      groupKind = kind;
+    } else {
+      const root = rootOf(object);
+      const rootKind = root === object ? kind : 'Kustomization';
+
+      // Merge roots that pull from the same repository: the source is the
+      // application, its Kustomizations are implementation detail.
+      const sourceRef = rootKind === 'Kustomization' ? getSourceRef(root) : undefined;
+      const groupsBySource = !!sourceRef && APP_SOURCE_KINDS.has(sourceRef.kind);
+      groupKind = groupsBySource ? sourceRef!.kind : rootKind;
+      groupNamespace = groupsBySource
+        ? sourceRef!.namespace ?? root.metadata?.namespace ?? ''
+        : root.metadata?.namespace ?? '';
+      groupName = groupsBySource ? sourceRef!.name : root.metadata?.name ?? '';
+      appId = `${groupKind}/${groupNamespace}/${groupName}`;
+    }
+
     let app = apps.get(appId);
     if (!app) {
       app = {
         id: appId,
         name: groupName,
         namespace: groupNamespace,
+        displayName: label ?? groupName,
+        version: undefined,
+        labelGrouped: !!label,
         rootKind: groupKind,
         members: [],
         targetNamespaces: [],
+        appNamespaces: [],
+        managedByFlux: false,
         workloadPrefixes: [],
       };
       apps.set(appId, app);
+    }
+    // A version label on any member describes the whole application.
+    const version = (object?.metadata as any)?.labels?.[APP_VERSION_LABEL];
+    if (!app.version && typeof version === 'string' && version.length > 0) {
+      app.version = version;
     }
     app.members.push({ kind, object });
   }
 
   for (const app of apps.values()) {
     const namespaces = new Set<string>();
+    const controlNamespaces = new Set<string>([FLUX_SYSTEM_NAMESPACE]);
     const prefixes: WorkloadPrefix[] = [];
     for (const { kind, object } of app.members) {
+      // The namespace the Flux applier object lives in is a control namespace,
+      // not somewhere the application's own workloads run.
+      if (object?.metadata?.namespace) {
+        controlNamespaces.add(object.metadata.namespace);
+      }
       for (const namespace of getTargetNamespaces(object)) {
         namespaces.add(namespace);
       }
@@ -620,10 +689,22 @@ export function buildApplications(objects: { kind: string; object: FluxObject }[
       }
     }
     app.targetNamespaces = Array.from(namespaces).sort((a, b) => a.localeCompare(b));
+    // Show only where the application actually deploys; the control namespace
+    // that merely holds the parent Kustomization objects is misleading noise.
+    const appNamespaces = app.targetNamespaces.filter(ns => !controlNamespaces.has(ns));
+    if (appNamespaces.length > 0) {
+      app.appNamespaces = appNamespaces;
+      app.managedByFlux = appNamespaces.length < app.targetNamespaces.length;
+    } else {
+      // The app deploys into (only) a control namespace: keep it rather than
+      // showing an empty card, but flag that Flux manages it.
+      app.appNamespaces = app.targetNamespaces;
+      app.managedByFlux = app.targetNamespaces.some(ns => controlNamespaces.has(ns));
+    }
     app.workloadPrefixes = prefixes;
   }
 
-  return Array.from(apps.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return Array.from(apps.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 /** A pod problem worth an operator's attention. */
@@ -691,21 +772,33 @@ export function summarizeAppPods(app: Application, pods: FluxObject[]): PodsSumm
   return summary;
 }
 
-export type AppHealth = 'Healthy' | 'Degraded' | 'Failing' | 'Deploying' | 'Suspended';
+export type AppHealth = 'Healthy' | 'Degraded' | 'Failing' | 'Deploying' | 'Terminating' | 'Suspended';
 
 /**
  * One verdict for the whole application, the way an operator would judge
- * it: Flux failures beat pod problems beat in-flight work beat all-quiet.
+ * it: an in-flight deletion wins (so a deleted app never reads "Deploying"),
+ * then Flux failures beat pod problems beat in-flight work beat all-quiet.
  */
 export function summarizeApplication(
   app: Application,
   podsSummary?: PodsSummary
-): { health: AppHealth; reconciling: boolean; failingMembers: number; readyMembers: number } {
+): {
+  health: AppHealth;
+  reconciling: boolean;
+  terminating: boolean;
+  failingMembers: number;
+  readyMembers: number;
+} {
   let failingMembers = 0;
   let readyMembers = 0;
   let reconciling = false;
   let suspended = 0;
+  let terminatingMembers = 0;
   for (const { object } of app.members) {
+    if (object?.metadata?.deletionTimestamp) {
+      terminatingMembers += 1;
+      continue;
+    }
     const health = getStatusInfo(object).health;
     if (health === 'NotReady') {
       failingMembers += 1;
@@ -717,8 +810,11 @@ export function summarizeApplication(
       suspended += 1;
     }
   }
+  const terminating = terminatingMembers > 0;
   let health: AppHealth;
-  if (failingMembers > 0) {
+  if (terminating) {
+    health = 'Terminating';
+  } else if (failingMembers > 0) {
     health = 'Failing';
   } else if (
     podsSummary &&
@@ -732,7 +828,233 @@ export function summarizeApplication(
   } else {
     health = 'Healthy';
   }
-  return { health, reconciling, failingMembers, readyMembers };
+  return { health, reconciling, terminating, failingMembers, readyMembers };
+}
+
+/**
+ * The specific lifecycle operation an application is undergoing, read from
+ * real controller state (never guessed): a deletion in flight, a Helm
+ * install/upgrade/rollback, or a Kustomization first apply/patch.
+ */
+export type AppOperation =
+  | 'installing'
+  | 'upgrading'
+  | 'patching'
+  | 'rollingback'
+  | 'terminating'
+  | 'deploying'
+  | 'idle';
+
+/**
+ * The lifecycle operation of one Flux applier, from its live status. Returns
+ * 'idle' unless an operation is actually in flight (reconciling or deleting),
+ * so a healthy, settled resource never reads as "deploying".
+ */
+export function memberOperation(obj: FluxObject): AppOperation {
+  if (obj?.metadata?.deletionTimestamp) {
+    return 'terminating';
+  }
+  const info = getStatusInfo(obj);
+  if (info.health === 'Suspended' || info.health === 'Ready' || info.health === 'NotReady') {
+    return 'idle';
+  }
+  if (info.health !== 'Reconciling') {
+    return 'idle';
+  }
+  const status = obj?.status ?? {};
+  const message = (info.message ?? '').toLowerCase();
+  const reason = (info.reason ?? '').toLowerCase();
+
+  if (obj?.kind === 'HelmRelease') {
+    const action = String(status.lastAttemptedReleaseAction ?? '').toLowerCase();
+    const history = Array.isArray(status.history) ? status.history : [];
+    const latestStatus = String(history[0]?.status ?? '').toLowerCase();
+    if (
+      action === 'rollback' ||
+      latestStatus.startsWith('pending-rollback') ||
+      reason.includes('rollback') ||
+      message.includes('rollback') ||
+      message.includes('remediat')
+    ) {
+      return 'rollingback';
+    }
+    if (
+      action === 'upgrade' ||
+      latestStatus === 'pending-upgrade' ||
+      reason.includes('upgrade') ||
+      message.includes('upgrade')
+    ) {
+      return 'upgrading';
+    }
+    if (
+      action === 'install' ||
+      latestStatus === 'pending-install' ||
+      history.length === 0 ||
+      reason.includes('install') ||
+      message.includes('install')
+    ) {
+      return 'installing';
+    }
+    return 'deploying';
+  }
+
+  if (obj?.kind === 'Kustomization') {
+    // No revision has ever been applied: this is a first install. A prior
+    // applied revision means we are patching existing objects in place.
+    return status.lastAppliedRevision ? 'patching' : 'installing';
+  }
+
+  return 'deploying';
+}
+
+/** From most to least significant when several members are mid-operation. */
+const OPERATION_PRIORITY: AppOperation[] = [
+  'terminating',
+  'rollingback',
+  'installing',
+  'upgrading',
+  'patching',
+  'deploying',
+  'idle',
+];
+
+/** Live rollout numbers for an application's workloads (real replica counts). */
+export interface RolloutProgress {
+  /** Desired replicas across the application's workloads. */
+  desired: number;
+  /** Replicas already on the latest revision. */
+  updated: number;
+  /** Ready replicas. */
+  ready: number;
+  /** True while at least one workload has not finished rolling out. */
+  rolling: boolean;
+}
+
+/** True when a live workload belongs to this application. */
+function workloadMatchesApp(workload: FluxObject, app: Application): boolean {
+  const namespace = workload?.metadata?.namespace ?? '';
+  const name = workload?.metadata?.name ?? '';
+  if (!app.targetNamespaces.includes(namespace)) {
+    return false;
+  }
+  const prefixes = app.workloadPrefixes.filter(p => p.namespace === namespace);
+  if (prefixes.length === 0) {
+    return true;
+  }
+  return prefixes.some(p => name === p.prefix || name.startsWith(`${p.prefix}-`));
+}
+
+/**
+ * Sums the live rollout state of an application's Deployments, StatefulSets
+ * and DaemonSets. Every number comes straight from the workload status, so
+ * "3 of 10 pods updated" reflects what the cluster actually reports.
+ */
+export function summarizeAppRollout(app: Application, workloads: FluxObject[]): RolloutProgress {
+  const out: RolloutProgress = { desired: 0, updated: 0, ready: 0, rolling: false };
+  for (const workload of workloads) {
+    if (!workloadMatchesApp(workload, app)) {
+      continue;
+    }
+    const spec: any = workload?.spec ?? {};
+    const status: any = workload?.status ?? {};
+    let desired: number;
+    let updated: number;
+    let ready: number;
+    if (workload?.kind === 'DaemonSet') {
+      desired = status.desiredNumberScheduled ?? 0;
+      updated = status.updatedNumberScheduled ?? 0;
+      ready = status.numberReady ?? 0;
+    } else {
+      desired = spec.replicas ?? status.replicas ?? 0;
+      updated = status.updatedReplicas ?? 0;
+      ready = status.readyReplicas ?? 0;
+    }
+    out.desired += desired;
+    out.updated += Math.min(updated, desired);
+    out.ready += Math.min(ready, desired);
+    if (updated < desired || ready < desired) {
+      out.rolling = true;
+    }
+  }
+  return out;
+}
+
+/** The whole-application lifecycle verdict shown on the card. */
+export interface AppLifecycle {
+  operation: AppOperation;
+  /** True when an operation is actually in flight. */
+  active: boolean;
+  /** Real progress toward completing the current operation, when measurable. */
+  progress?: { current: number; total: number; unit: string };
+}
+
+/**
+ * The application's current lifecycle operation and its real progress,
+ * combining Flux applier state with live workload rollout numbers. Progress
+ * is always measured, never estimated: member reconciliations for
+ * install/upgrade, pod rollout for patches, remaining objects for deletions.
+ */
+export function summarizeAppLifecycle(
+  app: Application,
+  opts?: { rollout?: RolloutProgress; pods?: PodsSummary }
+): AppLifecycle {
+  let operation: AppOperation = 'idle';
+  let readyMembers = 0;
+  for (const { object } of app.members) {
+    const memberOp = memberOperation(object);
+    if (
+      OPERATION_PRIORITY.indexOf(memberOp) < OPERATION_PRIORITY.indexOf(operation)
+    ) {
+      operation = memberOp;
+    }
+    if (!object?.metadata?.deletionTimestamp && getStatusInfo(object).health === 'Ready') {
+      readyMembers += 1;
+    }
+  }
+
+  if (operation === 'idle') {
+    return { operation, active: false };
+  }
+
+  const rollout = opts?.rollout;
+  const pods = opts?.pods;
+  const totalMembers = app.members.length;
+
+  if (operation === 'terminating') {
+    // Progress toward gone: the fewer objects remain, the closer we are.
+    const remaining = (pods?.total ?? 0) + app.members.length;
+    return {
+      operation,
+      active: true,
+      progress: remaining > 0 ? { current: remaining, total: remaining, unit: 'remaining' } : undefined,
+    };
+  }
+
+  // Prefer live pod rollout when workloads are actually rolling (the "3/10
+  // pods" answer); fall back to member reconciliation (the "5/20 releases"
+  // answer) for multi-member apps; finally to pod readiness.
+  if (rollout && rollout.desired > 0 && rollout.rolling) {
+    return {
+      operation,
+      active: true,
+      progress: { current: rollout.updated, total: rollout.desired, unit: 'pods' },
+    };
+  }
+  if (totalMembers > 1) {
+    return {
+      operation,
+      active: true,
+      progress: { current: readyMembers, total: totalMembers, unit: 'resources' },
+    };
+  }
+  if (pods && pods.total > 0) {
+    return {
+      operation,
+      active: true,
+      progress: { current: pods.ready, total: pods.total, unit: 'pods' },
+    };
+  }
+  return { operation, active: true };
 }
 
 /**
