@@ -16,6 +16,7 @@
 
 import { Icon } from '@iconify/react';
 import {
+  alpha,
   Autocomplete,
   Box,
   Checkbox,
@@ -56,6 +57,12 @@ function MetadataValue({ value }: { value: string }) {
  * Multi-select filter over application (namespace) names, styled like the
  * namespaces filter dropdown ({@link PureNamespacesAutocomplete}) but wide
  * enough to show whole application names.
+ *
+ * The typed search text is kept while the popup is open, so "type to narrow
+ * down, then tick several checkboxes" works: selecting an option does NOT
+ * reset the text (which used to snap the option list back to the full list
+ * and jump the scroll position on every click). The text clears once the
+ * popup closes.
  */
 function ApplicationsAutocomplete({
   applicationNames,
@@ -72,9 +79,10 @@ function ApplicationsAutocomplete({
   // Wide enough that typical (namespace) application names fit whole.
   const maxNamesChars = 40;
 
-  const onInputChange = (event: object, value: string, reason: string) => {
-    // The AutoComplete component resets the text after a short delay, so we
-    // need to avoid that or the user won't be able to edit/use what they type.
+  const onInputChange = (_event: object, value: string, reason: string) => {
+    // MUI fires a 'reset' input change after each selection, which would wipe
+    // the user's search text mid-selection; ignore it so the filtered list
+    // (and its scroll position) stay put while ticking checkboxes.
     if (reason !== 'reset') {
       setInput(value);
     }
@@ -88,17 +96,13 @@ function ApplicationsAutocomplete({
       openOnFocus
       disableCloseOnSelect
       options={applicationNames}
-      onChange={(event, newValue) => {
-        // Reset the input so it won't show next to the selected applications.
-        setInput('');
+      onChange={(_event, newValue) => {
         onChange(newValue);
       }}
+      onClose={() => setInput('')}
       onInputChange={onInputChange}
       inputValue={input}
-      // We reverse the selection so the last chosen appears as the first in
-      // the label. This is useful since the label is ellipsized and this way
-      // we get to see it change.
-      value={[...selectedApplications].reverse()}
+      value={selectedApplications}
       renderOption={(props, option, { selected }) => (
         <li {...props} key={props.key}>
           <Checkbox
@@ -117,12 +121,16 @@ function ApplicationsAutocomplete({
           return <Typography variant="body2">{t('translation|All applications')}</Typography>;
         }
 
-        let namesToShow = tags[0];
+        // Show the most recently selected first, purely for display: the
+        // label is ellipsized, so surfacing the newest selection makes each
+        // click visibly do something.
+        const displayTags = [...tags].reverse();
+        let namesToShow = displayTags[0];
         const joiner = ', ';
         let joinedNames = 1;
-        const remainingTags = tags.slice(1);
+        const remainingTags = displayTags.slice(1);
 
-        tags.slice(1).forEach(tag => {
+        displayTags.slice(1).forEach(tag => {
           if (namesToShow.length + tag.length + joiner.length <= maxNamesChars) {
             namesToShow += joiner + tag;
             joinedNames++;
@@ -134,7 +142,7 @@ function ApplicationsAutocomplete({
             {namesToShow.length > maxNamesChars
               ? namesToShow.slice(0, maxNamesChars) + '…'
               : namesToShow}
-            {tags.length > joinedNames && (
+            {displayTags.length > joinedNames && (
               <>
                 <span>,&nbsp;</span>
                 <Tooltip
@@ -148,7 +156,7 @@ function ApplicationsAutocomplete({
                   arrow
                   placement="top"
                 >
-                  <b style={{ cursor: 'pointer' }}>{`+${tags.length - joinedNames}`}</b>
+                  <b style={{ cursor: 'pointer' }}>{`+${displayTags.length - joinedNames}`}</b>
                 </Tooltip>
               </>
             )}
@@ -173,8 +181,33 @@ function ApplicationsAutocomplete({
   );
 }
 
+/** Precomputed per-application resource numbers, derived once per data batch. */
+interface AppResourcesSummary {
+  count: number;
+  error: number;
+  warning: number;
+  success: number;
+}
+
+/**
+ * Sortable health rank: unhealthy first when sorting ascending, so "sort by
+ * health" surfaces the problems. -1 means the data hasn't arrived yet — the
+ * value changing from -1 to a real rank is also what tells the memoized table
+ * cells to re-render once the resource lists arrive.
+ */
+function healthRank(summary: AppResourcesSummary | undefined, loading: boolean): number {
+  if (!summary) {
+    return loading ? -1 : 3;
+  }
+  if (summary.error > 0) return 0;
+  if (summary.warning > 0) return 1;
+  if (summary.count > 0) return 2;
+  return 3; // No resources.
+}
+
 export default function ApplicationList() {
   const { t } = useTranslation(['translation', 'glossary']);
+  const theme = useTheme();
   const { applications, errors, isLoading } = useApplicationDefinitions();
   const [selectedApplications, setSelectedApplications] = useState<string[]>([]);
 
@@ -187,7 +220,24 @@ export default function ApplicationList() {
     errors: resourceErrors,
     isLoading: resourcesLoading,
   } = useAllApplicationResources();
-  const resourcesByApp = useMemo(() => groupResourcesByApplication(allResources), [allResources]);
+
+  // Roll the resources up into one small summary per application, once per
+  // data batch, so table cells render from plain numbers instead of
+  // recomputing health over the full resource list on every render.
+  const summaries = useMemo(() => {
+    const byApp = groupResourcesByApplication(allResources);
+    const out = new Map<string, AppResourcesSummary>();
+    for (const [appId, items] of byApp) {
+      const health = getResourcesHealth(items);
+      out.set(appId, {
+        count: items.length,
+        error: health.error ?? 0,
+        warning: health.warning ?? 0,
+        success: health.success ?? 0,
+      });
+    }
+    return out;
+  }, [allResources]);
 
   const applicationNames = useMemo(() => applications.map(app => app.id), [applications]);
 
@@ -206,50 +256,82 @@ export default function ApplicationList() {
         gridTemplate: 1.5,
         accessorFn: app => app.id,
         Cell: ({ row: { original } }) => (
-          <Link routeName="applicationDetails" params={{ name: original.id }}>
-            {original.id}
-          </Link>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 30,
+                height: 30,
+                borderRadius: '8px',
+                flexShrink: 0,
+                color: theme.palette.primary.main,
+                backgroundColor: alpha(theme.palette.primary.main, 0.1),
+              }}
+            >
+              <Icon icon="mdi:grid-large" width={16} />
+            </Box>
+            <Box sx={{ minWidth: 0 }}>
+              <Link routeName="applicationDetails" params={{ name: original.id }}>
+                {original.id}
+              </Link>
+              <Typography variant="caption" color="text.secondary" component="div" noWrap>
+                {original.clusters.length === 1
+                  ? t('translation|1 cluster')
+                  : t('translation|{{ count }} clusters', { count: original.clusters.length })}
+              </Typography>
+            </Box>
+          </Box>
         ),
       },
       {
         id: 'resources',
         header: t('translation|Resources'),
         gridTemplate: 'min-content',
-        accessorFn: app => resourcesByApp.get(app.id)?.length ?? 0,
-        Cell: ({ row: { original } }) => {
-          const items = resourcesByApp.get(original.id);
-          // Don't show a misleading 0 while the lists are still arriving.
-          if (!items && resourcesLoading) {
+        // -1 while the lists are still arriving: the value change from -1 to
+        // the real count is what re-renders the memoized cell (cells only
+        // re-render when their accessor value changes), so the column can
+        // never get stuck on a skeleton or a misleading 0 again.
+        accessorFn: app => summaries.get(app.id)?.count ?? (resourcesLoading ? -1 : 0),
+        Cell: ({ cell }) => {
+          const value = cell.getValue<number>();
+          if (value === -1) {
             return <Skeleton variant="text" width={32} />;
           }
-          return items?.length ?? 0;
+          return value;
         },
       },
       {
         id: 'health',
         header: t('translation|Health'),
         gridTemplate: 'min-content',
+        // A sortable rank (problems first). Doubles as the re-render trigger
+        // for the memoized cell, exactly like the resources column: without
+        // an accessor the cell's value never changes and it stays frozen on
+        // whatever it first rendered.
+        accessorFn: app => healthRank(summaries.get(app.id), resourcesLoading),
         Cell: ({ row: { original } }) => {
-          const items = resourcesByApp.get(original.id);
-          if (!items && resourcesLoading) {
+          const summary = summaries.get(original.id);
+          if (!summary && resourcesLoading) {
             return <Skeleton variant="text" width={96} />;
           }
-          const health = getResourcesHealth(items ?? []);
+          const error = summary?.error ?? 0;
+          const warning = summary?.warning ?? 0;
+          const success = summary?.success ?? 0;
           return (
-            <StatusLabel
-              status={health.error > 0 ? 'error' : health.warning > 0 ? 'warning' : 'success'}
-            >
+            <StatusLabel status={error > 0 ? 'error' : warning > 0 ? 'warning' : 'success'}>
               <Icon
-                icon={getHealthIcon(health.success, health.error, health.warning)}
+                icon={getHealthIcon(success, error, warning)}
                 style={{
                   fontSize: 24,
                 }}
               />
-              {!items || items.length === 0
+              {!summary || summary.count === 0
                 ? t('translation|No Resources')
-                : health.error > 0
+                : error > 0
                 ? t('translation|Unhealthy')
-                : health.warning > 0
+                : warning > 0
                 ? t('translation|Degraded')
                 : t('translation|Healthy')}
             </StatusLabel>
@@ -290,7 +372,7 @@ export default function ApplicationList() {
         Cell: ({ row: { original } }) => <MetadataValue value={original.deploymentType} />,
       },
     ],
-    [t, resourcesByApp, resourcesLoading]
+    [t, theme, summaries, resourcesLoading]
   );
 
   if (!isLoading && applications.length === 0 && errors.length === 0) {
@@ -354,6 +436,10 @@ export default function ApplicationList() {
         loading={isLoading}
         filterFunction={filterFunction}
         emptyMessage={t('translation|No applications found')}
+        // Include the cluster set in the row identity: when an application is
+        // discovered in another cluster, the row remounts and every cell
+        // (including the memoized name cell with its cluster count) redraws.
+        getRowId={row => `${row.id}#${row.clusters.join(',')}`}
         initialState={{
           sorting: [{ id: 'name', desc: false }],
         }}

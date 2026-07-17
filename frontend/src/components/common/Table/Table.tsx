@@ -192,8 +192,19 @@ const StyledHeadRow = styled('tr')(({ theme }) => ({
 }));
 const StyledRow = styled('tr')(({ theme }) => ({
   display: 'contents',
+  // The row itself paints no box (display: contents), so hover and selection
+  // tint the row's cells instead.
+  '&:hover > td': {
+    backgroundColor:
+      theme.palette.mode === 'dark'
+        ? alpha(theme.palette.common.white, 0.04)
+        : alpha(theme.palette.primary.main, 0.03),
+  },
   '&[data-selected=true]': {
     background: alpha(theme.palette.primary.main, 0.2),
+  },
+  '&[data-selected=true] > td': {
+    backgroundColor: alpha(theme.palette.primary.main, 0.12),
   },
 }));
 const StyledBody = styled('tbody')({ display: 'contents' });
@@ -687,10 +698,44 @@ export default function Table<RowItem extends Record<string, any>>({
             display: 'grid',
             border: '1px solid',
             borderColor: theme.palette.tables.head.borderColor,
-            borderRadius: 1,
+            borderRadius: '10px',
             borderBottom: 'none',
             overflowX: 'auto',
             width: '100%',
+            // Modern table dressing, applied via descendant selectors so the
+            // memoized head/body cells keep their own (cached) styles:
+            // a quiet header band, hairline column separators, airier rows
+            // and an always-visible sort affordance.
+            '& th': {
+              backgroundColor: theme.palette.background.muted,
+              fontWeight: 600,
+              borderRight: '1px solid',
+              borderRightColor: theme.palette.divider,
+              paddingTop: '0.55rem',
+              paddingBottom: '0.55rem',
+            },
+            '& th:last-of-type': {
+              borderRight: 'none',
+            },
+            '& td': {
+              borderRight: '1px solid',
+              borderRightColor: theme.palette.divider,
+              paddingTop: '0.55rem',
+              paddingBottom: '0.55rem',
+              transition: 'background-color 0.1s ease',
+            },
+            '& td:last-of-type': {
+              borderRight: 'none',
+            },
+            // Keep the sort carets visible (dimmed) on sortable columns so
+            // sorting is discoverable without hovering, like modern tables.
+            '& .MuiTableSortLabel-icon': {
+              opacity: 0.35,
+            },
+            '& .Mui-active .MuiTableSortLabel-icon': {
+              opacity: 1,
+              color: theme.palette.primary.main,
+            },
           }}
         >
           <TableHead sx={{ display: 'contents' }}>

@@ -15,7 +15,7 @@
  */
 
 import { uniqBy } from 'lodash';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ResourceClasses, useClustersConf } from '../../lib/k8s';
 import { ApiError } from '../../lib/k8s/api/v2/ApiError';
 import { apiResourceId } from '../../lib/k8s/api/v2/ApiResource';
@@ -81,19 +81,60 @@ export function useAllApplicationResources(): {
 
   const isLoading = data.some(it => !it.items && !it.isError);
 
+  // Recombine only when some list's items actually changed, not on every
+  // render. The deps array length is constant (the resource list is fixed on
+  // mount), so passing the per-list items arrays directly is safe.
+  const combined = useMemo(
+    () =>
+      data
+        .flatMap(it => it.items ?? [])
+        .filter(
+          it => !!it.metadata?.namespace && isBusinessApplicationNamespace(it.metadata.namespace)
+        ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    data.map(it => it.items)
+  );
+
+  // Publish updates in ~300ms batches. During the initial load the many
+  // per-kind/per-cluster lists resolve one after another; without batching
+  // each arrival re-renders every consumer (and the whole Applications
+  // table) once, which is what made the tab feel slow. Batching coalesces
+  // that burst into a few renders without delaying steady-state updates
+  // noticeably.
   const [items, setItems] = useState<KubeObject[]>([]);
+  const latestRef = useRef(combined);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    // Progressive: include whatever lists have already arrived.
-    const newItems = data
-      .flatMap(it => it.items ?? [])
-      .filter(
-        it => !!it.metadata?.namespace && isBusinessApplicationNamespace(it.metadata.namespace)
-      );
+    latestRef.current = combined;
+    // Once every list has arrived, publish immediately (flushing any pending
+    // batch): nothing else is coming, so waiting would only prolong the
+    // window where a row shows 0 for a cluster that in fact has resources.
+    if (!isLoading) {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      setItems(oldItems => (equal(oldItems, latestRef.current) ? oldItems : latestRef.current));
+      return;
+    }
+    if (timerRef.current !== null) {
+      return; // A publish is already scheduled; it will pick up this update.
+    }
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      setItems(oldItems => (equal(oldItems, latestRef.current) ? oldItems : latestRef.current));
+    }, 300);
+  }, [combined, isLoading]);
 
-    setItems(oldItems => (equal(oldItems, newItems) ? oldItems : newItems));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, classes]);
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+      }
+    },
+    []
+  );
 
   const errors = useMemo(
     () => data.flatMap(it => (it.errors ?? []).filter(error => error.status !== 404)) as ApiError[],
