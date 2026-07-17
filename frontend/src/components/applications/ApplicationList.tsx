@@ -16,7 +16,6 @@
 
 import { Icon } from '@iconify/react';
 import {
-  alpha,
   Autocomplete,
   Box,
   Checkbox,
@@ -190,6 +189,19 @@ interface AppResourcesSummary {
 }
 
 /**
+ * A table row: an application plus its (progressively arriving) resource
+ * summary. The summary is carried IN the row data — not read from a closure —
+ * so that when more resources arrive the row object changes identity and the
+ * table recomputes the Resources/Health cells. Reading it from a closure kept
+ * the memoized cells frozen on their first (skeleton) value until an unrelated
+ * remount, which is what made the columns look stuck.
+ */
+interface AppRow extends ApplicationDefinition {
+  summary?: AppResourcesSummary;
+  resourcesLoading: boolean;
+}
+
+/**
  * Sortable health rank: unhealthy first when sorting ascending, so "sort by
  * health" surfaces the problems. -1 means the data hasn't arrived yet — the
  * value changing from -1 to a real rank is also what tells the memoized table
@@ -207,7 +219,6 @@ function healthRank(summary: AppResourcesSummary | undefined, loading: boolean):
 
 export default function ApplicationList() {
   const { t } = useTranslation(['translation', 'glossary']);
-  const theme = useTheme();
   const { applications, errors, isLoading } = useApplicationDefinitions();
   const [selectedApplications, setSelectedApplications] = useState<string[]>([]);
 
@@ -241,59 +252,43 @@ export default function ApplicationList() {
 
   const applicationNames = useMemo(() => applications.map(app => app.id), [applications]);
 
+  // Carry the summary in the row data (see AppRow) so the table recomputes
+  // cells as resources arrive.
+  const tableData = useMemo<AppRow[]>(
+    () => applications.map(app => ({ ...app, summary: summaries.get(app.id), resourcesLoading })),
+    [applications, summaries, resourcesLoading]
+  );
+
   // No selection means show every application (all namespaces).
   const filterFunction = useCallback(
-    (app: ApplicationDefinition) =>
-      selectedApplications.length === 0 || selectedApplications.includes(app.id),
+    (app: AppRow) => selectedApplications.length === 0 || selectedApplications.includes(app.id),
     [selectedApplications]
   );
 
-  const columns = useMemo<TableColumn<ApplicationDefinition>[]>(
+  const columns = useMemo<TableColumn<AppRow>[]>(
     () => [
       {
         id: 'name',
         header: t('translation|Name'),
         gridTemplate: 1.5,
         accessorFn: app => app.id,
+        // Single line: the cluster spread has its own column, and anything
+        // that changes as clusters connect must not live in this cell (its
+        // accessor value is the stable id, so it would not re-render).
         Cell: ({ row: { original } }) => (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 30,
-                height: 30,
-                borderRadius: '8px',
-                flexShrink: 0,
-                color: theme.palette.primary.main,
-                backgroundColor: alpha(theme.palette.primary.main, 0.1),
-              }}
-            >
-              <Icon icon="mdi:grid-large" width={16} />
-            </Box>
-            <Box sx={{ minWidth: 0 }}>
-              <Link routeName="applicationDetails" params={{ name: original.id }}>
-                {original.id}
-              </Link>
-              <Typography variant="caption" color="text.secondary" component="div" noWrap>
-                {original.clusters.length === 1
-                  ? t('translation|1 cluster')
-                  : t('translation|{{ count }} clusters', { count: original.clusters.length })}
-              </Typography>
-            </Box>
-          </Box>
+          <Link routeName="applicationDetails" params={{ name: original.id }}>
+            {original.id}
+          </Link>
         ),
       },
       {
         id: 'resources',
         header: t('translation|Resources'),
         gridTemplate: 'min-content',
-        // -1 while the lists are still arriving: the value change from -1 to
-        // the real count is what re-renders the memoized cell (cells only
-        // re-render when their accessor value changes), so the column can
-        // never get stuck on a skeleton or a misleading 0 again.
-        accessorFn: app => summaries.get(app.id)?.count ?? (resourcesLoading ? -1 : 0),
+        // -1 while this app has no resources yet and lists are still arriving;
+        // the value carried by the row (see AppRow) changes as data lands, so
+        // the memoized cell re-renders and the count is never stuck.
+        accessorFn: app => app.summary?.count ?? (app.resourcesLoading ? -1 : 0),
         Cell: ({ cell }) => {
           const value = cell.getValue<number>();
           if (value === -1) {
@@ -306,14 +301,11 @@ export default function ApplicationList() {
         id: 'health',
         header: t('translation|Health'),
         gridTemplate: 'min-content',
-        // A sortable rank (problems first). Doubles as the re-render trigger
-        // for the memoized cell, exactly like the resources column: without
-        // an accessor the cell's value never changes and it stays frozen on
-        // whatever it first rendered.
-        accessorFn: app => healthRank(summaries.get(app.id), resourcesLoading),
+        // A sortable rank (problems first) that also drives cell re-renders.
+        accessorFn: app => healthRank(app.summary, app.resourcesLoading),
         Cell: ({ row: { original } }) => {
-          const summary = summaries.get(original.id);
-          if (!summary && resourcesLoading) {
+          const summary = original.summary;
+          if (!summary && original.resourcesLoading) {
             return <Skeleton variant="text" width={96} />;
           }
           const error = summary?.error ?? 0;
@@ -372,7 +364,7 @@ export default function ApplicationList() {
         Cell: ({ row: { original } }) => <MetadataValue value={original.deploymentType} />,
       },
     ],
-    [t, theme, summaries, resourcesLoading]
+    [t]
   );
 
   if (!isLoading && applications.length === 0 && errors.length === 0) {
@@ -432,14 +424,14 @@ export default function ApplicationList() {
 
       <Table
         columns={columns}
-        data={applications}
+        data={tableData}
         loading={isLoading}
         filterFunction={filterFunction}
         emptyMessage={t('translation|No applications found')}
-        // Include the cluster set in the row identity: when an application is
-        // discovered in another cluster, the row remounts and every cell
-        // (including the memoized name cell with its cluster count) redraws.
-        getRowId={row => `${row.id}#${row.clusters.join(',')}`}
+        // Stable per-application id. The row objects change as resources
+        // arrive (see AppRow), which is what makes the table recompute the
+        // Resources/Health cells; the id keeps sorting and selection stable.
+        getRowId={row => row.id}
         initialState={{
           sorting: [{ id: 'name', desc: false }],
         }}

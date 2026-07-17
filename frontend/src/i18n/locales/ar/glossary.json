@@ -1,12 +1,12 @@
 {
   "Kubernetes Version": "إصدار Kubernetes",
+  "Clusters": "",
   "Cluster": "المجموعة",
   "Cluster selector": "محدد المجموعة",
   "Namespace": "مساحة الأسماء",
   "Git Commit": "تحديث Git",
   "Roles": "الأدوار",
   "Role Bindings": "ربط الأدوار",
-  "Clusters": "",
   "Memory": "الذاكرة",
   "CPU": "المعالج",
   "Pods": "Pods",

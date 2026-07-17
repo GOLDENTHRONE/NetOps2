@@ -266,14 +266,16 @@ export function getPercentStr(value: number, total: number) {
 }
 
 export function getReadyReplicas(item: Workload) {
-  return item.status.readyReplicas || item.status.numberReady || 0;
+  // A workload observed before its status subresource is populated has no
+  // status; treat that as zero ready rather than throwing.
+  return item.status?.readyReplicas || item.status?.numberReady || 0;
 }
 
 export function getTotalReplicas(item: Workload) {
   return (
-    item.spec.replicas ||
-    item.status.currentNumberScheduled ||
-    item.status.desiredNumberScheduled ||
+    item.spec?.replicas ||
+    item.status?.currentNumberScheduled ||
+    item.status?.desiredNumberScheduled ||
     0
   );
 }

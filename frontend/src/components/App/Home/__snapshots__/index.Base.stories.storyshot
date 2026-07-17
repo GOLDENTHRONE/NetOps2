@@ -13,40 +13,19 @@
             class="MuiBox-root css-j1fy4m"
           >
             <div
-              class="MuiGrid-root MuiGrid-container MuiGrid-spacing-xs-2 css-1ts0dnm-MuiGrid-root"
-            >
-              <div
-                class="MuiGrid-root MuiGrid-item css-13i4rnv-MuiGrid-root"
-              >
-                <div
-                  class="MuiBox-root css-70qvj9"
-                >
-                  <h1
-                    class="MuiTypography-root MuiTypography-h1 MuiTypography-noWrap css-yeaech-MuiTypography-root"
-                  >
-                    Home
-                  </h1>
-                  <div
-                    class="MuiBox-root css-ldp2l3"
-                  />
-                </div>
-              </div>
-            </div>
-            <div
               class="MuiBox-root css-1txv3mw"
             >
               <div
-                class="MuiBox-root css-1f4i7zw"
+                class="MuiBox-root css-l69qyb"
               >
                 <div
-                  class="MuiBox-root css-zrzfax"
+                  class="MuiBox-root css-1gvktxj"
+                  data-mui-internal-clone-element="true"
                 >
                   3 clusters
-                </div>
-                <div
-                  class="MuiBox-root css-1788bww"
-                >
-                  0 connected
+                  <span
+                    class="MuiBox-root css-1myd7v"
+                  />
                 </div>
               </div>
               <div
@@ -235,7 +214,7 @@
                 </div>
               </div>
               <table
-                class="MuiTable-root css-mls80e-MuiTable-root"
+                class="MuiTable-root css-1friph-MuiTable-root"
                 style="grid-template-columns: 44px 2fr 1fr 1fr 1fr 1fr min-content;"
               >
                 <thead

@@ -1,12 +1,12 @@
 {
   "Kubernetes Version": "Version de Kubernetes",
+  "Clusters": "",
   "Cluster": "Cluster",
   "Cluster selector": "Sélecteur de cluster",
   "Namespace": "Espace de nom",
   "Git Commit": "Commit Git",
   "Roles": "Rôles",
   "Role Bindings": "Role Bindings",
-  "Clusters": "",
   "Memory": "Mémoire",
   "CPU": "CPU",
   "Pods": "Pods",
