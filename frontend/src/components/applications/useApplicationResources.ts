@@ -25,6 +25,44 @@ import { defaultApiResources } from '../project/projectUtils';
 import { isBusinessApplicationNamespace } from './applicationUtils';
 
 /**
+ * Kinds that are fetched for the Projects feature but deliberately NOT for
+ * Applications: they mirror other fetched kinds (Endpoints/EndpointSlices
+ * restate Services) or are rarely-used namespace policy objects, yet their
+ * cluster-wide lists are among the largest responses. Dropping them removes
+ * requests and megabytes without losing information an operator acts on.
+ */
+const SKIPPED_KINDS = new Set(['Endpoints', 'EndpointSlice', 'LimitRange', 'ResourceQuota']);
+
+/**
+ * Fetch order: the browser only runs a handful of requests to the backend in
+ * parallel, so the first slots must go to the kinds the table's Health column
+ * is computed from (workloads), then the common app kinds; bulky config data
+ * (ConfigMaps/Secrets) loads last since it only affects the resource count.
+ */
+const KIND_PRIORITY = [
+  'Deployment',
+  'StatefulSet',
+  'DaemonSet',
+  'ReplicaSet',
+  'Job',
+  'CronJob',
+  'Service',
+  'Ingress',
+  'HorizontalPodAutoscaler',
+  'NetworkPolicy',
+  'PersistentVolumeClaim',
+  'Role',
+  'RoleBinding',
+  'ConfigMap',
+  'Secret',
+];
+
+function kindRank(kind: string): number {
+  const index = KIND_PRIORITY.indexOf(kind);
+  return index === -1 ? KIND_PRIORITY.length : index;
+}
+
+/**
  * Fetches the application-relevant resources (the same resource kinds the
  * Projects feature fetches) of ALL business namespaces across every
  * configured cluster, with a single list request (and live watch) per
@@ -57,6 +95,8 @@ export function useAllApplicationResources(): {
   // array length mid-lifecycle would violate the Rules of Hooks.
   const [resources] = useState(() =>
     uniqBy([...defaultApiResources, ...pluginApiResources], r => apiResourceId(r))
+      .filter(r => !SKIPPED_KINDS.has(r.kind))
+      .sort((a, b) => kindRank(a.kind) - kindRank(b.kind))
   );
 
   const classes = useMemo(

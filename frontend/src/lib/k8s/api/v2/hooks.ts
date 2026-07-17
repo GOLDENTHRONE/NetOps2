@@ -243,8 +243,11 @@ const getWorkingEndpoint = async (
   const promises = endpoints.map(endpoint => {
     const resourceUrl = KubeObjectEndpoint.toUrl(endpoint, namespace);
     // If a name is provided, we probe for that specific resource.
-    // Otherwise we probe for the list of resources.
-    const url = name ? makeUrl([resourceUrl, name]) : resourceUrl;
+    // Otherwise we probe the list endpoint with limit=1: only the HTTP status
+    // matters here, and without the limit the probe downloads the entire
+    // (possibly huge) list once per candidate version, only for the real
+    // query to download it all over again.
+    const url = name ? makeUrl([resourceUrl, name]) : makeUrl([resourceUrl], { limit: 1 });
 
     return clusterFetch(url, {
       method: 'GET',

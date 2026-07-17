@@ -727,14 +727,19 @@ export default function Table<RowItem extends Record<string, any>>({
             '& td:last-of-type': {
               borderRight: 'none',
             },
-            // Keep the sort carets visible (dimmed) on sortable columns so
-            // sorting is discoverable without hovering, like modern tables.
-            '& .MuiTableSortLabel-icon': {
-              opacity: 0.35,
-            },
-            '& .Mui-active .MuiTableSortLabel-icon': {
+            // Keep the ⇅ sort caret clearly visible on every sortable column
+            // (MRT dims the whole label to 0.3 when unsorted; lift it so the
+            // affordance reads like the reference), and make the active
+            // column's arrow the primary color.
+            '& .MuiTableSortLabel-root': {
               opacity: 1,
-              color: theme.palette.primary.main,
+            },
+            '& .MuiTableSortLabel-icon': {
+              opacity: 0.6,
+            },
+            '& .MuiTableSortLabel-root.Mui-active .MuiTableSortLabel-icon': {
+              opacity: 1,
+              color: `${theme.palette.primary.main} !important`,
             },
           }}
         >
