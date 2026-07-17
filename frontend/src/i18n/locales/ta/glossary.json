@@ -1,12 +1,12 @@
 {
   "Kubernetes Version": "குபர்நெட்ஸ் வெர்ஷன்",
-  "Clusters": "",
   "Cluster": "க்ளஸ்டர்",
   "Cluster selector": "க்ளஸ்டர் செலக்டர்",
   "Namespace": "நேம்ஸ்பேஸ்",
   "Git Commit": "கிட் கமிட்",
   "Roles": "ரோல்கள்",
   "Role Bindings": "ரோல் பைண்டிங்ஸ்",
+  "Clusters": "",
   "Memory": "நினைவகம்",
   "CPU": "சிபியு",
   "Pods": "பாட்ஸ்",

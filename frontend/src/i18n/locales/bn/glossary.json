@@ -1,12 +1,12 @@
 {
   "Kubernetes Version": "Kubernetes Version",
-  "Clusters": "",
   "Cluster": "Cluster",
   "Cluster selector": "Cluster নির্বাচক",
   "Namespace": "নেমস্পেস",
   "Git Commit": "Git কমিট",
   "Roles": "রোল",
   "Role Bindings": "রোল বাইন্ডিং",
+  "Clusters": "",
   "Memory": "মেমরি",
   "CPU": "CPU",
   "Pods": "পড",

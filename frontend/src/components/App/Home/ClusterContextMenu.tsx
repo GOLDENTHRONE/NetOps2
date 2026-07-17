@@ -15,26 +15,28 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Box, DialogContentText } from '@mui/material';
 import IconButton from '@mui/material/IconButton';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Tooltip from '@mui/material/Tooltip';
-import { useSnackbar } from 'notistack';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDispatch } from 'react-redux';
 import { useHistory } from 'react-router-dom';
-import helpers from '../../../helpers';
-import { deleteCluster } from '../../../lib/k8s/api/v1/clusterApi';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { useId } from '../../../lib/util';
-import { setConfig } from '../../../redux/configSlice';
 import { useTypedSelector } from '../../../redux/hooks';
-import { ConfirmDialog } from '../../common/ConfirmDialog';
 import ErrorBoundary from '../../common/ErrorBoundary/ErrorBoundary';
+// The following imports are only used by the disabled cluster-delete path
+// (see the commented Delete menu item, confirmation dialog and helpers below):
+//   import { Box, DialogContentText } from '@mui/material';
+//   import { useSnackbar } from 'notistack';
+//   import { useDispatch } from 'react-redux';
+//   import helpers from '../../../helpers';
+//   import { deleteCluster } from '../../../lib/k8s/api/v1/clusterApi';
+//   import { setConfig } from '../../../redux/configSlice';
+//   import { ConfirmDialog } from '../../common/ConfirmDialog';
 
 interface ClusterContextMenuProps {
   /** The cluster for the context menu to act on. */
@@ -47,14 +49,21 @@ interface ClusterContextMenuProps {
 export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps) {
   const { t } = useTranslation(['translation']);
   const history = useHistory();
-  const dispatch = useDispatch();
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const menuId = useId('context-menu');
   const [openConfirmDialog, setOpenConfirmDialog] = React.useState<string | null>(null);
   const dialogs = useTypedSelector(state => state.clusterProvider.dialogs);
   const menuItems = useTypedSelector(state => state.clusterProvider.menuItems);
-  const isDynamicClusterEnabled = useTypedSelector(state => state.config.isDynamicClusterEnabled);
-  const allowKubeconfigChanges = useTypedSelector(state => state.config.allowKubeconfigChanges);
+
+  /*
+    Cluster deletion is intentionally disabled from this menu (see the
+    commented Delete menu item and confirmation dialog below). The state and
+    helpers that drove it are commented out here as one unit so nothing can
+    trigger a cluster removal; re-enable them together to restore the action.
+
+  const dispatch = useDispatch();
+  // const isDynamicClusterEnabled = useTypedSelector(state => state.config.isDynamicClusterEnabled);
+  // const allowKubeconfigChanges = useTypedSelector(state => state.config.allowKubeconfigChanges);
   const { enqueueSnackbar } = useSnackbar();
 
   const kubeconfigOrigin = cluster.meta_data?.origin?.kubeconfig;
@@ -117,6 +126,7 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
       </>
     );
   }
+  */
 
   function handleMenuClose() {
     setAnchorEl(null);
@@ -161,6 +171,18 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
         >
           <ListItemText>{t('translation|Settings')}</ListItemText>
         </MenuItem>
+        {/*
+          Cluster "Delete" is intentionally disabled in this build. Upstream
+          Headlamp only renders it when it is running as the desktop app
+          (helpers.isElectron()) or the backend allows kubeconfig changes
+          (allowKubeconfigChanges) / dynamic clusters (isDynamicClusterEnabled);
+          in the web app with the default backend config that condition is
+          false, which is why the action menu already shows only View and
+          Settings. It is commented out here so the Delete action can never be
+          exposed from the Home cluster menu, regardless of those flags — we
+          do not want cluster removal driven from this UI. Re-enable by
+          restoring this block if that policy changes.
+
         {(!menuItems || menuItems.length === 0) &&
           ((cluster.meta_data?.source === 'dynamic_cluster' &&
             (helpers.isElectron() || isDynamicClusterEnabled)) ||
@@ -175,6 +197,7 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
               <ListItemText>{t('translation|Delete')}</ListItemText>
             </MenuItem>
           )}
+        */}
         {menuItems.map((Item, index) => {
           return (
             <Item
@@ -186,6 +209,12 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
           );
         })}
       </Menu>
+      {/*
+        The built-in cluster-delete confirmation is disabled along with the
+        Delete menu item above, so nothing (not even a cluster-provider plugin
+        that sets openConfirmDialog to 'deleteDynamic') can drive a cluster
+        deletion from this menu. Re-enable together with the Delete item.
+
       <ConfirmDialog
         open={openConfirmDialog === 'deleteDynamic'}
         handleClose={() => setOpenConfirmDialog('')}
@@ -197,6 +226,7 @@ export default function ClusterContextMenu({ cluster }: ClusterContextMenuProps)
         title={t('translation|Delete Cluster')}
         description={removeClusterDescription(cluster)}
       />
+      */}
       {openConfirmDialog !== null &&
         dialogs.map((Dialog, index) => {
           return (
