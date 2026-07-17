@@ -131,7 +131,7 @@
       </div>
     </div>
     <table
-      class="MuiTable-root css-glzsab-MuiTable-root"
+      class="MuiTable-root css-mls80e-MuiTable-root"
       style="grid-template-columns: 1fr 1fr;"
     >
       <thead
@@ -312,7 +312,7 @@
         class="css-1obf64m"
       >
         <tr
-          class="css-1ospngb"
+          class="css-ze0kvz"
           data-selected="false"
         >
           <td
@@ -327,7 +327,7 @@
           </td>
         </tr>
         <tr
-          class="css-1ospngb"
+          class="css-ze0kvz"
           data-selected="false"
         >
           <td
@@ -342,7 +342,7 @@
           </td>
         </tr>
         <tr
-          class="css-1ospngb"
+          class="css-ze0kvz"
           data-selected="false"
         >
           <td
@@ -357,7 +357,7 @@
           </td>
         </tr>
         <tr
-          class="css-1ospngb"
+          class="css-ze0kvz"
           data-selected="false"
         >
           <td

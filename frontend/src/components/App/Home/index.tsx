@@ -15,7 +15,7 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Box, Tab, Tabs, Typography } from '@mui/material';
+import { alpha, Box, Tab, Tabs, Typography, useTheme } from '@mui/material';
 import { isEqual } from 'lodash';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -115,6 +115,82 @@ function useWarningSettingsPerCluster(clusterNames: string[]) {
 
 const NO_PLUGIN_TABS: HomeTabsState['tabs'] = {};
 
+/**
+ * A quiet at-a-glance strip under the Home title: how many clusters are
+ * configured, how many are connected, and how many report a problem. Built
+ * purely from data the page already fetches, so it costs nothing extra.
+ */
+function HomeSummaryChips({
+  total,
+  connected,
+  withErrors,
+}: {
+  total: number;
+  connected: number;
+  withErrors: number;
+}) {
+  const theme = useTheme();
+  const { t } = useTranslation(['translation', 'glossary']);
+  // Themes provided by tests/plugins may not carry the custom home palette.
+  const homeStatus = (theme.palette as { home?: { status: Record<string, string> } }).home?.status;
+
+  const chips: { icon: string; label: string; color: string }[] = [
+    {
+      icon: 'mdi:hexagon-multiple-outline',
+      label: t('translation|{{ count }} clusters', { count: total }),
+      color: theme.palette.primary.main,
+    },
+    {
+      icon: 'mdi:lan-connect',
+      label: t('translation|{{ count }} connected', { count: connected }),
+      color: homeStatus?.success ?? theme.palette.success.main,
+    },
+  ];
+  if (withErrors > 0) {
+    chips.push({
+      icon: 'mdi:alert-circle-outline',
+      label: t('translation|{{ count }} with problems', { count: withErrors }),
+      color: homeStatus?.error ?? theme.palette.error.main,
+    });
+  }
+
+  return (
+    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1, mb: 2 }}>
+      {chips.map(chip => (
+        <Box
+          key={chip.icon}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.75,
+            px: 1.25,
+            py: 0.5,
+            borderRadius: '999px',
+            fontSize: '0.8125rem',
+            fontWeight: 600,
+            color: chip.color,
+            backgroundColor: alpha(chip.color, 0.1),
+          }}
+        >
+          <Icon icon={chip.icon} width={16} />
+          {chip.label}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+/** Shared styling for the Home tab buttons: compact, modern, no shouting. */
+const homeTabSx = {
+  flexDirection: 'row',
+  gap: 1,
+  fontSize: '1rem',
+  fontWeight: 600,
+  textTransform: 'none',
+  minHeight: 48,
+  borderRadius: '8px 8px 0 0',
+} as const;
+
 function HomeComponent(props: HomeComponentProps) {
   const [view, setView] = useLocalStorageState<string>('home-tab-view', 'clusters');
   // Optional chaining keeps stories/tests with partial mock stores working.
@@ -201,11 +277,25 @@ function HomeComponent(props: HomeComponentProps) {
     ]
   );
 
+  const connectedCount = allClusterNames.filter(name => connectedClusters.has(name)).length;
+  const errorCount = Object.values(errors ?? {}).filter(error => !!error).length;
+
   return (
     <PageGrid>
       <SectionBox title="Home" headerProps={{ headerStyle: 'main' }}>
+        <HomeSummaryChips
+          total={allClusterNames.length}
+          connected={connectedCount}
+          withErrors={errorCount}
+        />
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={effectiveView} onChange={(_, newView) => setView(() => newView)}>
+          <Tabs
+            value={effectiveView}
+            onChange={(_, newView) => setView(() => newView)}
+            TabIndicatorProps={{
+              sx: { height: 3, borderRadius: '3px 3px 0 0' },
+            }}
+          >
             <Tab
               value="clusters"
               label={
@@ -214,11 +304,7 @@ function HomeComponent(props: HomeComponentProps) {
                   <Typography>{t('All Clusters')}</Typography>
                 </>
               }
-              sx={{
-                flexDirection: 'row',
-                gap: 1,
-                fontSize: '1.25rem',
-              }}
+              sx={homeTabSx}
             />
             {/* Projects tab disabled in favor of Applications; code kept for potential re-enablement. */}
             {/* <Tab
@@ -229,11 +315,7 @@ function HomeComponent(props: HomeComponentProps) {
                   <Typography>{t('Projects')}</Typography>
                 </>
               }
-              sx={{
-                flexDirection: 'row',
-                gap: 1,
-                fontSize: '1.25rem',
-              }}
+              sx={homeTabSx}
             /> */}
             <Tab
               value="applications"
@@ -243,11 +325,7 @@ function HomeComponent(props: HomeComponentProps) {
                   <Typography>{t('Applications')}</Typography>
                 </>
               }
-              sx={{
-                flexDirection: 'row',
-                gap: 1,
-                fontSize: '1.25rem',
-              }}
+              sx={homeTabSx}
             />
             {Object.values(pluginTabs).map(tab => (
               <Tab
@@ -259,11 +337,7 @@ function HomeComponent(props: HomeComponentProps) {
                     <Typography>{tab.label}</Typography>
                   </>
                 }
-                sx={{
-                  flexDirection: 'row',
-                  gap: 1,
-                  fontSize: '1.25rem',
-                }}
+                sx={homeTabSx}
               />
             ))}
           </Tabs>

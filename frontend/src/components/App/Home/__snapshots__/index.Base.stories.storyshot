@@ -36,6 +36,20 @@
               class="MuiBox-root css-1txv3mw"
             >
               <div
+                class="MuiBox-root css-1f4i7zw"
+              >
+                <div
+                  class="MuiBox-root css-zrzfax"
+                >
+                  3 clusters
+                </div>
+                <div
+                  class="MuiBox-root css-1788bww"
+                >
+                  0 connected
+                </div>
+              </div>
+              <div
                 class="MuiBox-root css-1fkybvm"
               >
                 <div
@@ -51,7 +65,7 @@
                     >
                       <button
                         aria-selected="true"
-                        class="MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary Mui-selected css-mn9ohw-MuiButtonBase-root-MuiTab-root"
+                        class="MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary Mui-selected css-z5tcw-MuiButtonBase-root-MuiTab-root"
                         role="tab"
                         tabindex="0"
                         type="button"
@@ -67,7 +81,7 @@
                       </button>
                       <button
                         aria-selected="false"
-                        class="MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-mn9ohw-MuiButtonBase-root-MuiTab-root"
+                        class="MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-z5tcw-MuiButtonBase-root-MuiTab-root"
                         role="tab"
                         tabindex="-1"
                         type="button"
@@ -83,7 +97,7 @@
                       </button>
                     </div>
                     <span
-                      class="MuiTabs-indicator css-1s2zz1g-MuiTabs-indicator"
+                      class="MuiTabs-indicator css-slqmv2-MuiTabs-indicator"
                       style="left: 0px; width: 0px;"
                     />
                   </div>
@@ -221,7 +235,7 @@
                 </div>
               </div>
               <table
-                class="MuiTable-root css-glzsab-MuiTable-root"
+                class="MuiTable-root css-mls80e-MuiTable-root"
                 style="grid-template-columns: 44px 2fr 1fr 1fr 1fr 1fr min-content;"
               >
                 <thead
@@ -752,7 +766,7 @@
                   class="css-1obf64m"
                 >
                   <tr
-                    class="css-1ospngb"
+                    class="css-ze0kvz"
                     data-selected="false"
                   >
                     <td
@@ -864,7 +878,7 @@
                     </td>
                   </tr>
                   <tr
-                    class="css-1ospngb"
+                    class="css-ze0kvz"
                     data-selected="false"
                   >
                     <td
@@ -976,7 +990,7 @@
                     </td>
                   </tr>
                   <tr
-                    class="css-1ospngb"
+                    class="css-ze0kvz"
                     data-selected="false"
                   >
                     <td
