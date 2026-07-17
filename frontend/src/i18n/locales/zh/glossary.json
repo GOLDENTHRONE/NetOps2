@@ -1,12 +1,12 @@
 {
   "Kubernetes Version": "Kubernetes 版本",
-  "Clusters": "",
   "Cluster": "集群",
   "Cluster selector": "集群选择器",
   "Namespace": "命名空间",
   "Git Commit": "Git Commit",
   "Roles": "角色",
   "Role Bindings": "角色绑定",
+  "Clusters": "",
   "Memory": "内存",
   "CPU": "CPU",
   "Pods": "Pods",

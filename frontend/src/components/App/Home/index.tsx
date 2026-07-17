@@ -15,7 +15,7 @@
  */
 
 import { Icon } from '@iconify/react';
-import { alpha, Box, Tab, Tabs, Typography, useTheme } from '@mui/material';
+import { Box, Tab, Tabs, Typography } from '@mui/material';
 import { isEqual } from 'lodash';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -31,7 +31,6 @@ import { useTypedSelector } from '../../../redux/hooks';
 import ApplicationList from '../../applications/ApplicationList';
 import { PageGrid } from '../../common/Resource';
 import SectionBox from '../../common/SectionBox';
-import { LightTooltip } from '../../common/Tooltip';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterTable from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
@@ -115,138 +114,6 @@ function useWarningSettingsPerCluster(clusterNames: string[]) {
 }
 
 const NO_PLUGIN_TABS: HomeTabsState['tabs'] = {};
-
-/** One cluster's condensed status for the overview popover. */
-interface ClusterStatusRow {
-  name: string;
-  /** 'ok' = connected and reachable, 'bad' = connected but erroring, 'pending' = not connected yet. */
-  state: 'ok' | 'bad' | 'pending';
-}
-
-/** How many clusters to name in the popover before collapsing into "+N more". */
-const MAX_POPOVER_CLUSTERS = 8;
-
-/**
- * The clusters status pill that sits where the page title used to be: a single
- * chip whose dot is green when every cluster is reachable and red when any is
- * not. Hovering reveals a compact, informative overview — totals, a
- * reachable/unreachable/connecting breakdown, and the first several clusters
- * with their individual status — so many clusters stay legible at a glance.
- * Built entirely from data the page already has, so it costs no extra requests.
- */
-function ClustersOverviewChip({ rows }: { rows: ClusterStatusRow[] }) {
-  const theme = useTheme();
-  const { t } = useTranslation(['translation', 'glossary']);
-  const homeStatus = (theme.palette as { home?: { status: Record<string, string> } }).home?.status;
-  const okColor = homeStatus?.success ?? theme.palette.success.main;
-  const badColor = homeStatus?.error ?? theme.palette.error.main;
-  const pendingColor = theme.palette.text.secondary;
-
-  const total = rows.length;
-  const okCount = rows.filter(r => r.state === 'ok').length;
-  const badCount = rows.filter(r => r.state === 'bad').length;
-  const pendingCount = rows.filter(r => r.state === 'pending').length;
-
-  // Green only when every cluster is reachable; red as soon as one is not.
-  const allGood = total > 0 && badCount === 0 && pendingCount === 0;
-  const dotColor = total === 0 ? pendingColor : allGood ? okColor : badColor;
-
-  const stateColor = (state: ClusterStatusRow['state']) =>
-    state === 'ok' ? okColor : state === 'bad' ? badColor : pendingColor;
-  const stateLabel = (state: ClusterStatusRow['state']) =>
-    state === 'ok'
-      ? t('translation|Reachable')
-      : state === 'bad'
-      ? t('translation|Unreachable')
-      : t('translation|Connecting…');
-
-  const shown = rows.slice(0, MAX_POPOVER_CLUSTERS);
-  const hidden = rows.length - shown.length;
-
-  const popover = (
-    <Box sx={{ p: 0.5, minWidth: 220, maxWidth: 320 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-        {t('glossary|Clusters')} · {total}
-      </Typography>
-      <Box sx={{ display: 'flex', gap: 1.5, mb: 1, flexWrap: 'wrap' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <StatusDot color={okColor} />
-          <Typography variant="caption">
-            {t('translation|{{ count }} reachable', { count: okCount })}
-          </Typography>
-        </Box>
-        {badCount > 0 && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <StatusDot color={badColor} />
-            <Typography variant="caption">
-              {t('translation|{{ count }} unreachable', { count: badCount })}
-            </Typography>
-          </Box>
-        )}
-        {pendingCount > 0 && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <StatusDot color={pendingColor} />
-            <Typography variant="caption">
-              {t('translation|{{ count }} connecting', { count: pendingCount })}
-            </Typography>
-          </Box>
-        )}
-      </Box>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-        {shown.map(row => (
-          <Box key={row.name} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-            <StatusDot color={stateColor(row.state)} />
-            <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap>
-              {row.name}
-            </Typography>
-            <Typography variant="caption" sx={{ color: stateColor(row.state), fontWeight: 600 }}>
-              {stateLabel(row.state)}
-            </Typography>
-          </Box>
-        ))}
-        {hidden > 0 && (
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
-            {t('translation|+{{ count }} more', { count: hidden })}
-          </Typography>
-        )}
-      </Box>
-    </Box>
-  );
-
-  return (
-    <LightTooltip title={popover} interactive placement="bottom-start">
-      <Box
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.75,
-          px: 1.25,
-          py: 0.5,
-          borderRadius: '999px',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: 'default',
-          color: theme.palette.text.primary,
-          backgroundColor: alpha(theme.palette.text.primary, 0.06),
-        }}
-      >
-        <Icon icon="mdi:hexagon-multiple-outline" width={18} color={dotColor} />
-        {t('translation|{{ count }} clusters', { count: total })}
-        <StatusDot color={dotColor} />
-      </Box>
-    </LightTooltip>
-  );
-}
-
-/** A small filled status dot. */
-function StatusDot({ color }: { color: string }) {
-  return (
-    <Box
-      component="span"
-      sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }}
-    />
-  );
-}
 
 /** Shared styling for the Home tab buttons: compact, modern, no shouting. */
 const homeTabSx = {
@@ -345,35 +212,11 @@ function HomeComponent(props: HomeComponentProps) {
     ]
   );
 
-  const clusterStatusRows: ClusterStatusRow[] = React.useMemo(
-    () =>
-      allClusterNames
-        .map(name => {
-          let state: ClusterStatusRow['state'];
-          if (!connectedClusters.has(name)) {
-            state = 'pending';
-          } else if (errors?.[name]) {
-            state = 'bad';
-          } else if (versions?.[name]) {
-            state = 'ok';
-          } else {
-            state = 'pending';
-          }
-          return { name, state };
-        })
-        .sort((a, b) => a.name.localeCompare(b.name)),
-    [allClusterNames, connectedClusters, errors, versions]
-  );
-
   return (
     <PageGrid>
       {/* No page title: the Home view is already reached via the sidebar, so a
-          redundant "Home" heading only wastes vertical space. A compact
-          clusters-status pill takes its place. */}
+          redundant "Home" heading only wastes vertical space. */}
       <SectionBox headerProps={{ headerStyle: 'main' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1.5 }}>
-          <ClustersOverviewChip rows={clusterStatusRows} />
-        </Box>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
           <Tabs
             value={effectiveView}

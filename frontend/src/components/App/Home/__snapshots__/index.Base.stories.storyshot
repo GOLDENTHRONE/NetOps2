@@ -16,19 +16,6 @@
               class="MuiBox-root css-1txv3mw"
             >
               <div
-                class="MuiBox-root css-l69qyb"
-              >
-                <div
-                  class="MuiBox-root css-1gvktxj"
-                  data-mui-internal-clone-element="true"
-                >
-                  3 clusters
-                  <span
-                    class="MuiBox-root css-1myd7v"
-                  />
-                </div>
-              </div>
-              <div
                 class="MuiBox-root css-1fkybvm"
               >
                 <div
@@ -853,7 +840,6 @@
                           class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
                         />
                       </button>
-                      <div />
                     </td>
                   </tr>
                   <tr
@@ -965,7 +951,6 @@
                           class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
                         />
                       </button>
-                      <div />
                     </td>
                   </tr>
                   <tr
@@ -1077,7 +1062,6 @@
                           class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
                         />
                       </button>
-                      <div />
                     </td>
                   </tr>
                 </tbody>
