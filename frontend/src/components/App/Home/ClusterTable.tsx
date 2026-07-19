@@ -50,7 +50,8 @@ import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
   getConditionTooltip,
-  isClusterInventoryCluster,
+  // isClusterInventoryCluster is only used by the commented-out getOrigin below.
+  // isClusterInventoryCluster,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 import { canSelectCluster } from './clusterStatus';
@@ -243,12 +244,12 @@ export default function ClusterTable({
     [setColumnFilters]
   );
 
-  /**
-   * Gets the origin of a cluster.
+  /*
+   * Gets the origin of a cluster. Kept for when the Origin column is restored
+   * (the column is commented out above).
    *
    * @param cluster
    * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
-   */
   function getOrigin(cluster: Cluster): string {
     if (cluster?.meta_data?.source === 'kubeconfig') {
       const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
@@ -262,6 +263,7 @@ export default function ClusterTable({
     }
     return t('translation|Unknown');
   }
+  */
 
   const viewClusters = t('View Clusters');
 
@@ -342,14 +344,15 @@ export default function ClusterTable({
             );
           },
         },
-        {
-          id: 'origin',
-          header: t('Origin'),
-          accessorFn: cluster => getOrigin(cluster),
-          Cell: ({ row: { original } }) => (
-            <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
-          ),
-        },
+        // Origin column intentionally hidden for now (kept for easy restore).
+        // {
+        //   id: 'origin',
+        //   header: t('Origin'),
+        //   accessorFn: cluster => getOrigin(cluster),
+        //   Cell: ({ row: { original } }) => (
+        //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
+        //   ),
+        // },
         {
           id: 'status',
           header: t('Status'),

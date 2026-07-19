@@ -16,11 +16,15 @@
 
 import { Icon } from '@iconify/react';
 import {
+  alpha,
   Autocomplete,
   Box,
   Checkbox,
+  Divider,
+  Popover,
   Skeleton,
   TextField,
+  Theme,
   Tooltip,
   Typography,
   useTheme,
@@ -28,10 +32,16 @@ import {
 import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
-import { StatusLabel } from '../common/Label';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
-import { getHealthIcon, getResourcesHealth } from '../project/projectUtils';
+import {
+  AppHealth,
+  AppHealthStatus,
+  evaluateApplicationHealth,
+  healthSortRank,
+  WorkloadHealth,
+  WorkloadState,
+} from './applicationHealth';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
 import { groupResourcesByApplication, useAllApplicationResources } from './useApplicationResources';
 import { useApplicationDefinitions } from './useApplications';
@@ -180,41 +190,168 @@ function ApplicationsAutocomplete({
   );
 }
 
-/** Precomputed per-application resource numbers, derived once per data batch. */
-interface AppResourcesSummary {
+/** Precomputed per-application numbers + health, derived once per data batch. */
+interface AppSummary {
   count: number;
-  error: number;
-  warning: number;
-  success: number;
+  health: AppHealth;
 }
 
 /**
- * A table row: an application plus its (progressively arriving) resource
- * summary. The summary is carried IN the row data — not read from a closure —
- * so that when more resources arrive the row object changes identity and the
- * table recomputes the Resources/Health cells. Reading it from a closure kept
- * the memoized cells frozen on their first (skeleton) value until an unrelated
+ * A table row: an application plus its (progressively arriving) summary. The
+ * summary is carried IN the row data — not read from a closure — so that when
+ * more resources arrive the row object changes identity and the table
+ * recomputes the Resources/Health cells. Reading it from a closure kept the
+ * memoized cells frozen on their first (skeleton) value until an unrelated
  * remount, which is what made the columns look stuck.
  */
 interface AppRow extends ApplicationDefinition {
-  summary?: AppResourcesSummary;
+  summary?: AppSummary;
   resourcesLoading: boolean;
 }
 
+/** How each application-health verdict reads: color, icon and tone. */
+const HEALTH_PRESENTATION: Record<AppHealthStatus, { icon: string; color: (t: Theme) => string }> =
+  {
+    healthy: { icon: 'mdi:check-circle', color: t => t.palette.success.main },
+    progressing: { icon: 'mdi:progress-clock', color: t => t.palette.info.main },
+    degraded: { icon: 'mdi:alert', color: t => t.palette.warning.main },
+    unhealthy: { icon: 'mdi:alert-circle', color: t => t.palette.error.main },
+    idle: { icon: 'mdi:pause-circle-outline', color: t => t.palette.text.secondary },
+    noWorkloads: { icon: 'mdi:cube-outline', color: t => t.palette.text.secondary },
+    empty: { icon: 'mdi:help-circle-outline', color: t => t.palette.text.disabled },
+  };
+
+/** Per-workload state colors, for the little status dots in the popover. */
+const WORKLOAD_STATE_COLOR: Record<WorkloadState, (t: Theme) => string> = {
+  ready: t => t.palette.success.main,
+  progressing: t => t.palette.info.main,
+  degraded: t => t.palette.warning.main,
+  down: t => t.palette.error.main,
+  scaledZero: t => t.palette.text.disabled,
+};
+
+/** One workload's row in the health popover. */
+function WorkloadRow({ w }: { w: WorkloadHealth }) {
+  const theme = useTheme();
+  const color = WORKLOAD_STATE_COLOR[w.state](theme);
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}>
+      <Box
+        component="span"
+        sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }}
+      />
+      <Typography variant="caption" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {w.kind}
+      </Typography>
+      <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap title={w.name}>
+        {w.name}
+      </Typography>
+      <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {w.reason ?? `${w.ready}/${w.desired}`}
+      </Typography>
+    </Box>
+  );
+}
+
 /**
- * Sortable health rank: unhealthy first when sorting ascending, so "sort by
- * health" surfaces the problems. -1 means the data hasn't arrived yet — the
- * value changing from -1 to a real rank is also what tells the memoized table
- * cells to re-render once the resource lists arrive.
+ * The Health cell: a color-coded chip that, on click, opens a popover
+ * explaining *why* the application is Healthy / Degraded / Unhealthy / etc.,
+ * from the real workload readiness — so an operator gets the reasoning, not
+ * just a colored word.
  */
-function healthRank(summary: AppResourcesSummary | undefined, loading: boolean): number {
-  if (!summary) {
-    return loading ? -1 : 3;
+function HealthCell({ health, loading }: { health?: AppHealth; loading: boolean }) {
+  const theme = useTheme();
+  const { t } = useTranslation(['translation']);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+
+  if (!health && loading) {
+    return <Skeleton variant="text" width={110} />;
   }
-  if (summary.error > 0) return 0;
-  if (summary.warning > 0) return 1;
-  if (summary.count > 0) return 2;
-  return 3; // No resources.
+  if (!health) {
+    return null;
+  }
+
+  const p = HEALTH_PRESENTATION[health.status];
+  const color = p.color(theme);
+  const problems = health.workloads.filter(w => w.state !== 'ready' && w.state !== 'scaledZero');
+
+  return (
+    <>
+      <Tooltip title={t('translation|Click to see why')}>
+        <Box
+          component="button"
+          type="button"
+          onClick={e => setAnchorEl(e.currentTarget)}
+          aria-label={t('translation|Show health details')}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0.5,
+            px: 1,
+            py: '3px',
+            border: 'none',
+            borderRadius: '999px',
+            cursor: 'pointer',
+            fontSize: '0.8125rem',
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            color,
+            backgroundColor: alpha(color, 0.12),
+            '&:hover': { backgroundColor: alpha(color, 0.22) },
+          }}
+        >
+          <Icon icon={p.icon} width={16} height={16} />
+          {health.label}
+        </Box>
+      </Tooltip>
+      <Popover
+        open={!!anchorEl}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { p: 1.5, maxWidth: 380, minWidth: 260 } } }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+          <Icon icon={p.icon} width={20} height={20} color={color} />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
+            {health.label}
+          </Typography>
+        </Box>
+        <Typography variant="body2" color="text.secondary">
+          {health.summary}
+        </Typography>
+
+        {health.totalWorkloads > 0 && (
+          <>
+            <Divider sx={{ my: 1 }} />
+            <Typography variant="caption" sx={{ fontWeight: 700 }}>
+              {t('translation|{{ ready }}/{{ total }} workloads ready', {
+                ready: health.readyWorkloads,
+                total: health.totalWorkloads,
+              })}
+            </Typography>
+            <Box sx={{ mt: 0.5 }}>
+              {(problems.length > 0 ? problems : health.workloads).slice(0, 8).map(w => (
+                <WorkloadRow key={`${w.kind}/${w.namespace}/${w.name}`} w={w} />
+              ))}
+            </Box>
+          </>
+        )}
+
+        {health.status === 'noWorkloads' && (
+          <>
+            <Divider sx={{ my: 1 }} />
+            <Typography variant="caption" color="text.secondary">
+              {t('translation|{{ count }} resource(s), none of them workloads that run pods.', {
+                count: health.totalResources,
+              })}
+            </Typography>
+          </>
+        )}
+      </Popover>
+    </>
+  );
 }
 
 export default function ApplicationList() {
@@ -232,19 +369,17 @@ export default function ApplicationList() {
     isLoading: resourcesLoading,
   } = useAllApplicationResources();
 
-  // Roll the resources up into one small summary per application, once per
-  // data batch, so table cells render from plain numbers instead of
-  // recomputing health over the full resource list on every render.
+  // Roll the resources up into one summary per application, once per data
+  // batch: the resource count and a workload-based health verdict (see
+  // applicationHealth). Cells then render from this instead of recomputing on
+  // every render.
   const summaries = useMemo(() => {
     const byApp = groupResourcesByApplication(allResources);
-    const out = new Map<string, AppResourcesSummary>();
+    const out = new Map<string, AppSummary>();
     for (const [appId, items] of byApp) {
-      const health = getResourcesHealth(items);
       out.set(appId, {
         count: items.length,
-        error: health.error ?? 0,
-        warning: health.warning ?? 0,
-        success: health.success ?? 0,
+        health: evaluateApplicationHealth(items.map(i => i.jsonData)),
       });
     }
     return out;
@@ -301,34 +436,12 @@ export default function ApplicationList() {
         id: 'health',
         header: t('translation|Health'),
         gridTemplate: 'min-content',
-        // A sortable rank (problems first) that also drives cell re-renders.
-        accessorFn: app => healthRank(app.summary, app.resourcesLoading),
-        Cell: ({ row: { original } }) => {
-          const summary = original.summary;
-          if (!summary && original.resourcesLoading) {
-            return <Skeleton variant="text" width={96} />;
-          }
-          const error = summary?.error ?? 0;
-          const warning = summary?.warning ?? 0;
-          const success = summary?.success ?? 0;
-          return (
-            <StatusLabel status={error > 0 ? 'error' : warning > 0 ? 'warning' : 'success'}>
-              <Icon
-                icon={getHealthIcon(success, error, warning)}
-                style={{
-                  fontSize: 24,
-                }}
-              />
-              {!summary || summary.count === 0
-                ? t('translation|No Resources')
-                : error > 0
-                ? t('translation|Unhealthy')
-                : warning > 0
-                ? t('translation|Degraded')
-                : t('translation|Healthy')}
-            </StatusLabel>
-          );
-        },
+        // A sortable rank (problems first) that also drives cell re-renders as
+        // health changes; -1 while loading.
+        accessorFn: app => healthSortRank(app.summary?.health, app.resourcesLoading),
+        Cell: ({ row: { original } }) => (
+          <HealthCell health={original.summary?.health} loading={original.resourcesLoading} />
+        ),
       },
       {
         id: 'clusters',
