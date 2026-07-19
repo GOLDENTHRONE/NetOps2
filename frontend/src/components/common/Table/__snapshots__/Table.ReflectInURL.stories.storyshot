@@ -148,7 +148,7 @@
         </div>
       </div>
       <table
-        class="MuiTable-root css-1xlqsy-MuiTable-root"
+        class="MuiTable-root css-17uf3zv-MuiTable-root"
         style="grid-template-columns: 1fr 1fr 1fr;"
       >
         <thead
@@ -211,7 +211,7 @@
                   class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                 >
                   <button
-                    aria-label="Move"
+                    aria-label="Drag column"
                     class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                     data-mui-internal-clone-element="true"
                     draggable="true"
@@ -282,7 +282,7 @@
                   class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                 >
                   <button
-                    aria-label="Move"
+                    aria-label="Drag column"
                     class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                     data-mui-internal-clone-element="true"
                     draggable="true"
@@ -353,7 +353,7 @@
                   class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                 >
                   <button
-                    aria-label="Move"
+                    aria-label="Drag column"
                     class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                     data-mui-internal-clone-element="true"
                     draggable="true"

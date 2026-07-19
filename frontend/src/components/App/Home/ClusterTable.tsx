@@ -18,6 +18,7 @@ import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import Popover from '@mui/material/Popover';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import {
@@ -49,7 +50,6 @@ import ClusterContextMenu from './ClusterContextMenu';
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
-  getConditionTooltip,
   // isClusterInventoryCluster is only used by the commented-out getOrigin below.
   // isClusterInventoryCluster,
   STATUS_VARIANTS,
@@ -66,11 +66,78 @@ import { getCustomClusterNames } from './customClusterNames';
  * @param {Object} props - The component props.
  * @param {ApiError|null} [props.error] - The error object if there is an error with the cluster.
  */
+/**
+ * Builds the "what does this status mean, and why is it shown" explanation
+ * for the status popover, from the real probe result: the status text, a
+ * one-line meaning, the concrete evidence, and (when useful) a next step.
+ */
+function explainClusterStatus(
+  t: (key: string, options?: any) => string,
+  error: ApiError | null | undefined,
+  condition: ReturnType<typeof getClusterStatusInfo>['condition'],
+  version?: string
+): { meaning: string; evidence: string[]; nextStep?: string } {
+  if (condition?.status === 'False') {
+    return {
+      meaning: t(
+        'translation|The fleet inventory reports this cluster’s control plane as unhealthy, even if its API answers.'
+      ),
+      evidence: [condition.reason, condition.message, condition.lastTransitionTime].filter(
+        Boolean
+      ) as string[],
+      nextStep: t('translation|Check the control plane components (apiserver, etcd, scheduler).'),
+    };
+  }
+  if (error === null || error === undefined) {
+    return {
+      meaning: t(
+        'translation|Headlamp reached the API server and the credentials were accepted — the cluster is serving requests.'
+      ),
+      evidence: [
+        version
+          ? t('translation|Health probe (/version) succeeded: Kubernetes {{ version }}', {
+              version,
+            })
+          : t('translation|Health probe (/version) succeeded.'),
+      ],
+    };
+  }
+  if (error.status === 401) {
+    return {
+      meaning: t(
+        'translation|The API server answered but rejected the credentials (HTTP 401), so nothing can be read.'
+      ),
+      evidence: [error.message].filter(Boolean) as string[],
+      nextStep: t('translation|Refresh the kubeconfig credentials (the token may have expired).'),
+    };
+  }
+  if (error.status === 403) {
+    return {
+      meaning: t(
+        'translation|Authentication succeeded but RBAC denies access (HTTP 403) to what Headlamp needs.'
+      ),
+      evidence: [error.message].filter(Boolean) as string[],
+      nextStep: t('translation|Grant the user get/list permissions (a read-only ClusterRole).'),
+    };
+  }
+  return {
+    meaning: t(
+      'translation|The API server did not answer Headlamp’s health probe, so the cluster is unreachable from here.'
+    ),
+    evidence: [
+      error.status ? t('translation|HTTP status: {{ status }}', { status: error.status }) : '',
+      error.message,
+    ].filter(Boolean) as string[],
+    nextStep: t('translation|Check the endpoint, network/VPN and that the API server is up.'),
+  };
+}
+
 function ClusterStatus({
   error,
   cluster,
   isConnected,
   onConnect,
+  version,
 }: {
   error?: ApiError | null;
   cluster: Cluster;
@@ -78,9 +145,12 @@ function ClusterStatus({
   isConnected: boolean;
   /** Connect to the cluster on demand so its status is loaded. */
   onConnect: (clusterName: string) => void;
+  /** The cluster's Kubernetes gitVersion, when known (evidence for Active). */
+  version?: string;
 }) {
   const { t } = useTranslation(['translation']);
   const theme = useTheme();
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const customStatuses = useTypedSelector(state => state.clusterProvider.clusterStatuses);
   const renderedCustomStatus = useMemo(() => {
     for (const Status of customStatuses) {
@@ -119,40 +189,92 @@ function ClusterStatus({
   // ambiguous "⋯".
   if (isConnected && error === undefined) {
     return (
-      <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
-        <CircularProgress size={14} />
-        <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
-          {t('translation|Connecting…')}
-        </Typography>
-      </Box>
+      <LightTooltip title={t('translation|Waiting for the first health probe to answer.')}>
+        <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
+          <CircularProgress size={14} />
+          <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
+            {t('translation|Connecting…')}
+          </Typography>
+        </Box>
+      </LightTooltip>
     );
   }
 
   const { kind, text, condition } = getClusterStatusInfo(cluster, error, t);
   const variant = STATUS_VARIANTS[kind];
   const color = theme.palette.home.status[variant.colorKey];
-  const tooltip = condition ? getConditionTooltip(condition) : '';
-  const statusContent = (
-    <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
-      <Icon icon={variant.icon} width={16} color={color} />
-      <Typography
-        variant="body2"
-        style={{
-          marginLeft: theme.spacing(1),
-          color: variant.coloredText ? color : undefined,
-        }}
-      >
-        {text}
-      </Typography>
-    </Box>
-  );
+  const explanation = explainClusterStatus(t, error, condition, version);
 
-  return tooltip ? (
-    <LightTooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tooltip}</span>}>
-      {statusContent}
-    </LightTooltip>
-  ) : (
-    statusContent
+  return (
+    <>
+      <LightTooltip title={t('translation|Click to see')}>
+        <Box
+          component="button"
+          type="button"
+          onClick={e => setAnchorEl(e.currentTarget)}
+          aria-label={t('translation|Show status details')}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            width: 'fit-content',
+            border: 'none',
+            background: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          <Icon icon={variant.icon} width={16} color={color} />
+          <Typography
+            variant="body2"
+            style={{
+              marginLeft: theme.spacing(1),
+              color: variant.coloredText ? color : undefined,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {text}
+          </Typography>
+        </Box>
+      </LightTooltip>
+      <Popover
+        open={!!anchorEl}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { p: 1.5, maxWidth: 360, minWidth: 240 } } }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+          <Icon icon={variant.icon} width={18} color={color} />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
+            {text}
+          </Typography>
+        </Box>
+        <Typography variant="body2" color="text.secondary">
+          {explanation.meaning}
+        </Typography>
+        {explanation.evidence.length > 0 && (
+          <Box sx={{ mt: 1 }}>
+            {explanation.evidence.map(line => (
+              <Typography
+                key={line}
+                variant="caption"
+                component="div"
+                sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}
+              >
+                {line}
+              </Typography>
+            ))}
+          </Box>
+        )}
+        {explanation.nextStep && (
+          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
+            → {explanation.nextStep}
+          </Typography>
+        )}
+      </Popover>
+    </>
   );
 }
 
@@ -368,6 +490,7 @@ export default function ClusterTable({
               cluster={original}
               isConnected={isClusterConnected(original.name)}
               onConnect={onConnectCluster ?? (() => {})}
+              version={versions[original.name]?.gitVersion}
             />
           ),
         },

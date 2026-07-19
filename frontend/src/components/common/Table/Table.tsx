@@ -431,7 +431,11 @@ export default function Table<RowItem extends Record<string, any>>({
       columnSizingInfoRef.current = next;
       setColumnSizingInfo(next);
     },
-    localization: tableLocalizationMap[i18n.language],
+    localization: {
+      ...tableLocalizationMap[i18n.language],
+      // The column grab handle's tooltip; MRT's default reads just "Move".
+      move: t('Drag column'),
+    },
     autoResetAll: false,
     icons: {
       ...tableProps.icons,
@@ -601,6 +605,14 @@ export default function Table<RowItem extends Record<string, any>>({
         if (typeof gridTemplate === 'number') {
           return `${gridTemplate}fr`;
         }
+        // 'min-content' used to size the track to the longest WORD, which
+        // wrapped short labels (e.g. "No workloads" broke onto two lines) even
+        // with plenty of table width to spare. Give such columns their full
+        // one-line width when space allows, while still letting them shrink
+        // back to min-content when the user squeezes the table.
+        if (gridTemplate === 'min-content') {
+          return 'minmax(min-content, max-content)';
+        }
         return gridTemplate ?? '1fr';
       })
       .join(' ');
@@ -749,15 +761,24 @@ export default function Table<RowItem extends Record<string, any>>({
             // revealed only when the header is hovered — like the reference —
             // so the header stays clean but reordering is still discoverable.
             // It keeps interactivity while hidden (opacity, not display), so
-            // drag still works.
+            // drag still works. The right margin moves the grip out from under
+            // the absolutely-positioned resize strip, which otherwise
+            // intercepts the pointer and swallows the grip's tooltip/drag.
             '& .Mui-TableHeadCell-Content-Actions': {
               opacity: 0,
               transition: 'opacity 0.15s ease',
+              marginRight: '10px',
             },
             '& th:hover .Mui-TableHeadCell-Content-Actions, & th:focus-within .Mui-TableHeadCell-Content-Actions':
               {
                 opacity: 1,
               },
+            // Keep the resize strip to a slim edge zone so it never covers the
+            // grip; it remains easy to hit at the column boundary itself.
+            '& .Mui-TableHeadCell-ResizeHandle-Wrapper': {
+              paddingLeft: '1px',
+              paddingRight: '1px',
+            },
           }}
         >
           <TableHead sx={{ display: 'contents' }}>
