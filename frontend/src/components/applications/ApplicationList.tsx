@@ -22,7 +22,6 @@ import {
   Checkbox,
   Divider,
   Popover,
-  Skeleton,
   TextField,
   Theme,
   Tooltip,
@@ -31,6 +30,7 @@ import {
 } from '@mui/material';
 import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { KubeObject } from '../../lib/k8s/KubeObject';
 import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
@@ -194,6 +194,44 @@ function ApplicationsAutocomplete({
 interface AppSummary {
   count: number;
   health: AppHealth;
+  /** Workload KubeObjects by "kind/namespace/name", for links in the popover. */
+  workloadObjects: Map<string, KubeObject>;
+}
+
+/**
+ * The three-dot pulse used by Headlamp's splash screen, as an inline loading
+ * indicator: quiet, familiar and lighter than skeleton bars.
+ */
+function LoadingDots({ size = 6 }: { size?: number }) {
+  const theme = useTheme();
+  return (
+    <Box
+      component="span"
+      aria-label="Loading"
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: `${size * 0.7}px`,
+        '@keyframes appLoadingDot': {
+          '0%, 80%, 100%': { opacity: 0.25, transform: 'scale(0.8)' },
+          '40%': { opacity: 1, transform: 'scale(1)' },
+        },
+        '& > span': {
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          backgroundColor: theme.palette.text.secondary,
+          animation: 'appLoadingDot 1.2s infinite ease-in-out',
+        },
+        '& > span:nth-of-type(2)': { animationDelay: '0.15s' },
+        '& > span:nth-of-type(3)': { animationDelay: '0.3s' },
+      }}
+    >
+      <span />
+      <span />
+      <span />
+    </Box>
+  );
 }
 
 /**
@@ -230,8 +268,12 @@ const WORKLOAD_STATE_COLOR: Record<WorkloadState, (t: Theme) => string> = {
   scaledZero: t => t.palette.text.disabled,
 };
 
-/** One workload's row in the health popover. */
-function WorkloadRow({ w }: { w: WorkloadHealth }) {
+/**
+ * One workload's row in the health popover. When the live KubeObject is known
+ * the name is a link straight to that resource's details page (the browser's
+ * Back button returns here), so "Job failed" is one click from the Job itself.
+ */
+function WorkloadRow({ w, kubeObject }: { w: WorkloadHealth; kubeObject?: KubeObject }) {
   const theme = useTheme();
   const color = WORKLOAD_STATE_COLOR[w.state](theme);
   return (
@@ -244,7 +286,9 @@ function WorkloadRow({ w }: { w: WorkloadHealth }) {
         {w.kind}
       </Typography>
       <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap title={w.name}>
-        {w.name}
+        {/* NOTE: no onClick here — Link treats onClick as "disable navigation".
+            The popover is unmounted by the route change itself. */}
+        {kubeObject ? <Link kubeObject={kubeObject}>{w.name}</Link> : w.name}
       </Typography>
       <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
         {w.reason ?? `${w.ready}/${w.desired}`}
@@ -259,13 +303,21 @@ function WorkloadRow({ w }: { w: WorkloadHealth }) {
  * from the real workload readiness — so an operator gets the reasoning, not
  * just a colored word.
  */
-function HealthCell({ health, loading }: { health?: AppHealth; loading: boolean }) {
+function HealthCell({
+  health,
+  loading,
+  workloadObjects,
+}: {
+  health?: AppHealth;
+  loading: boolean;
+  workloadObjects?: Map<string, KubeObject>;
+}) {
   const theme = useTheme();
   const { t } = useTranslation(['translation']);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   if (!health && loading) {
-    return <Skeleton variant="text" width={110} />;
+    return <LoadingDots />;
   }
   if (!health) {
     return null;
@@ -277,7 +329,7 @@ function HealthCell({ health, loading }: { health?: AppHealth; loading: boolean 
 
   return (
     <>
-      <Tooltip title={t('translation|Click to see why')}>
+      <Tooltip title={t('translation|Click to see')}>
         <Box
           component="button"
           type="button"
@@ -295,6 +347,7 @@ function HealthCell({ health, loading }: { health?: AppHealth; loading: boolean 
             fontSize: '0.8125rem',
             fontWeight: 600,
             fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
             color,
             backgroundColor: alpha(color, 0.12),
             '&:hover': { backgroundColor: alpha(color, 0.22) },
@@ -333,7 +386,11 @@ function HealthCell({ health, loading }: { health?: AppHealth; loading: boolean 
             </Typography>
             <Box sx={{ mt: 0.5 }}>
               {(problems.length > 0 ? problems : health.workloads).slice(0, 8).map(w => (
-                <WorkloadRow key={`${w.kind}/${w.namespace}/${w.name}`} w={w} />
+                <WorkloadRow
+                  key={`${w.kind}/${w.namespace}/${w.name}`}
+                  w={w}
+                  kubeObject={workloadObjects?.get(`${w.kind}/${w.namespace}/${w.name}`)}
+                />
               ))}
             </Box>
           </>
@@ -377,10 +434,17 @@ export default function ApplicationList() {
     const byApp = groupResourcesByApplication(allResources);
     const out = new Map<string, AppSummary>();
     for (const [appId, items] of byApp) {
-      out.set(appId, {
-        count: items.length,
-        health: evaluateApplicationHealth(items.map(i => i.jsonData)),
-      });
+      const health = evaluateApplicationHealth(items.map(i => i.jsonData));
+      // Keep the live KubeObjects of the evaluated workloads so the popover
+      // can link each one straight to its details page.
+      const workloadObjects = new Map<string, KubeObject>();
+      for (const item of items) {
+        const key = `${item.kind}/${item.metadata.namespace}/${item.metadata.name}`;
+        if (health.workloads.some(w => `${w.kind}/${w.namespace}/${w.name}` === key)) {
+          workloadObjects.set(key, item);
+        }
+      }
+      out.set(appId, { count: items.length, health, workloadObjects });
     }
     return out;
   }, [allResources]);
@@ -405,7 +469,9 @@ export default function ApplicationList() {
       {
         id: 'name',
         header: t('translation|Name'),
-        gridTemplate: 1.5,
+        // Size to the content: the name column no longer hoards flexible
+        // space (the Clusters column absorbs the leftover width instead).
+        gridTemplate: 'minmax(min-content, max-content)',
         accessorFn: app => app.id,
         // Single line: the cluster spread has its own column, and anything
         // that changes as clusters connect must not live in this cell (its
@@ -427,7 +493,7 @@ export default function ApplicationList() {
         Cell: ({ cell }) => {
           const value = cell.getValue<number>();
           if (value === -1) {
-            return <Skeleton variant="text" width={32} />;
+            return <LoadingDots />;
           }
           return value;
         },
@@ -440,12 +506,19 @@ export default function ApplicationList() {
         // health changes; -1 while loading.
         accessorFn: app => healthSortRank(app.summary?.health, app.resourcesLoading),
         Cell: ({ row: { original } }) => (
-          <HealthCell health={original.summary?.health} loading={original.resourcesLoading} />
+          <HealthCell
+            health={original.summary?.health}
+            loading={original.resourcesLoading}
+            workloadObjects={original.summary?.workloadObjects}
+          />
         ),
       },
       {
         id: 'clusters',
         header: t('glossary|Clusters'),
+        // The flexible column: it absorbs whatever width the content-sized
+        // columns leave over, so no column hoards empty space.
+        gridTemplate: 1,
         accessorFn: app => app.clusters.join(', '),
         Cell: ({ row: { original } }) => (
           // Each cluster redirects to that cluster's own overview page, the
@@ -535,20 +608,43 @@ export default function ApplicationList() {
 
       <ClusterGroupErrorMessage errors={[...errors, ...resourceErrors]} />
 
-      <Table
-        columns={columns}
-        data={tableData}
-        loading={isLoading}
-        filterFunction={filterFunction}
-        emptyMessage={t('translation|No applications found')}
-        // Stable per-application id. The row objects change as resources
-        // arrive (see AppRow), which is what makes the table recompute the
-        // Resources/Health cells; the id keeps sorting and selection stable.
-        getRowId={row => row.id}
-        initialState={{
-          sorting: [{ id: 'name', desc: false }],
-        }}
-      />
+      {isLoading ? (
+        // While the application list itself is loading, show the same quiet
+        // three-dot pulse as Headlamp's splash on a soft neutral surface,
+        // instead of a spinner — calmer and consistent with the app's opening.
+        <Box
+          sx={theme => ({
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 1.5,
+            minHeight: 260,
+            borderRadius: '10px',
+            backgroundColor: theme.palette.background.muted,
+          })}
+        >
+          <LoadingDots size={10} />
+          <Typography variant="body2" color="text.secondary">
+            {t('translation|Discovering applications…')}
+          </Typography>
+        </Box>
+      ) : (
+        <Table
+          columns={columns}
+          data={tableData}
+          loading={false}
+          filterFunction={filterFunction}
+          emptyMessage={t('translation|No applications found')}
+          // Stable per-application id. The row objects change as resources
+          // arrive (see AppRow), which is what makes the table recompute the
+          // Resources/Health cells; the id keeps sorting and selection stable.
+          getRowId={row => row.id}
+          initialState={{
+            sorting: [{ id: 'name', desc: false }],
+          }}
+        />
+      )}
     </>
   );
 }

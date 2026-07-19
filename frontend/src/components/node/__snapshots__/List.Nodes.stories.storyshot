@@ -172,8 +172,8 @@
             </div>
           </div>
           <table
-            class="MuiTable-root css-1xlqsy-MuiTable-root"
-            style="grid-template-columns: 44px auto min-content 1fr 1fr 1fr minmax(150px, .5fr) 1fr 1fr minmax(150px, .5fr) min-content minmax(150px, .5fr) 0.05fr;"
+            class="MuiTable-root css-17uf3zv-MuiTable-root"
+            style="grid-template-columns: 44px auto minmax(min-content, max-content) 1fr 1fr 1fr minmax(150px, .5fr) 1fr 1fr minmax(150px, .5fr) minmax(min-content, max-content) minmax(150px, .5fr) 0.05fr;"
           >
             <thead
               class="MuiTableHead-root css-1tmrira-MuiTableHead-root"
@@ -284,7 +284,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -355,7 +355,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -426,7 +426,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -497,7 +497,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -568,7 +568,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -639,7 +639,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -710,7 +710,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -781,7 +781,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -852,7 +852,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -923,7 +923,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
@@ -994,7 +994,7 @@
                       class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
                     >
                       <button
-                        aria-label="Move"
+                        aria-label="Drag column"
                         class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
                         data-mui-internal-clone-element="true"
                         draggable="true"
