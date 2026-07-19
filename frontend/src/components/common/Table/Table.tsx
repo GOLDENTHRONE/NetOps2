@@ -17,7 +17,7 @@
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
-import { useTheme } from '@mui/material/styles';
+import { Theme, useTheme } from '@mui/material/styles';
 import MuiTable from '@mui/material/Table';
 import { TableCellProps } from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
@@ -436,6 +436,10 @@ export default function Table<RowItem extends Record<string, any>>({
     icons: {
       ...tableProps.icons,
       MoreHorizIcon: () => <Icon icon="mdi:more-vert" />,
+      // The column reorder grip: a dotted grip (⠿) instead of the default
+      // horizontal-lines handle, matching the modern-table reference. It is
+      // revealed on header hover via CSS (see the table sx below).
+      DragHandleIcon: () => <Icon icon="mdi:drag-vertical" width="1.1rem" height="1.1rem" />,
     },
     onPaginationChange: (updater: any) => {
       if (!tableProps.data?.length) return;
@@ -741,6 +745,19 @@ export default function Table<RowItem extends Record<string, any>>({
               opacity: 1,
               color: `${theme.palette.primary.main} !important`,
             },
+            // The column-reorder grip (in the header cell's Actions box) is
+            // revealed only when the header is hovered — like the reference —
+            // so the header stays clean but reordering is still discoverable.
+            // It keeps interactivity while hidden (opacity, not display), so
+            // drag still works.
+            '& .Mui-TableHeadCell-Content-Actions': {
+              opacity: 0,
+              transition: 'opacity 0.15s ease',
+            },
+            '& th:hover .Mui-TableHeadCell-Content-Actions, & th:focus-within .Mui-TableHeadCell-Content-Actions':
+              {
+                opacity: 1,
+              },
           }}
         >
           <TableHead sx={{ display: 'contents' }}>
@@ -800,6 +817,27 @@ export default function Table<RowItem extends Record<string, any>>({
   );
 }
 
+/**
+ * Column ids that are frozen (sticky) to the right edge, so an actions column
+ * stays visible while the rest of the table scrolls horizontally — regardless
+ * of how many columns there are. Covers both the built-in row-actions column
+ * and any column a table explicitly names "actions".
+ */
+const STICKY_RIGHT_COLUMN_IDS = new Set(['actions', 'mrt-row-actions']);
+
+/** Sticky-right styling for a frozen column's header/body cell. */
+function stickyRightSx(theme: Theme, isHeader: boolean) {
+  return {
+    position: 'sticky' as const,
+    right: 0,
+    zIndex: isHeader ? 4 : 3,
+    // Opaque base so scrolled cells don't bleed through; the row-hover rule
+    // still tints the body cell on top of this.
+    backgroundColor: isHeader ? theme.palette.background.muted : theme.palette.background.paper,
+    borderLeft: `1px solid ${theme.palette.divider}`,
+  };
+}
+
 const MemoHeadCell = memo(
   <RowItem extends Record<string, any>>({
     header,
@@ -816,13 +854,17 @@ const MemoHeadCell = memo(
     draggingColumnId: string | null;
     hoveredColumnId: string | null;
   }) => {
+    const sticky = STICKY_RIGHT_COLUMN_IDS.has(header.column.id);
     return (
       <MRT_TableHeadCell
         header={header}
         key={header.id}
         staticColumnIndex={-1}
         table={table}
-        sx={theme => ({ borderColor: theme.palette.divider })}
+        sx={theme => ({
+          borderColor: theme.palette.divider,
+          ...(sticky ? stickyRightSx(theme, true) : {}),
+        })}
       />
     );
   },
@@ -881,6 +923,7 @@ const MemoCell = memo(
     canSelect?: boolean;
   }) => {
     const column = cell.column.columnDef as TableColumn<any, unknown>;
+    const sticky = STICKY_RIGHT_COLUMN_IDS.has(cell.column.id);
     return (
       <MRT_TableBodyCell
         staticRowIndex={-1}
@@ -894,6 +937,7 @@ const MemoCell = memo(
             minWidth: 'unset',
             wordBreak: column.gridTemplate === 'min-content' ? 'normal' : 'break-word',
             borderColor: theme.palette.divider,
+            ...(sticky ? stickyRightSx(theme, false) : {}),
             ...(column.muiTableBodyCellProps as TableCellProps)?.sx,
           } as any)
         }

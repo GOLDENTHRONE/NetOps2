@@ -201,8 +201,8 @@
                 </div>
               </div>
               <table
-                class="MuiTable-root css-1friph-MuiTable-root"
-                style="grid-template-columns: 44px 2fr 1fr 1fr 1fr 1fr min-content;"
+                class="MuiTable-root css-1xlqsy-MuiTable-root"
+                style="grid-template-columns: 44px 2fr 1fr 1fr 1fr min-content;"
               >
                 <thead
                   class="MuiTableHead-root css-1tmrira-MuiTableHead-root"
@@ -319,102 +319,7 @@
                             draggable="true"
                             tabindex="0"
                             type="button"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-i4bv87-MuiSvgIcon-root"
-                              data-testid="DragHandleIcon"
-                              focusable="false"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M20 9H4v2h16zM4 15h16v-2H4z"
-                              />
-                            </svg>
-                          </button>
-                        </div>
-                        <div
-                          class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
-                        >
-                          <hr
-                            class="MuiDivider-root MuiDivider-fullWidth MuiDivider-vertical MuiDivider-flexItem Mui-TableHeadCell-ResizeHandle-Divider css-f5y87h-MuiDivider-root"
                           />
-                        </div>
-                      </div>
-                    </th>
-                    <th
-                      aria-sort="none"
-                      class="MuiTableCell-root MuiTableCell-head MuiTableCell-alignLeft MuiTableCell-sizeMedium css-4ks04s-MuiTableCell-root"
-                      colspan="1"
-                      data-can-sort="true"
-                      data-index="-1"
-                      scope="col"
-                    >
-                      <div
-                        class="Mui-TableHeadCell-Content MuiBox-root css-c8wlay"
-                      >
-                        <div
-                          class="Mui-TableHeadCell-Content-Labels MuiBox-root css-68rqdf"
-                        >
-                          <div
-                            class="Mui-TableHeadCell-Content-Wrapper MuiBox-root css-lapokc"
-                          >
-                            Origin
-                          </div>
-                          <span
-                            aria-label="Sort by Origin ascending"
-                            class="MuiBadge-root css-1c32n2y-MuiBadge-root"
-                            data-mui-internal-clone-element="true"
-                          >
-                            <span
-                              aria-label="Sort by Origin ascending"
-                              class="MuiButtonBase-root MuiTableSortLabel-root Mui-active css-542clt-MuiButtonBase-root-MuiTableSortLabel-root"
-                              role="button"
-                              tabindex="0"
-                            >
-                              <svg
-                                aria-hidden="true"
-                                class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium MuiTableSortLabel-icon MuiTableSortLabel-iconDirectionAsc css-1vweko9-MuiSvgIcon-root-MuiTableSortLabel-icon"
-                                data-testid="SyncAltIcon"
-                                focusable="false"
-                                style="transform: rotate(-90deg) scaleX(0.9) translateX(-1px);"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  d="m18 12 4-4-4-4v3H3v2h15zM6 12l-4 4 4 4v-3h15v-2H6z"
-                                />
-                              </svg>
-                            </span>
-                            <span
-                              class="MuiBadge-badge MuiBadge-standard MuiBadge-invisible MuiBadge-anchorOriginTopRight MuiBadge-anchorOriginTopRightCircular MuiBadge-overlapCircular css-dniquu-MuiBadge-badge"
-                            >
-                              0
-                            </span>
-                          </span>
-                        </div>
-                        <div
-                          class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
-                        >
-                          <button
-                            aria-label="Move"
-                            class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-1ibcb31-MuiButtonBase-root-MuiIconButton-root"
-                            data-mui-internal-clone-element="true"
-                            draggable="true"
-                            tabindex="0"
-                            type="button"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-i4bv87-MuiSvgIcon-root"
-                              data-testid="DragHandleIcon"
-                              focusable="false"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M20 9H4v2h16zM4 15h16v-2H4z"
-                              />
-                            </svg>
-                          </button>
                         </div>
                         <div
                           class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -485,19 +390,7 @@
                             draggable="true"
                             tabindex="0"
                             type="button"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-i4bv87-MuiSvgIcon-root"
-                              data-testid="DragHandleIcon"
-                              focusable="false"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M20 9H4v2h16zM4 15h16v-2H4z"
-                              />
-                            </svg>
-                          </button>
+                          />
                         </div>
                         <div
                           class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -568,19 +461,7 @@
                             draggable="true"
                             tabindex="0"
                             type="button"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-i4bv87-MuiSvgIcon-root"
-                              data-testid="DragHandleIcon"
-                              focusable="false"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M20 9H4v2h16zM4 15h16v-2H4z"
-                              />
-                            </svg>
-                          </button>
+                          />
                         </div>
                         <div
                           class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -651,19 +532,7 @@
                             draggable="true"
                             tabindex="0"
                             type="button"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-i4bv87-MuiSvgIcon-root"
-                              data-testid="DragHandleIcon"
-                              focusable="false"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M20 9H4v2h16zM4 15h16v-2H4z"
-                              />
-                            </svg>
-                          </button>
+                          />
                         </div>
                         <div
                           class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -676,7 +545,7 @@
                     </th>
                     <th
                       aria-sort="none"
-                      class="MuiTableCell-root MuiTableCell-head MuiTableCell-alignLeft MuiTableCell-sizeMedium css-113nv55-MuiTableCell-root"
+                      class="MuiTableCell-root MuiTableCell-head MuiTableCell-alignLeft MuiTableCell-sizeMedium css-54j6yw-MuiTableCell-root"
                       colspan="1"
                       data-index="-1"
                       scope="col"
@@ -703,19 +572,7 @@
                             draggable="true"
                             tabindex="0"
                             type="button"
-                          >
-                            <svg
-                              aria-hidden="true"
-                              class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium css-i4bv87-MuiSvgIcon-root"
-                              data-testid="DragHandleIcon"
-                              focusable="false"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                d="M20 9H4v2h16zM4 15h16v-2H4z"
-                              />
-                            </svg>
-                          </button>
+                          />
                         </div>
                         <div
                           class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -790,15 +647,6 @@
                       </span>
                     </td>
                     <td
-                      class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-                    >
-                      <p
-                        class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-                      >
-                        Unknown
-                      </p>
-                    </td>
-                    <td
                       class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
                     >
                       <div
@@ -825,7 +673,7 @@
                       class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
                     />
                     <td
-                      class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
+                      class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-1a1bmq4-MuiTableCell-root"
                     >
                       <button
                         aria-controls="context-menuid"
@@ -901,15 +749,6 @@
                       </span>
                     </td>
                     <td
-                      class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-                    >
-                      <p
-                        class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-                      >
-                        Unknown
-                      </p>
-                    </td>
-                    <td
                       class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
                     >
                       <div
@@ -936,7 +775,7 @@
                       class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
                     />
                     <td
-                      class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
+                      class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-1a1bmq4-MuiTableCell-root"
                     >
                       <button
                         aria-controls="context-menuid"
@@ -1012,15 +851,6 @@
                       </span>
                     </td>
                     <td
-                      class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-                    >
-                      <p
-                        class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-                      >
-                        Unknown
-                      </p>
-                    </td>
-                    <td
                       class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
                     >
                       <div
@@ -1047,7 +877,7 @@
                       class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
                     />
                     <td
-                      class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
+                      class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-1a1bmq4-MuiTableCell-root"
                     >
                       <button
                         aria-controls="context-menuid"
