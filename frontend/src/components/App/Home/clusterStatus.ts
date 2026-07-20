@@ -50,9 +50,7 @@ export function canSelectCluster(error?: ApiError | null) {
 export function getClusterStatusLabel(t: Translate, error?: ApiError | null) {
   const status = getClusterStatus(error);
   if (status === 'active') {
-    // Say what was actually verified instead of the vague "Active": the health
-    // probe reached the API server and the credentials were accepted.
-    return t('translation|API reachable');
+    return t('translation|Active');
   }
   if (status === 'auth-error') {
     return t('translation|Authentication required');

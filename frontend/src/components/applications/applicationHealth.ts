@@ -246,6 +246,28 @@ const PRESENTATION: Record<AppHealthStatus, { label: string; summary: string }> 
 };
 
 /**
+ * The actual technical reason behind a problem verdict — the real per-workload
+ * failures ("Deployment web: 0/3 replicas ready · Job migrate: Job failed")
+ * instead of a generic sentence. Falls back to the static summary for states
+ * that have nothing specific to say (idle, no workloads, empty, healthy).
+ */
+function buildSummary(status: AppHealthStatus, workloads: WorkloadHealth[]): string {
+  const problemStates: Record<string, WorkloadState[]> = {
+    unhealthy: ['down'],
+    degraded: ['degraded'],
+    progressing: ['progressing'],
+  };
+  const states = problemStates[status];
+  if (!states) {
+    return PRESENTATION[status].summary;
+  }
+  const problems = workloads.filter(w => states.includes(w.state));
+  const shown = problems.slice(0, 3).map(w => `${w.kind} ${w.name}: ${w.reason}`);
+  const more = problems.length - shown.length;
+  return shown.join(' · ') + (more > 0 ? ` · +${more} more` : '');
+}
+
+/**
  * Rolls an application's resources into one health verdict. Only workloads
  * count toward the verdict; config, services and RBAC are context, not health.
  */
@@ -279,7 +301,7 @@ export function evaluateApplicationHealth(resources: ResourceLike[]): AppHealth 
   return {
     status,
     label: PRESENTATION[status].label,
-    summary: PRESENTATION[status].summary,
+    summary: buildSummary(status, workloads),
     workloads,
     readyWorkloads,
     totalWorkloads: counted.length,

@@ -98,6 +98,13 @@ export function QuotaUsageBar({ name, used, hard }: { name: string; used: string
   );
 }
 
+/** A quota value in its human unit, e.g. "2000m (2)": raw plus normalized
+ * when they differ. */
+export function formatQuotaValue(name: string, value: string): string {
+  const normalizedUnit = normalizeUnit(name, value);
+  return compareUnits(value, normalizedUnit) ? normalizedUnit : `${value} (${normalizedUnit})`;
+}
+
 export function ResourceQuotaTable({
   resourceStats,
 }: {
@@ -119,21 +126,11 @@ export function ResourceQuotaTable({
         },
         {
           label: t('translation|Used'),
-          getter: item => {
-            const normalizedUnit = normalizeUnit(item.name, item.used);
-            return compareUnits(item.used, normalizedUnit)
-              ? normalizedUnit
-              : `${item.used} (${normalizedUnit})`;
-          },
+          getter: item => formatQuotaValue(item.name, item.used),
         },
         {
           label: t('translation|Hard'),
-          getter: item => {
-            const normalizedUnit = normalizeUnit(item.name, item.hard);
-            return compareUnits(item.hard, normalizedUnit)
-              ? normalizedUnit
-              : `${item.hard} (${normalizedUnit})`;
-          },
+          getter: item => formatQuotaValue(item.name, item.hard),
         },
         {
           label: t('translation|Usage'),
@@ -141,6 +138,39 @@ export function ResourceQuotaTable({
         },
       ]}
     />
+  );
+}
+
+/**
+ * A compact, vertically stacked quota view for narrow places (the Overview
+ * cards): one row per resource with "used / hard" and the usage bar under it.
+ * Unlike the 4-column table, nothing gets cut off at card widths.
+ */
+export function ResourceQuotaCompactList({
+  resourceStats,
+}: {
+  resourceStats: {
+    name: string;
+    hard: string;
+    used: string;
+  }[];
+}) {
+  return (
+    <Box>
+      {resourceStats.map(stat => (
+        <Box key={stat.name} sx={{ mb: 1.25 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
+            <Typography variant="body2" noWrap title={stat.name}>
+              {stat.name}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+              {formatQuotaValue(stat.name, stat.used)} / {formatQuotaValue(stat.name, stat.hard)}
+            </Typography>
+          </Box>
+          <QuotaUsageBar name={stat.name} used={stat.used} hard={stat.hard} />
+        </Box>
+      ))}
+    </Box>
   );
 }
 

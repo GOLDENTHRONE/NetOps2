@@ -15,6 +15,7 @@
  */
 
 import { Icon, IconifyIcon, IconProps } from '@iconify/react';
+import Button from '@mui/material/Button';
 import IconButton, { IconButtonProps } from '@mui/material/IconButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
@@ -22,7 +23,12 @@ import MenuItem from '@mui/material/MenuItem';
 import Tooltip from '@mui/material/Tooltip';
 import React from 'react';
 
-export type ButtonStyle = 'action' | 'menu';
+/**
+ * 'action' renders the classic icon button, 'menu' a menu item, and 'pill' a
+ * small labeled outlined button — for tables where a bare icon would leave
+ * the user guessing what the action does.
+ */
+export type ButtonStyle = 'action' | 'menu' | 'pill';
 
 export interface ActionButtonProps {
   /** A short description of the action. */
@@ -73,6 +79,29 @@ export default function ActionButton({
         </ListItemIcon>
         <ListItemText>{longDescription || description}</ListItemText>
       </MenuItem>
+    );
+  }
+  if (buttonStyle === 'pill') {
+    return (
+      <Button
+        size="small"
+        variant="outlined"
+        color="inherit"
+        onClick={onClick}
+        startIcon={<Icon icon={icon} color={color} width={width ?? 16} {...iconProps} />}
+        sx={{
+          borderRadius: '999px',
+          textTransform: 'none',
+          whiteSpace: 'nowrap',
+          py: 0,
+          px: 1.25,
+          borderColor: 'divider',
+          color: 'text.secondary',
+          fontWeight: 600,
+        }}
+      >
+        {description}
+      </Button>
     );
   }
   return (

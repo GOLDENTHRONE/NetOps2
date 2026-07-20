@@ -15,7 +15,17 @@
  */
 
 import { Icon } from '@iconify/react';
-import { alpha, Box, Divider, Popover, Theme, Tooltip, Typography, useTheme } from '@mui/material';
+import {
+  alpha,
+  Box,
+  Divider,
+  Popover,
+  Skeleton,
+  Theme,
+  Tooltip,
+  Typography,
+  useTheme,
+} from '@mui/material';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
@@ -212,8 +222,13 @@ export function ApplicationHealthChip({
   const { t } = useTranslation(['translation']);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
+  const medium = size === 'medium';
+  // One width for every pill (sized to the longest label, "No workloads"),
+  // so the Health column reads as a tidy rail instead of ragged chips.
+  const pillWidth = medium ? '9rem' : '8.25rem';
+
   if (!health && loading) {
-    return <LoadingDots />;
+    return <Skeleton variant="rounded" width={pillWidth} height={medium ? 28 : 24} />;
   }
   if (!health) {
     return null;
@@ -221,11 +236,10 @@ export function ApplicationHealthChip({
 
   const p = HEALTH_PRESENTATION[health.status];
   const color = p.color(theme);
-  const medium = size === 'medium';
 
   return (
     <>
-      <Tooltip title={t('translation|Click to see why')}>
+      <Tooltip title={t('translation|Click to see')}>
         <Box
           component="button"
           type="button"
@@ -234,7 +248,9 @@ export function ApplicationHealthChip({
           sx={{
             display: 'inline-flex',
             alignItems: 'center',
+            justifyContent: 'center',
             gap: 0.5,
+            width: pillWidth,
             px: medium ? 1.25 : 1,
             py: medium ? '5px' : '3px',
             border: 'none',
@@ -261,7 +277,19 @@ export function ApplicationHealthChip({
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{ paper: { sx: { p: 1.5, maxWidth: 380, minWidth: 260 } } }}
       >
-        <HealthBreakdown health={health} workloadObjects={workloadObjects} />
+        {/* Close on any link click: in drawer mode a link opens the details
+            side panel WITHOUT a route change, and a still-open modal popover
+            would keep its scroll lock + backdrop over the panel, freezing
+            scrolling and clicks. Capture phase, so the Link still navigates. */}
+        <Box
+          onClickCapture={e => {
+            if ((e.target as HTMLElement).closest('a')) {
+              setAnchorEl(null);
+            }
+          }}
+        >
+          <HealthBreakdown health={health} workloadObjects={workloadObjects} />
+        </Box>
       </Popover>
     </>
   );

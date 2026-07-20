@@ -67,12 +67,13 @@ interface HomeComponentProps {
 const maxWarnings = 50;
 
 function renderWarningsText(warnings: ReturnType<typeof useEventWarningList>, clusterName: string) {
-  // Returns '⋯' for both "not fetched yet" (warnings[clusterName] === undefined)
-  // and "query error". Callers that need to distinguish the two cases must check
-  // warnings[clusterName] directly.
-  const numWarnings = warnings[clusterName]?.error
-    ? -1
-    : warnings[clusterName]?.warnings?.length ?? -1;
+  // '⋯' means "still loading"; 'n/a' means the events query failed. The two
+  // used to share '⋯', which left a permanent fake loading indicator on
+  // clusters whose events cannot be read.
+  if (warnings[clusterName]?.error) {
+    return 'n/a';
+  }
+  const numWarnings = warnings[clusterName]?.warnings?.length ?? -1;
 
   if (numWarnings === -1) {
     return '⋯';
@@ -84,7 +85,13 @@ function renderWarningsText(warnings: ReturnType<typeof useEventWarningList>, cl
 }
 
 function useWarningSettingsPerCluster(clusterNames: string[]) {
-  const warningsMap = useEventWarningList(clusterNames);
+  // The cell only ever shows a count capped at maxWarnings ("50+"), so fetch
+  // at most that many warning events per cluster. The default limit (2000)
+  // pulled megabytes of event payloads per cluster just to render a number,
+  // which is what kept this column on its loading indicator for so long.
+  const warningsMap = useEventWarningList(clusterNames, {
+    queryParams: { limit: maxWarnings },
+  });
   const [warningLabels, setWarningLabels] = React.useState<{ [cluster: string]: string }>({});
 
   React.useEffect(() => {
