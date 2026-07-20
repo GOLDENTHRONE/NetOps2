@@ -37,11 +37,12 @@ import Link from '../common/Link';
 import SectionBox from '../common/SectionBox';
 import Table, { TableColumn } from '../common/Table/Table';
 import { ProjectResourcesTab, useResourceCategoriesList } from '../project/ProjectResourcesTab';
-import { getHealthIcon, getResourcesHealth } from '../project/projectUtils';
 import { ResourceCategoriesList } from '../project/ResourceCategoriesList';
 import { GraphFilter } from '../resourceMap/graph/graphFiltering';
 import { GraphView } from '../resourceMap/GraphView';
 import { ResourceQuotaTable } from '../resourceQuota/Details';
+import { evaluateApplicationHealth } from './applicationHealth';
+import { ApplicationHealthChip, buildWorkloadObjectsMap } from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
 import { useAllApplicationResources } from './useApplicationResources';
 import { useApplication } from './useApplications';
@@ -207,7 +208,7 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
 }
 
 /** Overview tab: status, resource categories and resource quotas. */
-function ApplicationOverview({
+export function ApplicationOverview({
   application,
   applicationResources,
   onCategoryClick,
@@ -218,15 +219,30 @@ function ApplicationOverview({
 }) {
   const { t } = useTranslation(['translation', 'glossary']);
 
-  const resourceQuotas = useMemo(
-    () =>
-      (applicationResources?.filter(it => it.kind === 'ResourceQuota') as ResourceQuota[]) ?? [],
-    [applicationResources]
-  );
+  // ResourceQuotas are deliberately not part of the shared cluster-wide
+  // application fetch (their lists are skipped for cost, see
+  // useAllApplicationResources), so fetch just this namespace's quotas here —
+  // a tiny, namespace-scoped request per cluster.
+  const { items: resourceQuotas } = ResourceQuota.useList({
+    clusters: application.clusters,
+    namespace: application.id,
+  });
 
   const categoryList = useResourceCategoriesList(applicationResources);
 
-  const health = useMemo(() => getResourcesHealth(applicationResources), [applicationResources]);
+  // The exact same workload-readiness verdict the Applications table's Health
+  // column shows (evaluateApplicationHealth), so this page can never disagree
+  // with the table row the user just clicked.
+  const health = useMemo(
+    () => evaluateApplicationHealth(applicationResources.map(it => it.jsonData)),
+    [applicationResources]
+  );
+  const workloadObjects = useMemo(
+    () => buildWorkloadObjectsMap(applicationResources, health),
+    [applicationResources, health]
+  );
+  const downCount = health.workloads.filter(w => w.state === 'down').length;
+  const degradedCount = health.workloads.filter(w => w.state === 'degraded').length;
 
   return (
     <Grid container spacing={3} sx={{ pt: 2 }}>
@@ -234,54 +250,66 @@ function ApplicationOverview({
         <Card sx={{ height: '100%' }}>
           <CardContent>
             <Typography variant="h6">{t('translation|Status')}</Typography>
-            <Box sx={{ display: 'flex', gap: 2 }}>
+            <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
               <Box>
                 <Typography variant="body2" color="text.secondary">
                   {t('translation|Application Status')}
                 </Typography>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <StatusLabel
-                    status={health.error > 0 ? 'error' : health.warning > 0 ? 'warning' : 'success'}
-                  >
-                    <Icon
-                      icon={getHealthIcon(health.success, health.error, health.warning)}
-                      style={{
-                        fontSize: 24,
-                      }}
-                    />
-                    {health.success === 0
-                      ? t('translation|No Workloads')
-                      : health.error > 0
-                      ? t('translation|Unhealthy')
-                      : health.warning > 0
-                      ? t('translation|Degraded')
-                      : t('translation|Healthy')}
-                  </StatusLabel>
+                <Box display="flex" alignItems="center" gap={1} sx={{ mt: 0.5 }}>
+                  {/* Same chip as the table's Health column: click it to see
+                      why, with each problem workload linked to its own page. */}
+                  <ApplicationHealthChip
+                    health={health}
+                    loading={false}
+                    workloadObjects={workloadObjects}
+                    size="medium"
+                  />
+                </Box>
+              </Box>
+              <Box>
+                <Typography variant="body2" color="text.secondary">
+                  {t('translation|Workloads')}
+                </Typography>
+                <Box display="flex" flexWrap="wrap" gap={1} sx={{ mt: 0.5 }}>
+                  {health.totalWorkloads === 0 ? (
+                    <Typography component="span" variant="caption" color="text.secondary">
+                      {NOT_AVAILABLE}
+                    </Typography>
+                  ) : (
+                    <>
+                      <StatusLabel
+                        status={
+                          health.status === 'unhealthy'
+                            ? 'error'
+                            : health.status === 'degraded' || health.status === 'progressing'
+                            ? 'warning'
+                            : 'success'
+                        }
+                      >
+                        {t('translation|{{ ready }}/{{ total }} ready', {
+                          ready: health.readyWorkloads,
+                          total: health.totalWorkloads,
+                        })}
+                      </StatusLabel>
+                      {downCount > 0 && (
+                        <StatusLabel status="error">
+                          {downCount} {t('translation|down')}
+                        </StatusLabel>
+                      )}
+                      {degradedCount > 0 && (
+                        <StatusLabel status="warning">
+                          {degradedCount} {t('translation|degraded')}
+                        </StatusLabel>
+                      )}
+                    </>
+                  )}
                 </Box>
               </Box>
               <Box>
                 <Typography variant="body2" color="text.secondary">
                   {t('translation|Resources')}
                 </Typography>
-                {applicationResources.length > 0 && (
-                  <Box display="flex" flexWrap="wrap" gap={1}>
-                    {health.success > 0 && (
-                      <StatusLabel status="success">
-                        {health.success} {t('translation|Healthy')}
-                      </StatusLabel>
-                    )}
-                    {health.warning > 0 && (
-                      <StatusLabel status="warning">
-                        {health.warning} {t('translation|Warning')}
-                      </StatusLabel>
-                    )}
-                    {health.error > 0 && (
-                      <StatusLabel status="error">
-                        {health.error} {t('translation|Unhealthy')}
-                      </StatusLabel>
-                    )}
-                  </Box>
-                )}
+                <Typography sx={{ mt: 0.5 }}>{applicationResources.length}</Typography>
               </Box>
             </Box>
             <Box sx={{ mt: 2 }}>
@@ -330,7 +358,7 @@ function ApplicationOverview({
           <CardContent>
             <Typography variant="h6">{t('translation|Resource Quotas')}</Typography>
             <Box>
-              {resourceQuotas.map(it => (
+              {(resourceQuotas ?? []).map(it => (
                 <Box sx={{ mb: 2 }} key={it.metadata.uid}>
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>
                     <Typography variant="h6" sx={{ mr: 'auto' }}>
@@ -342,9 +370,14 @@ function ApplicationOverview({
                 </Box>
               ))}
 
-              {resourceQuotas.length === 0 && (
+              {(resourceQuotas ?? []).length === 0 && (
+                // Say what the absence means instead of a bare "n/a": no
+                // ResourceQuota object exists in this namespace, so nothing
+                // caps its resource usage.
                 <Typography variant="body2" color="text.secondary" sx={{ my: 2 }}>
-                  {NOT_AVAILABLE}
+                  {t(
+                    'translation|No ResourceQuota is defined in this namespace, so its resource usage is not capped.'
+                  )}
                 </Typography>
               )}
             </Box>

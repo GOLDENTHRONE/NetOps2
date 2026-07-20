@@ -182,7 +182,8 @@ describe('getResourcesByKind', () => {
 describe('getProjectHealth', () => {
   it('computes healthy/warning/unhealthy correctly across kinds', () => {
     const depHealthy = makeDeployment({ name: 'dep-ok', replicas: 3, readyReplicas: 3 });
-    const ssWarn = makeStatefulSet({ name: 'ss-bad', replicas: 2, readyReplicas: 0 });
+    // 0/2 ready is an outage, so it counts as an error (not a mere warning).
+    const ssDown = makeStatefulSet({ name: 'ss-bad', replicas: 2, readyReplicas: 0 });
     const dsWarn = makeDaemonSet({ name: 'ds-warn', numberReady: 1, desiredNumberScheduled: 3 });
     const podHealthy = makePod({ name: 'pod-ok', phase: 'Running', ready: true });
     const podWarn = makePod({ name: 'pod-pending', phase: 'Pending', ready: false });
@@ -190,7 +191,7 @@ describe('getProjectHealth', () => {
 
     const { success, warning, error } = getResourcesHealth([
       depHealthy,
-      ssWarn,
+      ssDown,
       dsWarn,
       podHealthy,
       podWarn,
@@ -199,8 +200,8 @@ describe('getProjectHealth', () => {
 
     expect({ success, warning, error }).toEqual({
       success: 2,
-      warning: 3,
-      error: 1,
+      warning: 2,
+      error: 2,
     });
   });
 });

@@ -160,7 +160,7 @@
             </div>
           </div>
           <table
-            class="MuiTable-root css-17uf3zv-MuiTable-root"
+            class="MuiTable-root css-fwp3np-MuiTable-root"
             style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;"
           >
             <thead
@@ -229,7 +229,14 @@
                         draggable="true"
                         tabindex="0"
                         type="button"
-                      />
+                      >
+                        <span
+                          aria-label="Drag column"
+                          class=""
+                          data-mui-internal-clone-element="true"
+                          style="display: inline-flex; padding: 6px; margin: -6px;"
+                        />
+                      </button>
                     </div>
                     <div
                       class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -300,7 +307,14 @@
                         draggable="true"
                         tabindex="0"
                         type="button"
-                      />
+                      >
+                        <span
+                          aria-label="Drag column"
+                          class=""
+                          data-mui-internal-clone-element="true"
+                          style="display: inline-flex; padding: 6px; margin: -6px;"
+                        />
+                      </button>
                     </div>
                     <div
                       class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -371,7 +385,14 @@
                         draggable="true"
                         tabindex="0"
                         type="button"
-                      />
+                      >
+                        <span
+                          aria-label="Drag column"
+                          class=""
+                          data-mui-internal-clone-element="true"
+                          style="display: inline-flex; padding: 6px; margin: -6px;"
+                        />
+                      </button>
                     </div>
                     <div
                       class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -411,7 +432,14 @@
                         draggable="true"
                         tabindex="0"
                         type="button"
-                      />
+                      >
+                        <span
+                          aria-label="Drag column"
+                          class=""
+                          data-mui-internal-clone-element="true"
+                          style="display: inline-flex; padding: 6px; margin: -6px;"
+                        />
+                      </button>
                     </div>
                     <div
                       class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"
@@ -451,7 +479,14 @@
                         draggable="true"
                         tabindex="0"
                         type="button"
-                      />
+                      >
+                        <span
+                          aria-label="Drag column"
+                          class=""
+                          data-mui-internal-clone-element="true"
+                          style="display: inline-flex; padding: 6px; margin: -6px;"
+                        />
+                      </button>
                     </div>
                     <div
                       class="Mui-TableHeadCell-ResizeHandle-Wrapper MuiBox-root css-1l66gie"

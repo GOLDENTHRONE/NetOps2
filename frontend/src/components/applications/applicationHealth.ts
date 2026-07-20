@@ -131,25 +131,47 @@ function replicaCounts(resource: ResourceLike): {
       updated: (status.succeeded ?? 0) + (status.active ?? 0),
     };
   }
-  // Deployment / StatefulSet.
+  // Deployment / StatefulSet / ReplicaSet. Kinds that don't report a
+  // rollout-progress count (ReplicaSets have no updatedReplicas) must not
+  // read as "rolling out" forever, so fall back to the ready count.
+  const ready = status.readyReplicas ?? 0;
   return {
     desired: spec.replicas ?? 1,
-    ready: status.readyReplicas ?? 0,
-    updated: status.updatedReplicas ?? status.currentReplicas ?? 0,
+    ready,
+    updated: status.updatedReplicas ?? status.currentReplicas ?? ready,
   };
 }
 
 /** Evaluates one workload into a state plus a human reason. */
-function evaluateWorkload(resource: ResourceLike): WorkloadHealth {
+export function evaluateWorkload(resource: ResourceLike): WorkloadHealth {
   const { desired, ready, updated } = replicaCounts(resource);
   const kind = resource.kind ?? '';
   const name = resource.metadata?.name ?? '';
   const namespace = resource.metadata?.namespace;
   const base: WorkloadHealth = { kind, name, namespace, desired, ready, updated, state: 'ready' };
 
-  // A Job that failed is down regardless of counts.
-  if (kind === 'Job' && conditionStatus(resource.status, 'Failed') === 'True') {
-    return { ...base, state: 'down', reason: 'Job failed' };
+  // Jobs are run-to-completion, so replica logic does not apply: a Job that
+  // is still running is progressing (not "down"), and only the Failed
+  // condition means failure.
+  if (kind === 'Job') {
+    const status: any = resource.status ?? {};
+    if (conditionStatus(resource.status, 'Failed') === 'True') {
+      return { ...base, state: 'down', reason: 'Job failed' };
+    }
+    if (conditionStatus(resource.status, 'Complete') === 'True' || ready >= desired) {
+      return { ...base, state: 'ready', reason: `${ready}/${desired} completions` };
+    }
+    if ((resource.spec as any)?.suspend === true) {
+      return { ...base, state: 'scaledZero', reason: 'Suspended' };
+    }
+    return {
+      ...base,
+      state: 'progressing',
+      reason:
+        (status.active ?? 0) > 0
+          ? `Running (${status.active} active)`
+          : `Waiting to run (${ready}/${desired} completions)`,
+    };
   }
 
   // Intentionally scaled to zero: a valid, not-unhealthy state.

@@ -41,7 +41,7 @@ describe('getClusterStatusLabel', () => {
   const t = (key: string) => key;
 
   it('maps status states to translated labels', () => {
-    expect(getClusterStatusLabel(t, null)).toBe('translation|Active');
+    expect(getClusterStatusLabel(t, null)).toBe('translation|API reachable');
     expect(getClusterStatusLabel(t, undefined)).toBe('⋯');
     expect(getClusterStatusLabel(t, new ApiError('Unauthorized', { status: 401 }))).toBe(
       'translation|Authentication required'

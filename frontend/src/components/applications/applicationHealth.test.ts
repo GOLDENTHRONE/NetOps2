@@ -115,6 +115,42 @@ describe('evaluateApplicationHealth', () => {
     expect(h.status).toBe('unhealthy');
     expect(h.workloads[0].reason).toMatch(/failed/i);
   });
+
+  it('treats a running Job as progressing, not down', () => {
+    const job: ResourceLike = {
+      kind: 'Job',
+      metadata: { name: 'migrate', namespace: 'shop' },
+      spec: { completions: 1 },
+      status: { active: 1 },
+    };
+    const h = evaluateApplicationHealth([job]);
+    expect(h.status).toBe('progressing');
+    expect(h.workloads[0].reason).toMatch(/running/i);
+  });
+
+  it('treats a completed Job as ready', () => {
+    const job: ResourceLike = {
+      kind: 'Job',
+      metadata: { name: 'migrate', namespace: 'shop' },
+      spec: { completions: 1 },
+      status: { succeeded: 1, conditions: [{ type: 'Complete', status: 'True' }] },
+    };
+    const h = evaluateApplicationHealth([job]);
+    expect(h.status).toBe('healthy');
+    expect(h.workloads[0].state).toBe('ready');
+  });
+
+  it('treats a suspended Job as scaled to zero, not unhealthy', () => {
+    const job: ResourceLike = {
+      kind: 'Job',
+      metadata: { name: 'migrate', namespace: 'shop' },
+      spec: { completions: 1, suspend: true },
+      status: {},
+    };
+    const h = evaluateApplicationHealth([job]);
+    expect(h.status).toBe('idle');
+    expect(h.workloads[0].state).toBe('scaledZero');
+  });
 });
 
 describe('healthSortRank', () => {
