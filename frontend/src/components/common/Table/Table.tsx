@@ -21,6 +21,7 @@ import { Theme, useTheme } from '@mui/material/styles';
 import MuiTable from '@mui/material/Table';
 import { TableCellProps } from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
+import MuiTooltip from '@mui/material/Tooltip';
 import { alpha, styled } from '@mui/system';
 import { visuallyHidden } from '@mui/utils';
 import { isEqual } from 'lodash';
@@ -433,8 +434,17 @@ export default function Table<RowItem extends Record<string, any>>({
     },
     localization: {
       ...tableLocalizationMap[i18n.language],
-      // The column grab handle's tooltip; MRT's default reads just "Move".
+      // The column grab handle's label; MRT's default reads just "Move".
       move: t('Drag column'),
+    },
+    // MRT wraps the grab handle in its own Tooltip hardcoded to a 1s
+    // enterDelay, which made this one tooltip feel broken next to every other
+    // (instant) tooltip. An empty title disables that slow Tooltip (MUI skips
+    // empty titles) — the fast replacement lives on the DragHandleIcon below —
+    // while the explicit aria-label keeps the button named for screen readers.
+    muiColumnDragHandleProps: {
+      title: '',
+      'aria-label': t('Drag column'),
     },
     autoResetAll: false,
     icons: {
@@ -442,8 +452,19 @@ export default function Table<RowItem extends Record<string, any>>({
       MoreHorizIcon: () => <Icon icon="mdi:more-vert" />,
       // The column reorder grip: a dotted grip (⠿) instead of the default
       // horizontal-lines handle, matching the modern-table reference. It is
-      // revealed on header hover via CSS (see the table sx below).
-      DragHandleIcon: () => <Icon icon="mdi:drag-vertical" width="1.1rem" height="1.1rem" />,
+      // revealed on header hover via CSS (see the table sx below). The
+      // Tooltip here replaces MRT's own slow one (see
+      // muiColumnDragHandleProps above) so it appears as fast as the rest.
+      DragHandleIcon: () => (
+        <MuiTooltip title={t('Drag column')} placement="top" disableInteractive>
+          {/* span carries the ref/hover props MUI Tooltip needs (the iconify
+              Icon does not forward refs); padding+negative margin stretch its
+              hover area over the whole grab-handle button. */}
+          <span style={{ display: 'inline-flex', padding: 6, margin: -6 }}>
+            <Icon icon="mdi:drag-vertical" width="1.1rem" height="1.1rem" />
+          </span>
+        </MuiTooltip>
+      ),
     },
     onPaginationChange: (updater: any) => {
       if (!tableProps.data?.length) return;
@@ -778,6 +799,16 @@ export default function Table<RowItem extends Record<string, any>>({
             '& .Mui-TableHeadCell-ResizeHandle-Wrapper': {
               paddingLeft: '1px',
               paddingRight: '1px',
+            },
+            // MRT shifts every resize divider 4px right (translateX(4px)) to
+            // center it on the column boundary. On the LAST column that shift
+            // sticks out past the table edge, which registers as ~3px of
+            // horizontal overflow and drew a permanent (useless) horizontal
+            // scrollbar under every table. Keep the last column's divider
+            // inside the table so the scrollbar appears only when columns
+            // genuinely overflow.
+            '& th:last-of-type .Mui-TableHeadCell-ResizeHandle-Divider': {
+              transform: 'none',
             },
           }}
         >

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import { KubeObject, Workload } from '../../../lib/k8s/cluster';
+import { KubeObject } from '../../../lib/k8s/cluster';
 import Pod from '../../../lib/k8s/pod';
-import { getReadyReplicas, getTotalReplicas } from '../../../lib/util';
+import { evaluateWorkload, WorkloadState } from '../../applications/applicationHealth';
 import type { GraphNode } from '../graph/graphModel';
 
 export type KubeObjectStatus = 'error' | 'success' | 'warning';
@@ -43,17 +43,31 @@ function getPodStatus(pod: Pod): KubeObjectStatus {
   return 'success';
 }
 
+/** How a per-workload readiness state (see applicationHealth) maps to the
+ * generic three-state status: no ready replicas (or a failed Job/rollout) is
+ * an error, partial readiness or an ongoing rollout is a warning. */
+const WORKLOAD_STATE_TO_STATUS: Record<WorkloadState, KubeObjectStatus> = {
+  down: 'error',
+  degraded: 'warning',
+  progressing: 'warning',
+  ready: 'success',
+  scaledZero: 'success',
+};
+
 /**
  * Returns status for a given Kube resource
  * Not all kinds of resources have a status and/or supported
+ *
+ * Workload kinds are judged by real readiness (ready vs desired replicas,
+ * rollout/Job conditions) via {@link evaluateWorkload}: a workload with zero
+ * ready replicas used to show as a mere "warning", which let broken
+ * applications look merely degraded — or, in rolled-up views, healthy.
  */
 export function getStatus(w: KubeObject): KubeObjectStatus {
   if (Pod.isClassOf(w)) return getPodStatus(w);
 
-  if (['DaemonSet', 'ReplicaSet', 'StatefulSet', 'Deployment'].includes(w.kind)) {
-    const workload = w as Workload;
-    const notReady = getReadyReplicas(workload) < getTotalReplicas(workload);
-    return notReady ? 'warning' : 'success';
+  if (['DaemonSet', 'ReplicaSet', 'StatefulSet', 'Deployment', 'Job'].includes(w.kind)) {
+    return WORKLOAD_STATE_TO_STATUS[evaluateWorkload(w.jsonData).state];
   }
 
   return 'success';

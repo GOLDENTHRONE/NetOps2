@@ -168,7 +168,7 @@ describe('ClusterTable', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.getByText('API reachable')).toBeInTheDocument();
   });
 
   it('falls back to reachability status when Cluster Inventory condition is missing', () => {

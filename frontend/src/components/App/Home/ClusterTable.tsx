@@ -205,9 +205,22 @@ function ClusterStatus({
   const color = theme.palette.home.status[variant.colorKey];
   const explanation = explainClusterStatus(t, error, condition, version);
 
+  // For a reachable cluster, surface the concrete facts an operator actually
+  // wants right in the cell — not behind a click: what the probe verified and
+  // what the fleet inventory says about the control plane.
+  const inlineFacts: string[] = [];
+  if (kind === 'active') {
+    if (condition?.status === 'True') {
+      inlineFacts.push(t('translation|control plane healthy'));
+    }
+    if (version) {
+      inlineFacts.push(version);
+    }
+  }
+
   return (
     <>
-      <LightTooltip title={t('translation|Click to see')}>
+      <LightTooltip title={t('translation|Click to see the probe evidence')}>
         <Box
           component="button"
           type="button"
@@ -222,6 +235,7 @@ function ClusterStatus({
             padding: 0,
             cursor: 'pointer',
             fontFamily: 'inherit',
+            textAlign: 'left',
           }}
         >
           <Icon icon={variant.icon} width={16} color={color} />
@@ -235,6 +249,14 @@ function ClusterStatus({
           >
             {text}
           </Typography>
+          {inlineFacts.length > 0 && (
+            <Typography
+              variant="caption"
+              sx={{ ml: 1, color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}
+            >
+              {inlineFacts.join(' · ')}
+            </Typography>
+          )}
         </Box>
       </LightTooltip>
       <Popover

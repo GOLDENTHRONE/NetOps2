@@ -16,14 +16,10 @@
 
 import { Icon } from '@iconify/react';
 import {
-  alpha,
   Autocomplete,
   Box,
   Checkbox,
-  Divider,
-  Popover,
   TextField,
-  Theme,
   Tooltip,
   Typography,
   useTheme,
@@ -34,14 +30,12 @@ import { KubeObject } from '../../lib/k8s/KubeObject';
 import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
+import { AppHealth, evaluateApplicationHealth, healthSortRank } from './applicationHealth';
 import {
-  AppHealth,
-  AppHealthStatus,
-  evaluateApplicationHealth,
-  healthSortRank,
-  WorkloadHealth,
-  WorkloadState,
-} from './applicationHealth';
+  ApplicationHealthChip,
+  buildWorkloadObjectsMap,
+  LoadingDots,
+} from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
 import { groupResourcesByApplication, useAllApplicationResources } from './useApplicationResources';
 import { useApplicationDefinitions } from './useApplications';
@@ -199,42 +193,6 @@ interface AppSummary {
 }
 
 /**
- * The three-dot pulse used by Headlamp's splash screen, as an inline loading
- * indicator: quiet, familiar and lighter than skeleton bars.
- */
-function LoadingDots({ size = 6 }: { size?: number }) {
-  const theme = useTheme();
-  return (
-    <Box
-      component="span"
-      aria-label="Loading"
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: `${size * 0.7}px`,
-        '@keyframes appLoadingDot': {
-          '0%, 80%, 100%': { opacity: 0.25, transform: 'scale(0.8)' },
-          '40%': { opacity: 1, transform: 'scale(1)' },
-        },
-        '& > span': {
-          width: size,
-          height: size,
-          borderRadius: '50%',
-          backgroundColor: theme.palette.text.secondary,
-          animation: 'appLoadingDot 1.2s infinite ease-in-out',
-        },
-        '& > span:nth-of-type(2)': { animationDelay: '0.15s' },
-        '& > span:nth-of-type(3)': { animationDelay: '0.3s' },
-      }}
-    >
-      <span />
-      <span />
-      <span />
-    </Box>
-  );
-}
-
-/**
  * A table row: an application plus its (progressively arriving) summary. The
  * summary is carried IN the row data — not read from a closure — so that when
  * more resources arrive the row object changes identity and the table
@@ -245,170 +203,6 @@ function LoadingDots({ size = 6 }: { size?: number }) {
 interface AppRow extends ApplicationDefinition {
   summary?: AppSummary;
   resourcesLoading: boolean;
-}
-
-/** How each application-health verdict reads: color, icon and tone. */
-const HEALTH_PRESENTATION: Record<AppHealthStatus, { icon: string; color: (t: Theme) => string }> =
-  {
-    healthy: { icon: 'mdi:check-circle', color: t => t.palette.success.main },
-    progressing: { icon: 'mdi:progress-clock', color: t => t.palette.info.main },
-    degraded: { icon: 'mdi:alert', color: t => t.palette.warning.main },
-    unhealthy: { icon: 'mdi:alert-circle', color: t => t.palette.error.main },
-    idle: { icon: 'mdi:pause-circle-outline', color: t => t.palette.text.secondary },
-    noWorkloads: { icon: 'mdi:cube-outline', color: t => t.palette.text.secondary },
-    empty: { icon: 'mdi:help-circle-outline', color: t => t.palette.text.disabled },
-  };
-
-/** Per-workload state colors, for the little status dots in the popover. */
-const WORKLOAD_STATE_COLOR: Record<WorkloadState, (t: Theme) => string> = {
-  ready: t => t.palette.success.main,
-  progressing: t => t.palette.info.main,
-  degraded: t => t.palette.warning.main,
-  down: t => t.palette.error.main,
-  scaledZero: t => t.palette.text.disabled,
-};
-
-/**
- * One workload's row in the health popover. When the live KubeObject is known
- * the name is a link straight to that resource's details page (the browser's
- * Back button returns here), so "Job failed" is one click from the Job itself.
- */
-function WorkloadRow({ w, kubeObject }: { w: WorkloadHealth; kubeObject?: KubeObject }) {
-  const theme = useTheme();
-  const color = WORKLOAD_STATE_COLOR[w.state](theme);
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}>
-      <Box
-        component="span"
-        sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }}
-      />
-      <Typography variant="caption" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
-        {w.kind}
-      </Typography>
-      <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap title={w.name}>
-        {/* NOTE: no onClick here — Link treats onClick as "disable navigation".
-            The popover is unmounted by the route change itself. */}
-        {kubeObject ? <Link kubeObject={kubeObject}>{w.name}</Link> : w.name}
-      </Typography>
-      <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
-        {w.reason ?? `${w.ready}/${w.desired}`}
-      </Typography>
-    </Box>
-  );
-}
-
-/**
- * The Health cell: a color-coded chip that, on click, opens a popover
- * explaining *why* the application is Healthy / Degraded / Unhealthy / etc.,
- * from the real workload readiness — so an operator gets the reasoning, not
- * just a colored word.
- */
-function HealthCell({
-  health,
-  loading,
-  workloadObjects,
-}: {
-  health?: AppHealth;
-  loading: boolean;
-  workloadObjects?: Map<string, KubeObject>;
-}) {
-  const theme = useTheme();
-  const { t } = useTranslation(['translation']);
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-
-  if (!health && loading) {
-    return <LoadingDots />;
-  }
-  if (!health) {
-    return null;
-  }
-
-  const p = HEALTH_PRESENTATION[health.status];
-  const color = p.color(theme);
-  const problems = health.workloads.filter(w => w.state !== 'ready' && w.state !== 'scaledZero');
-
-  return (
-    <>
-      <Tooltip title={t('translation|Click to see')}>
-        <Box
-          component="button"
-          type="button"
-          onClick={e => setAnchorEl(e.currentTarget)}
-          aria-label={t('translation|Show health details')}
-          sx={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 0.5,
-            px: 1,
-            py: '3px',
-            border: 'none',
-            borderRadius: '999px',
-            cursor: 'pointer',
-            fontSize: '0.8125rem',
-            fontWeight: 600,
-            fontFamily: 'inherit',
-            whiteSpace: 'nowrap',
-            color,
-            backgroundColor: alpha(color, 0.12),
-            '&:hover': { backgroundColor: alpha(color, 0.22) },
-          }}
-        >
-          <Icon icon={p.icon} width={16} height={16} />
-          {health.label}
-        </Box>
-      </Tooltip>
-      <Popover
-        open={!!anchorEl}
-        anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { p: 1.5, maxWidth: 380, minWidth: 260 } } }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-          <Icon icon={p.icon} width={20} height={20} color={color} />
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
-            {health.label}
-          </Typography>
-        </Box>
-        <Typography variant="body2" color="text.secondary">
-          {health.summary}
-        </Typography>
-
-        {health.totalWorkloads > 0 && (
-          <>
-            <Divider sx={{ my: 1 }} />
-            <Typography variant="caption" sx={{ fontWeight: 700 }}>
-              {t('translation|{{ ready }}/{{ total }} workloads ready', {
-                ready: health.readyWorkloads,
-                total: health.totalWorkloads,
-              })}
-            </Typography>
-            <Box sx={{ mt: 0.5 }}>
-              {(problems.length > 0 ? problems : health.workloads).slice(0, 8).map(w => (
-                <WorkloadRow
-                  key={`${w.kind}/${w.namespace}/${w.name}`}
-                  w={w}
-                  kubeObject={workloadObjects?.get(`${w.kind}/${w.namespace}/${w.name}`)}
-                />
-              ))}
-            </Box>
-          </>
-        )}
-
-        {health.status === 'noWorkloads' && (
-          <>
-            <Divider sx={{ my: 1 }} />
-            <Typography variant="caption" color="text.secondary">
-              {t('translation|{{ count }} resource(s), none of them workloads that run pods.', {
-                count: health.totalResources,
-              })}
-            </Typography>
-          </>
-        )}
-      </Popover>
-    </>
-  );
 }
 
 export default function ApplicationList() {
@@ -437,13 +231,7 @@ export default function ApplicationList() {
       const health = evaluateApplicationHealth(items.map(i => i.jsonData));
       // Keep the live KubeObjects of the evaluated workloads so the popover
       // can link each one straight to its details page.
-      const workloadObjects = new Map<string, KubeObject>();
-      for (const item of items) {
-        const key = `${item.kind}/${item.metadata.namespace}/${item.metadata.name}`;
-        if (health.workloads.some(w => `${w.kind}/${w.namespace}/${w.name}` === key)) {
-          workloadObjects.set(key, item);
-        }
-      }
+      const workloadObjects = buildWorkloadObjectsMap(items, health);
       out.set(appId, { count: items.length, health, workloadObjects });
     }
     return out;
@@ -502,11 +290,19 @@ export default function ApplicationList() {
         id: 'health',
         header: t('translation|Health'),
         gridTemplate: 'min-content',
+        // Chips are colored blocks of varying width; centering them under the
+        // centered header reads as one tidy rail instead of a ragged left edge.
+        muiTableHeadCellProps: {
+          align: 'center',
+        },
+        muiTableBodyCellProps: {
+          sx: { justifyContent: 'center' },
+        },
         // A sortable rank (problems first) that also drives cell re-renders as
         // health changes; -1 while loading.
         accessorFn: app => healthSortRank(app.summary?.health, app.resourcesLoading),
         Cell: ({ row: { original } }) => (
-          <HealthCell
+          <ApplicationHealthChip
             health={original.summary?.health}
             loading={original.resourcesLoading}
             workloadObjects={original.summary?.workloadObjects}
