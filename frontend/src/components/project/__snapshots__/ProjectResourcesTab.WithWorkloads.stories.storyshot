@@ -41,7 +41,9 @@
                   class="MuiListItemIcon-root css-1fqgk7o-MuiListItemIcon-root"
                 >
                   <div
+                    aria-label="2 with no ready replicas or failed, 2 partially ready, 2 ready."
                     class="MuiBox-root css-171onha"
+                    data-mui-internal-clone-element="true"
                   >
                     <h6
                       class="MuiTypography-root MuiTypography-h6 css-1xkn1z3-MuiTypography-root"
