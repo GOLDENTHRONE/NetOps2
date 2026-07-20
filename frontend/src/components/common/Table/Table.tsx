@@ -261,6 +261,14 @@ export default function Table<RowItem extends Record<string, any>>({
   // State for shift+click range selection
   const [lastSelectedRowIndex, setLastSelectedRowIndex] = useState<number | null>(null);
 
+  // The per-column filter row. Owned here so hiding it also CLEARS the
+  // filters: the old behavior kept hidden filters active, which silently
+  // truncated tables and made filters look broken (the top filter-UX
+  // complaint). With this, what you see is always what is filtering.
+  const [showColumnFilters, setShowColumnFilters] = useState<boolean>(
+    !!tableProps.initialState?.showColumnFilters
+  );
+
   // Provide defaults for the columns
   const tableColumns: TableColumn<RowItem>[] = useMemo(
     () =>
@@ -360,6 +368,9 @@ export default function Table<RowItem extends Record<string, any>>({
     enableDensityToggle: tableProps.enableDensityToggle ?? false,
     enableFullScreenToggle: tableProps.enableFullScreenToggle ?? false,
     enableColumnActions: false,
+    // Faceted values power 'select' filter variants with the actual values
+    // present in the data, so no column needs a hardcoded option list.
+    enableFacetedValues: true,
     enableColumnResizing: tableProps.enableColumnResizing ?? true,
     columnResizeMode: 'onChange',
     enableColumnOrdering: tableProps.enableColumnOrdering ?? true,
@@ -476,6 +487,19 @@ export default function Table<RowItem extends Record<string, any>>({
       }
     },
     onGlobalFilterChange: setGlobalFilter,
+    onShowColumnFiltersChange: updater => {
+      setShowColumnFilters(current => {
+        const next = typeof updater === 'function' ? updater(current) : updater;
+        if (!next) {
+          // Hiding the filter row resets the filters, so a hidden filter can
+          // never keep silently narrowing the table. Unconditional on purpose:
+          // restored filters force the row visible even when `current` is
+          // false (see the state memo), and hiding must clear those too.
+          tableRef.current?.resetColumnFilters();
+        }
+        return next;
+      });
+    },
     renderToolbarInternalActions: props => {
       const isSomeRowsSelected =
         tableProps.enableRowSelection && props.table.getSelectedRowModel().rows.length !== 0;
@@ -506,9 +530,21 @@ export default function Table<RowItem extends Record<string, any>>({
           pageSize: pageSize,
         },
         globalFilter,
+        // Active filters force the filter row visible (e.g. filters restored
+        // from a previous session), so filtering is never invisible.
+        showColumnFilters: showColumnFilters || (tableProps.state?.columnFilters?.length ?? 0) > 0,
         ...(globalFilter ? { showGlobalFilter: true } : {}),
       }),
-      [tableProps.state, columnOrder, columnSizing, columnSizingInfo, page, pageSize, globalFilter]
+      [
+        tableProps.state,
+        columnOrder,
+        columnSizing,
+        columnSizingInfo,
+        page,
+        pageSize,
+        globalFilter,
+        showColumnFilters,
+      ]
     ),
     positionActionsColumn: 'last',
     layoutMode: 'grid',

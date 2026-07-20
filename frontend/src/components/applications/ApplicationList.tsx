@@ -19,6 +19,7 @@ import {
   Autocomplete,
   Box,
   Checkbox,
+  Skeleton,
   TextField,
   Tooltip,
   Typography,
@@ -240,9 +241,22 @@ export default function ApplicationList() {
   const applicationNames = useMemo(() => applications.map(app => app.id), [applications]);
 
   // Carry the summary in the row data (see AppRow) so the table recomputes
-  // cells as resources arrive.
+  // cells as resources arrive. Once loading is done, an application with no
+  // resources gets an explicit "No resources" summary so its Health cell is
+  // never blank.
   const tableData = useMemo<AppRow[]>(
-    () => applications.map(app => ({ ...app, summary: summaries.get(app.id), resourcesLoading })),
+    () =>
+      applications.map(app => {
+        let summary = summaries.get(app.id);
+        if (!summary && !resourcesLoading) {
+          summary = {
+            count: 0,
+            health: evaluateApplicationHealth([]),
+            workloadObjects: new Map(),
+          };
+        }
+        return { ...app, summary, resourcesLoading };
+      }),
     [applications, summaries, resourcesLoading]
   );
 
@@ -281,7 +295,7 @@ export default function ApplicationList() {
         Cell: ({ cell }) => {
           const value = cell.getValue<number>();
           if (value === -1) {
-            return <LoadingDots />;
+            return <Skeleton variant="rounded" width={32} height={18} />;
           }
           return value;
         },
@@ -298,9 +312,13 @@ export default function ApplicationList() {
         muiTableBodyCellProps: {
           sx: { justifyContent: 'center' },
         },
-        // A sortable rank (problems first) that also drives cell re-renders as
-        // health changes; -1 while loading.
-        accessorFn: app => healthSortRank(app.summary?.health, app.resourcesLoading),
+        // The verdict text, so the column filter matches what the user reads
+        // in the cell; severity ordering is preserved by the sortingFn below.
+        accessorFn: app => app.summary?.health.label ?? '',
+        filterVariant: 'select',
+        sortingFn: (rowA, rowB) =>
+          healthSortRank(rowA.original.summary?.health, rowA.original.resourcesLoading) -
+          healthSortRank(rowB.original.summary?.health, rowB.original.resourcesLoading),
         Cell: ({ row: { original } }) => (
           <ApplicationHealthChip
             health={original.summary?.health}

@@ -15,11 +15,19 @@
  */
 
 import { Icon } from '@iconify/react';
-import { alpha, Box, Link as MuiLink, Popover, Theme, Typography, useTheme } from '@mui/material';
+import {
+  alpha,
+  Box,
+  Link as MuiLink,
+  Popover,
+  Theme,
+  Tooltip,
+  Typography,
+  useTheme,
+} from '@mui/material';
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link as RouterLink } from 'react-router-dom';
-import DaemonSet from '../../lib/k8s/daemonSet';
+import { Link as RouterLink, useHistory } from 'react-router-dom';
 import Deployment from '../../lib/k8s/deployment';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import Pod from '../../lib/k8s/pod';
@@ -36,10 +44,11 @@ import ScaleButton from '../common/Resource/ScaleButton';
 import { TableColumn } from '../common/Table';
 import Table from '../common/Table';
 import Terminal from '../common/Terminal';
+import { LightTooltip } from '../common/Tooltip';
 import { PodLogViewer } from '../pod/Details';
 import { KubeObjectStatus } from '../resourceMap/nodes/KubeObjectStatus';
 import { getResourcesHealth } from './projectUtils';
-import { ResourceCategoriesList } from './ResourceCategoriesList';
+import { categoryHasHealthSignal, ResourceCategoriesList } from './ResourceCategoriesList';
 
 export const useResourceCategoriesList = (resources: KubeObject[]) => {
   return React.useMemo(() => {
@@ -197,12 +206,14 @@ function ResourceHealthChip({
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   if (health.state === 'none') {
-    // No health signal for this kind (config, RBAC, …): an honest dash
-    // instead of a green "Healthy" that means nothing.
+    // No health signal for this kind (a CronJob between runs, config, …):
+    // say so, with the reason a hover away — never an unexplained blank.
     return (
-      <Typography component="span" variant="body2" color="text.disabled">
-        —
-      </Typography>
+      <LightTooltip title={t('This kind does not report a readiness status in Kubernetes.')}>
+        <Typography component="span" variant="caption" color="text.secondary">
+          {t('No status')}
+        </Typography>
+      </LightTooltip>
     );
   }
 
@@ -211,32 +222,37 @@ function ResourceHealthChip({
 
   return (
     <>
-      <Box
-        component="button"
-        type="button"
-        onClick={e => setAnchorEl(e.currentTarget)}
-        aria-label={t('Show health details')}
-        sx={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 0.5,
-          px: 1,
-          py: '3px',
-          border: 'none',
-          borderRadius: '999px',
-          cursor: 'pointer',
-          fontSize: '0.8125rem',
-          fontWeight: 600,
-          fontFamily: 'inherit',
-          whiteSpace: 'nowrap',
-          color,
-          backgroundColor: alpha(color, 0.12),
-          '&:hover': { backgroundColor: alpha(color, 0.22) },
-        }}
-      >
-        <Icon icon={p.icon} width={16} height={16} />
-        {health.label}
-      </Box>
+      <Tooltip title={t('Click to see')}>
+        <Box
+          component="button"
+          type="button"
+          onClick={e => setAnchorEl(e.currentTarget)}
+          aria-label={t('Show health details')}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 0.5,
+            // Same fixed pill width as the Applications Health column.
+            width: '8.25rem',
+            px: 1,
+            py: '3px',
+            border: 'none',
+            borderRadius: '999px',
+            cursor: 'pointer',
+            fontSize: '0.8125rem',
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+            color,
+            backgroundColor: alpha(color, 0.12),
+            '&:hover': { backgroundColor: alpha(color, 0.22) },
+          }}
+        >
+          <Icon icon={p.icon} width={16} height={16} />
+          {health.label}
+        </Box>
+      </Tooltip>
       <Popover
         open={!!anchorEl}
         anchorEl={anchorEl}
@@ -245,51 +261,129 @@ function ResourceHealthChip({
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{ paper: { sx: { p: 1.5, maxWidth: 360, minWidth: 240 } } }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-          <Icon icon={p.icon} width={18} height={18} color={color} />
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
-            {health.label}
+        {/* Close on link click: in drawer mode the link opens a side panel
+            without a route change, and a still-open modal popover would keep
+            its scroll lock + backdrop over the panel (frozen scrolling and
+            clicks). Capture phase, so the link still navigates. */}
+        <Box
+          onClickCapture={e => {
+            if ((e.target as HTMLElement).closest('a')) {
+              setAnchorEl(null);
+            }
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+            <Icon icon={p.icon} width={18} height={18} color={color} />
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
+              {health.label}
+            </Typography>
+          </Box>
+          {health.reason && (
+            <Typography variant="body2" color="text.secondary">
+              {health.reason}
+            </Typography>
+          )}
+          <Typography variant="caption" component="div" sx={{ mt: 1 }}>
+            {directObjectLinks ? (
+              <MuiLink component={RouterLink} to={resource.getDetailsLink()}>
+                {t('Open {{ kind }} {{ name }}', {
+                  kind: resource.kind,
+                  name: resource.metadata?.name,
+                })}
+              </MuiLink>
+            ) : (
+              <Link kubeObject={resource}>
+                {t('Open {{ kind }} {{ name }}', {
+                  kind: resource.kind,
+                  name: resource.metadata?.name,
+                })}
+              </Link>
+            )}
           </Typography>
         </Box>
-        {health.reason && (
-          <Typography variant="body2" color="text.secondary">
-            {health.reason}
-          </Typography>
-        )}
-        <Typography variant="caption" component="div" sx={{ mt: 1 }}>
-          {/* NOTE: no onClick on Link — it treats onClick as "disable
-              navigation"; the route change itself unmounts the popover. */}
-          {directObjectLinks ? (
-            <MuiLink component={RouterLink} to={resource.getDetailsLink()}>
-              {t('Open {{ kind }} {{ name }}', {
-                kind: resource.kind,
-                name: resource.metadata?.name,
-              })}
-            </MuiLink>
-          ) : (
-            <Link kubeObject={resource}>
-              {t('Open {{ kind }} {{ name }}', {
-                kind: resource.kind,
-                name: resource.metadata?.name,
-              })}
-            </Link>
-          )}
-        </Typography>
       </Popover>
     </>
   );
 }
 
-/** Quick-filter buckets over row health, problems first. */
-const HEALTH_FILTERS = [
-  { id: 'all', states: null },
-  { id: 'issues', states: ['down', 'degraded'] },
-  { id: 'progressing', states: ['progressing'] },
-  { id: 'healthy', states: ['ready'] },
-  { id: 'other', states: ['scaledZero', 'none'] },
-] as const;
+/**
+ * A one-line, kind-specific summary for the Details column, so the column is
+ * meaningful for every kind instead of blank outside workloads. Falls back to
+ * the apiVersion — every resource at least says what API it comes from.
+ */
+export function getResourceDetails(resource: KubeObject): string {
+  const kind = resource.kind;
+  const json: any = resource.jsonData ?? {};
+  const spec: any = json.spec ?? {};
+  const status: any = json.status ?? {};
 
-type HealthFilterId = (typeof HEALTH_FILTERS)[number]['id'];
+  if (resource.isScalable) {
+    return `Replicas: ${status.readyReplicas || status.availableReplicas || 0}/${
+      spec.replicas || 0
+    }`;
+  }
+  switch (kind) {
+    case 'DaemonSet':
+      return `Ready: ${status.numberReady || 0}/${status.desiredNumberScheduled || 0}`;
+    case 'Pod':
+      return `Phase: ${status.phase ?? 'Unknown'}`;
+    case 'Job':
+      return `Succeeded: ${status.succeeded || 0}/${spec.completions ?? 1}`;
+    case 'CronJob':
+      return `Schedule: ${spec.schedule ?? '?'}${spec.suspend ? ' (suspended)' : ''}`;
+    case 'Service': {
+      const ports = (spec.ports ?? [])
+        .map((p: any) => `${p.port}${p.protocol && p.protocol !== 'TCP' ? '/' + p.protocol : ''}`)
+        .slice(0, 4)
+        .join(', ');
+      return `${spec.type || 'ClusterIP'}${ports ? ` · ${ports}` : ''}`;
+    }
+    case 'Ingress': {
+      const hosts = (spec.rules ?? []).map((r: any) => r.host).filter(Boolean);
+      const shown = hosts.slice(0, 2).join(', ');
+      return hosts.length > 0
+        ? `${shown}${hosts.length > 2 ? ` +${hosts.length - 2}` : ''}`
+        : `${(spec.rules ?? []).length} rule(s)`;
+    }
+    case 'NetworkPolicy':
+      return `Applies: ${(spec.policyTypes ?? []).join(', ') || 'Ingress'}`;
+    case 'PersistentVolumeClaim':
+      return `${status.phase ?? '?'} · ${
+        status.capacity?.storage ?? spec.resources?.requests?.storage ?? '?'
+      }${spec.storageClassName ? ` · ${spec.storageClassName}` : ''}`;
+    case 'ConfigMap':
+      return `${
+        Object.keys(json.data ?? {}).length + Object.keys(json.binaryData ?? {}).length
+      } key(s)`;
+    case 'Secret':
+      return `${json.type ?? 'Opaque'} · ${Object.keys(json.data ?? {}).length} key(s)`;
+    case 'HorizontalPodAutoscaler':
+      return `Replicas: ${status.currentReplicas ?? status.desiredReplicas ?? '?'} (min ${
+        spec.minReplicas ?? 1
+      }, max ${spec.maxReplicas ?? '?'})`;
+    case 'Role':
+    case 'ClusterRole':
+      return `${(json.rules ?? []).length} rule(s)`;
+    case 'RoleBinding':
+    case 'ClusterRoleBinding':
+      return `${(json.subjects ?? []).length} subject(s) → ${json.roleRef?.kind ?? ''} ${
+        json.roleRef?.name ?? ''
+      }`;
+    case 'ServiceAccount':
+      return `${(json.secrets ?? []).length} secret(s)`;
+    case 'ResourceQuota':
+      return `${Object.keys(spec.hard ?? {}).length} limit(s)`;
+    case 'LimitRange':
+      return `${(spec.limits ?? []).length} limit(s)`;
+    case 'Endpoints':
+      return `${(json.subsets ?? []).reduce(
+        (n: number, s: any) => n + (s.addresses?.length ?? 0),
+        0
+      )} address(es)`;
+    default:
+      return json.apiVersion ?? '';
+  }
+}
 
 interface ProjectResourcesTabProps {
   projectResources: KubeObject[];
@@ -313,9 +407,9 @@ export function ProjectResourcesTab({
   directObjectLinks,
 }: ProjectResourcesTabProps) {
   const { t } = useTranslation();
+  const history = useHistory();
 
   const resourceCategories = useResourceCategoriesList(projectResources);
-  const [healthFilter, setHealthFilter] = useState<HealthFilterId>('all');
 
   const { selectedCategory, selectedResources } = useMemo(() => {
     const group =
@@ -328,49 +422,13 @@ export function ProjectResourcesTab({
     return { selectedCategory: undefined, selectedResources: undefined };
   }, [resourceCategories, selectedCategoryName]);
 
-  // Health per selected resource, computed once per data batch: drives the
-  // quick-filter counts and the filter itself.
-  const healthByUid = useMemo(() => {
-    const map = new Map<string, ResourceRowHealth>();
-    for (const resource of selectedResources ?? []) {
-      map.set(resource.metadata.uid, getResourceRowHealth(resource));
-    }
-    return map;
-  }, [selectedResources]);
-
-  const filterCounts = useMemo(() => {
-    const counts = new Map<HealthFilterId, number>();
-    for (const filter of HEALTH_FILTERS) {
-      let count = 0;
-      for (const health of healthByUid.values()) {
-        if (!filter.states || (filter.states as readonly string[]).includes(health.state)) {
-          count++;
-        }
-      }
-      counts.set(filter.id, count);
-    }
-    return counts;
-  }, [healthByUid]);
-
-  const healthFilterFunction = React.useCallback(
-    (resource: KubeObject) => {
-      const filter = HEALTH_FILTERS.find(f => f.id === healthFilter);
-      if (!filter || !filter.states) {
-        return true;
-      }
-      const health = healthByUid.get(resource.metadata.uid);
-      return !!health && (filter.states as readonly string[]).includes(health.state);
-    },
-    [healthFilter, healthByUid]
+  // Kinds that report no health (ConfigMaps, Services, …) would fill the
+  // Health column with meaningless placeholders — hide it for categories
+  // where nothing reports health.
+  const showHealthColumn = useMemo(
+    () => categoryHasHealthSignal(selectedResources ?? []),
+    [selectedResources]
   );
-
-  const filterLabels: Record<HealthFilterId, string> = {
-    all: t('All'),
-    issues: t('Needs attention'),
-    progressing: t('Progressing'),
-    healthy: t('Healthy'),
-    other: t('No health signal'),
-  };
 
   const columns = React.useMemo<TableColumn<KubeObject>[]>(
     () => [
@@ -382,7 +440,7 @@ export function ProjectResourcesTab({
       },
       {
         id: 'name',
-        accessorFn: item => item.metadata.uid + item.metadata.name,
+        accessorFn: item => item.metadata.name,
         header: t('Name'),
         Cell: ({ row }) => {
           const resource = row.original;
@@ -399,9 +457,16 @@ export function ProjectResourcesTab({
       {
         id: 'health',
         gridTemplate: 'min-content',
-        // Rank (worst first) rather than text, so the default ascending sort
-        // puts the broken resources at the top of the table.
-        accessorFn: resource => ROW_HEALTH_RANK[getResourceRowHealth(resource).state],
+        // The verdict text, so the column filter matches what the user reads
+        // in the cell; severity ordering comes from the sortingFn below.
+        accessorFn: resource => {
+          const health = getResourceRowHealth(resource);
+          return health.state === 'none' ? t('No status') : health.label;
+        },
+        filterVariant: 'select',
+        sortingFn: (rowA, rowB) =>
+          ROW_HEALTH_RANK[getResourceRowHealth(rowA.original).state] -
+          ROW_HEALTH_RANK[getResourceRowHealth(rowB.original).state],
         header: t('Health'),
         // Chips centered under a centered header, same as the Applications
         // table's Health column.
@@ -430,70 +495,33 @@ export function ProjectResourcesTab({
         accessorFn: item => item.cluster,
         header: t('Cluster'),
         gridTemplate: 'min-content',
+        // The cluster is an object of its own: link it to the cluster view.
+        Cell: ({ row }) => (
+          <Link routeName="cluster" params={{ cluster: row.original.cluster }}>
+            {row.original.cluster}
+          </Link>
+        ),
       },
       {
         id: 'details',
         gridTemplate: 'min-content',
-        accessorFn: resource => {
-          const kind = resource.kind;
-          if (resource.isScalable) {
-            const res = resource as Deployment | StatefulSet | ReplicaSet;
-            return `Replicas: ${res.status?.readyReplicas || res.status?.availableReplicas || 0}/${
-              res.spec?.replicas || 0
-            }`;
-          }
-          if (kind === 'DaemonSet') {
-            const res = resource as DaemonSet;
-            return `Ready: ${res.status?.numberReady || 0}/${
-              res.status?.desiredNumberScheduled || 0
-            }`;
-          }
-          if (kind === 'Pod') {
-            const res = resource as Pod;
-            return `Phase: ${res.status?.phase ?? 'Unknown'}`;
-          }
-          return '';
-        },
+        // One line of kind-specific facts (replicas, schedule, ports, keys…)
+        // for EVERY kind — never a blank cell.
+        accessorFn: resource => getResourceDetails(resource),
         header: t('Details'),
-        Cell: ({ row }) => {
-          const resource = row.original;
-          const kind = resource.kind;
-          if (resource.isScalable) {
-            const res = resource as Deployment | StatefulSet | ReplicaSet;
-            return (
-              <Typography variant="body2" color="text.secondary" whiteSpace="nowrap">
-                {`Replicas: ${res.status?.readyReplicas || res.status?.availableReplicas || 0}/${
-                  res.spec?.replicas || 0
-                }`}
-              </Typography>
-            );
-          }
-          if (kind === 'DaemonSet') {
-            const res = resource as DaemonSet;
-            return (
-              <Typography variant="body2" color="text.secondary" whiteSpace="nowrap">
-                {`Ready: ${res.status?.numberReady || 0}/${
-                  res.status?.desiredNumberScheduled || 0
-                }`}
-              </Typography>
-            );
-          }
-          if (kind === 'Pod') {
-            const res = resource as Pod;
-            return (
-              <Typography variant="body2" color="text.secondary" whiteSpace="nowrap">
-                {`Phase: ${res.status?.phase ?? 'Unknown'}`}
-              </Typography>
-            );
-          }
-          return null;
-        },
+        Cell: ({ cell }) => (
+          <Typography variant="body2" color="text.secondary" whiteSpace="nowrap">
+            {cell.getValue<string>()}
+          </Typography>
+        ),
       },
       {
         id: 'age',
         accessorFn: item => item.metadata.creationTimestamp,
         header: t('Age'),
         gridTemplate: 'min-content',
+        // Filtering on a raw ISO timestamp is meaningless in a text box.
+        enableColumnFilter: false,
         Cell: ({ row }) => {
           const resource = row.original;
           const createdDate = resource.metadata?.creationTimestamp
@@ -514,23 +542,35 @@ export function ProjectResourcesTab({
         header: t('Actions'),
         gridTemplate: 'min-content',
         accessorFn: item => item.metadata.uid,
+        enableColumnFilter: false,
+        enableSorting: false,
         Cell: ({ row }) => {
           const resource = row.original;
-          const kind = resource.kind;
-          const isScalable = resource.isScalable;
-          const isPod = kind === 'Pod';
+          const isPod = resource.kind === 'Pod';
 
+          // Labeled pills, so no action has to be guessed from an icon. Every
+          // kind gets at least "View"; pods and scalables add their own.
           return (
             <Box display="flex" alignItems="center" gap={1} justifyContent="flex-end">
-              {isScalable && (
-                <ScaleButton item={resource as Deployment | StatefulSet | ReplicaSet} />
+              <ActionButton
+                description={t('View')}
+                icon="mdi:open-in-app"
+                buttonStyle="pill"
+                onClick={() => history.push(resource.getDetailsLink())}
+              />
+              {resource.isScalable && (
+                <ScaleButton
+                  item={resource as Deployment | StatefulSet | ReplicaSet}
+                  buttonStyle="pill"
+                />
               )}
               {isPod && (
                 <>
                   <AuthVisible item={resource} authVerb="get" subresource="log">
                     <ActionButton
-                      description={t('Show Logs')}
+                      description={t('Logs')}
                       icon="mdi:file-document-box-outline"
+                      buttonStyle="pill"
                       onClick={() => {
                         const id = 'logs-' + resource.metadata.uid;
                         Activity.launch({
@@ -555,8 +595,9 @@ export function ProjectResourcesTab({
                   </AuthVisible>
                   <AuthVisible item={resource} authVerb="create" subresource="exec">
                     <ActionButton
-                      description={t('Terminal / Exec')}
+                      description={t('Shell')}
                       icon="mdi:console"
+                      buttonStyle="pill"
                       onClick={() => {
                         const id = 'terminal-' + resource.metadata.uid;
                         Activity.launch({
@@ -576,7 +617,7 @@ export function ProjectResourcesTab({
                       }}
                     />
                   </AuthVisible>
-                  <DeleteButton item={resource as Pod} />
+                  <DeleteButton item={resource as Pod} buttonStyle="pill" />
                 </>
               )}
             </Box>
@@ -585,7 +626,7 @@ export function ProjectResourcesTab({
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, showClusterColumn, directObjectLinks]
+    [t, showClusterColumn, directObjectLinks, history]
   );
 
   return (
@@ -624,61 +665,21 @@ export function ProjectResourcesTab({
                   })}
                 </Typography>
               ) : (
-                <>
-                  {/* Quick health filter: one click to isolate the resources
-                      that need attention, no searching or paging required. */}
-                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', px: 1, pt: 1 }}>
-                    {HEALTH_FILTERS.map(filter => {
-                      const count = filterCounts.get(filter.id) ?? 0;
-                      const active = healthFilter === filter.id;
-                      // Empty buckets are noise; hide them (except "All").
-                      if (count === 0 && filter.id !== 'all') {
-                        return null;
-                      }
-                      return (
-                        <Box
-                          key={filter.id}
-                          component="button"
-                          type="button"
-                          onClick={() => setHealthFilter(active ? 'all' : filter.id)}
-                          sx={theme => ({
-                            border: '1px solid',
-                            borderColor: active ? 'primary.main' : 'divider',
-                            backgroundColor: active
-                              ? alpha(theme.palette.primary.main, 0.08)
-                              : 'transparent',
-                            color: active ? 'primary.main' : 'text.secondary',
-                            borderRadius: '999px',
-                            px: 1.25,
-                            py: '3px',
-                            fontSize: '0.8125rem',
-                            fontWeight: 600,
-                            fontFamily: 'inherit',
-                            cursor: 'pointer',
-                            whiteSpace: 'nowrap',
-                          })}
-                        >
-                          {filterLabels[filter.id]} ({count})
-                        </Box>
-                      );
-                    })}
-                  </Box>
-                  <Table
-                    columns={columns}
-                    data={selectedResources}
-                    filterFunction={healthFilterFunction}
-                    // Worst health first by default, so a broken workload is
-                    // on page one instead of behind a search or a next-arrow.
-                    initialState={{
-                      sorting: [{ id: 'health', desc: false }],
-                    }}
-                    state={{
-                      columnVisibility: {
-                        cluster: !!showClusterColumn,
-                      },
-                    }}
-                  />
-                </>
+                <Table
+                  columns={columns}
+                  data={selectedResources}
+                  // Worst health first by default, so a broken workload is
+                  // on page one instead of behind a search or a next-arrow.
+                  initialState={{
+                    sorting: [{ id: 'health', desc: false }],
+                  }}
+                  state={{
+                    columnVisibility: {
+                      cluster: !!showClusterColumn,
+                      health: showHealthColumn,
+                    },
+                  }}
+                />
               )}
             </Box>
           )}

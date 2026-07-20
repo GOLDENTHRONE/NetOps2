@@ -40,7 +40,7 @@ import { ProjectResourcesTab, useResourceCategoriesList } from '../project/Proje
 import { ResourceCategoriesList } from '../project/ResourceCategoriesList';
 import { GraphFilter } from '../resourceMap/graph/graphFiltering';
 import { GraphView } from '../resourceMap/GraphView';
-import { ResourceQuotaTable } from '../resourceQuota/Details';
+import { ResourceQuotaCompactList } from '../resourceQuota/Details';
 import { evaluateApplicationHealth } from './applicationHealth';
 import { ApplicationHealthChip, buildWorkloadObjectsMap } from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
@@ -241,8 +241,6 @@ export function ApplicationOverview({
     () => buildWorkloadObjectsMap(applicationResources, health),
     [applicationResources, health]
   );
-  const downCount = health.workloads.filter(w => w.state === 'down').length;
-  const degradedCount = health.workloads.filter(w => w.state === 'degraded').length;
 
   return (
     <Grid container spacing={3} sx={{ pt: 2 }}>
@@ -276,32 +274,20 @@ export function ApplicationOverview({
                       {NOT_AVAILABLE}
                     </Typography>
                   ) : (
-                    <>
-                      <StatusLabel
-                        status={
-                          health.status === 'unhealthy'
-                            ? 'error'
-                            : health.status === 'degraded' || health.status === 'progressing'
-                            ? 'warning'
-                            : 'success'
-                        }
-                      >
-                        {t('translation|{{ ready }}/{{ total }} ready', {
-                          ready: health.readyWorkloads,
-                          total: health.totalWorkloads,
-                        })}
-                      </StatusLabel>
-                      {downCount > 0 && (
-                        <StatusLabel status="error">
-                          {downCount} {t('translation|down')}
-                        </StatusLabel>
-                      )}
-                      {degradedCount > 0 && (
-                        <StatusLabel status="warning">
-                          {degradedCount} {t('translation|degraded')}
-                        </StatusLabel>
-                      )}
-                    </>
+                    <StatusLabel
+                      status={
+                        health.status === 'unhealthy'
+                          ? 'error'
+                          : health.status === 'degraded' || health.status === 'progressing'
+                          ? 'warning'
+                          : 'success'
+                      }
+                    >
+                      {t('translation|{{ ready }}/{{ total }} ready', {
+                        ready: health.readyWorkloads,
+                        total: health.totalWorkloads,
+                      })}
+                    </StatusLabel>
                   )}
                 </Box>
               </Box>
@@ -366,7 +352,7 @@ export function ApplicationOverview({
                     </Typography>
                     <EditButton item={it} />
                   </Box>
-                  <ResourceQuotaTable resourceStats={it.resourceStats} />
+                  <ResourceQuotaCompactList resourceStats={it.resourceStats} />
                 </Box>
               ))}
 
@@ -427,6 +413,12 @@ function ApplicationAccess({
         header: t('glossary|Cluster'),
         gridTemplate: 'min-content',
         accessorFn: item => item.cluster,
+        // The cluster is an object of its own: link it to the cluster view.
+        Cell: ({ row: { original } }) => (
+          <Link routeName="cluster" params={{ cluster: original.cluster }}>
+            {original.cluster}
+          </Link>
+        ),
       },
       {
         id: 'age',

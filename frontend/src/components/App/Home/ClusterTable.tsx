@@ -19,6 +19,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Popover from '@mui/material/Popover';
+import Skeleton from '@mui/material/Skeleton';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import {
@@ -26,7 +27,7 @@ import {
   MRT_SortingState,
   MRT_VisibilityState,
 } from 'material-react-table';
-import { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generatePath, useHistory } from 'react-router-dom';
 import { getClusterAppearanceFromMeta } from '../../../helpers/clusterAppearance';
@@ -67,69 +68,62 @@ import { getCustomClusterNames } from './customClusterNames';
  * @param {ApiError|null} [props.error] - The error object if there is an error with the cluster.
  */
 /**
- * Builds the "what does this status mean, and why is it shown" explanation
- * for the status popover, from the real probe result: the status text, a
- * one-line meaning, the concrete evidence, and (when useful) a next step.
+ * The key health indicators behind a cluster status, as compact
+ * label → value facts (the way kubectl would show them), not prose. Only
+ * facts that were actually probed are listed.
  */
-function explainClusterStatus(
+function clusterStatusFacts(
   t: (key: string, options?: any) => string,
   error: ApiError | null | undefined,
   condition: ReturnType<typeof getClusterStatusInfo>['condition'],
   version?: string
-): { meaning: string; evidence: string[]; nextStep?: string } {
-  if (condition?.status === 'False') {
-    return {
-      meaning: t(
-        'translation|The fleet inventory reports this cluster’s control plane as unhealthy, even if its API answers.'
-      ),
-      evidence: [condition.reason, condition.message, condition.lastTransitionTime].filter(
-        Boolean
-      ) as string[],
-      nextStep: t('translation|Check the control plane components (apiserver, etcd, scheduler).'),
-    };
-  }
+): { label: string; value: string; bad?: boolean }[] {
+  const facts: { label: string; value: string; bad?: boolean }[] = [];
+
+  // API reachability, from the real /version health probe.
   if (error === null || error === undefined) {
-    return {
-      meaning: t(
-        'translation|Headlamp reached the API server and the credentials were accepted — the cluster is serving requests.'
-      ),
-      evidence: [
-        version
-          ? t('translation|Health probe (/version) succeeded: Kubernetes {{ version }}', {
-              version,
-            })
-          : t('translation|Health probe (/version) succeeded.'),
-      ],
-    };
+    facts.push({ label: t('translation|API server'), value: t('translation|Reachable (200 OK)') });
+    facts.push({ label: t('translation|Auth'), value: t('translation|Accepted') });
+  } else if (error.status === 401) {
+    facts.push({ label: t('translation|API server'), value: t('translation|Reachable') });
+    facts.push({
+      label: t('translation|Auth'),
+      value: t('translation|401 Unauthorized'),
+      bad: true,
+    });
+  } else if (error.status === 403) {
+    facts.push({ label: t('translation|API server'), value: t('translation|Reachable') });
+    facts.push({ label: t('translation|RBAC'), value: t('translation|403 Forbidden'), bad: true });
+  } else {
+    facts.push({
+      label: t('translation|API server'),
+      value: error.status
+        ? t('translation|No response (HTTP {{ status }})', { status: error.status })
+        : t('translation|No response'),
+      bad: true,
+    });
   }
-  if (error.status === 401) {
-    return {
-      meaning: t(
-        'translation|The API server answered but rejected the credentials (HTTP 401), so nothing can be read.'
-      ),
-      evidence: [error.message].filter(Boolean) as string[],
-      nextStep: t('translation|Refresh the kubeconfig credentials (the token may have expired).'),
-    };
+
+  if (version) {
+    facts.push({ label: t('translation|Version'), value: version });
   }
-  if (error.status === 403) {
-    return {
-      meaning: t(
-        'translation|Authentication succeeded but RBAC denies access (HTTP 403) to what Headlamp needs.'
-      ),
-      evidence: [error.message].filter(Boolean) as string[],
-      nextStep: t('translation|Grant the user get/list permissions (a read-only ClusterRole).'),
-    };
+
+  // Control plane health, when the fleet inventory reports it.
+  if (condition) {
+    facts.push({
+      label: t('translation|Control plane'),
+      value:
+        condition.status === 'True'
+          ? t('translation|Healthy')
+          : condition.reason || condition.status || t('translation|Unknown'),
+      bad: condition.status === 'False',
+    });
+    if (condition.status === 'False' && condition.message) {
+      facts.push({ label: t('translation|Reason'), value: condition.message, bad: true });
+    }
   }
-  return {
-    meaning: t(
-      'translation|The API server did not answer Headlamp’s health probe, so the cluster is unreachable from here.'
-    ),
-    evidence: [
-      error.status ? t('translation|HTTP status: {{ status }}', { status: error.status }) : '',
-      error.message,
-    ].filter(Boolean) as string[],
-    nextStep: t('translation|Check the endpoint, network/VPN and that the API server is up.'),
-  };
+
+  return facts;
 }
 
 function ClusterStatus({
@@ -203,24 +197,11 @@ function ClusterStatus({
   const { kind, text, condition } = getClusterStatusInfo(cluster, error, t);
   const variant = STATUS_VARIANTS[kind];
   const color = theme.palette.home.status[variant.colorKey];
-  const explanation = explainClusterStatus(t, error, condition, version);
-
-  // For a reachable cluster, surface the concrete facts an operator actually
-  // wants right in the cell — not behind a click: what the probe verified and
-  // what the fleet inventory says about the control plane.
-  const inlineFacts: string[] = [];
-  if (kind === 'active') {
-    if (condition?.status === 'True') {
-      inlineFacts.push(t('translation|control plane healthy'));
-    }
-    if (version) {
-      inlineFacts.push(version);
-    }
-  }
+  const facts = clusterStatusFacts(t, error, condition, version);
 
   return (
     <>
-      <LightTooltip title={t('translation|Click to see the probe evidence')}>
+      <LightTooltip title={t('translation|Click to see')}>
         <Box
           component="button"
           type="button"
@@ -235,7 +216,6 @@ function ClusterStatus({
             padding: 0,
             cursor: 'pointer',
             fontFamily: 'inherit',
-            textAlign: 'left',
           }}
         >
           <Icon icon={variant.icon} width={16} color={color} />
@@ -249,14 +229,6 @@ function ClusterStatus({
           >
             {text}
           </Typography>
-          {inlineFacts.length > 0 && (
-            <Typography
-              variant="caption"
-              sx={{ ml: 1, color: theme.palette.text.secondary, whiteSpace: 'nowrap' }}
-            >
-              {inlineFacts.join(' · ')}
-            </Typography>
-          )}
         </Box>
       </LightTooltip>
       <Popover
@@ -267,34 +239,40 @@ function ClusterStatus({
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{ paper: { sx: { p: 1.5, maxWidth: 360, minWidth: 240 } } }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Icon icon={variant.icon} width={18} color={color} />
           <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
             {text}
           </Typography>
         </Box>
-        <Typography variant="body2" color="text.secondary">
-          {explanation.meaning}
-        </Typography>
-        {explanation.evidence.length > 0 && (
-          <Box sx={{ mt: 1 }}>
-            {explanation.evidence.map(line => (
-              <Typography
-                key={line}
-                variant="caption"
-                component="div"
-                sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}
-              >
-                {line}
+        {/* Compact label → value facts, the indicators behind the verdict. */}
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'max-content 1fr',
+            columnGap: 1.5,
+            rowGap: 0.25,
+          }}
+        >
+          {facts.map(fact => (
+            <React.Fragment key={fact.label + fact.value}>
+              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                {fact.label}
               </Typography>
-            ))}
-          </Box>
-        )}
-        {explanation.nextStep && (
-          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
-            → {explanation.nextStep}
-          </Typography>
-        )}
+              <Typography
+                variant="caption"
+                sx={{
+                  fontFamily: 'monospace',
+                  overflowWrap: 'anywhere',
+                  color: fact.bad ? theme.palette.error.main : undefined,
+                  fontWeight: fact.bad ? 600 : undefined,
+                }}
+              >
+                {fact.value}
+              </Typography>
+            </React.Fragment>
+          ))}
+        </Box>
       </Popover>
     </>
   );
@@ -519,16 +497,44 @@ export default function ClusterTable({
         {
           id: 'warnings',
           header: t('Warnings'),
-          // Warnings track connection status: list them for connected clusters
-          // (⋯ while loading), blank for clusters that aren't connected.
+          // Warnings track connection status: list them for connected clusters,
+          // blank for clusters that aren't connected. '⋯' = still loading,
+          // 'n/a' = the events query failed (see renderWarningsText).
           accessorFn: cluster =>
             isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '⋯' : '',
+          Cell: ({ cell }) => {
+            const value = cell.getValue<string>();
+            if (value === '⋯') {
+              // A quiet pill-shaped skeleton while the (now small, capped)
+              // events query is in flight — not a mystery glyph.
+              return <Skeleton variant="rounded" width={28} height={18} />;
+            }
+            if (value === 'n/a') {
+              return (
+                <LightTooltip
+                  title={t('translation|Warning events could not be read from this cluster.')}
+                >
+                  <Typography component="span" variant="caption" color="text.secondary">
+                    {value}
+                  </Typography>
+                </LightTooltip>
+              );
+            }
+            return value;
+          },
         },
         {
           id: 'version',
           header: t('glossary|Kubernetes Version'),
           accessorFn: ({ name }) =>
             isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
+          Cell: ({ cell }) => {
+            const value = cell.getValue<string>();
+            if (value === '⋯') {
+              return <Skeleton variant="rounded" width={64} height={18} />;
+            }
+            return value;
+          },
         },
         {
           id: 'actions',

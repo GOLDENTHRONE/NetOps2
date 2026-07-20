@@ -116,6 +116,21 @@ describe('evaluateApplicationHealth', () => {
     expect(h.workloads[0].reason).toMatch(/failed/i);
   });
 
+  it('summarizes with the actual failing workloads, not a generic sentence', () => {
+    const h = evaluateApplicationHealth([
+      deploy('web', 3, 0),
+      {
+        kind: 'Job',
+        metadata: { name: 'migrate', namespace: 'shop' },
+        spec: { completions: 1 },
+        status: { failed: 1, conditions: [{ type: 'Failed', status: 'True' }] },
+      },
+    ]);
+    expect(h.summary).toContain('Deployment web');
+    expect(h.summary).toContain('Job migrate');
+    expect(h.summary).toContain('Job failed');
+  });
+
   it('treats a running Job as progressing, not down', () => {
     const job: ResourceLike = {
       kind: 'Job',
