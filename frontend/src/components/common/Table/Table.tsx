@@ -191,23 +191,28 @@ const StyledHeadRow = styled('tr')(({ theme }) => ({
   display: 'contents',
   background: theme.palette.background.muted,
 }));
-const StyledRow = styled('tr')(({ theme }) => ({
-  display: 'contents',
-  // The row itself paints no box (display: contents), so hover and selection
-  // tint the row's cells instead.
-  '&:hover > td': {
-    backgroundColor:
-      theme.palette.mode === 'dark'
-        ? alpha(theme.palette.common.white, 0.04)
-        : alpha(theme.palette.primary.main, 0.03),
-  },
-  '&[data-selected=true]': {
-    background: alpha(theme.palette.primary.main, 0.2),
-  },
-  '&[data-selected=true] > td': {
-    backgroundColor: alpha(theme.palette.primary.main, 0.12),
-  },
-}));
+const StyledRow = styled('tr')(({ theme }) => {
+  const hoverTint =
+    theme.palette.mode === 'dark'
+      ? alpha(theme.palette.common.white, 0.04)
+      : alpha(theme.palette.primary.main, 0.03);
+  const selectedTint = alpha(theme.palette.primary.main, 0.12);
+  return {
+    display: 'contents',
+    // The row itself paints no box (display: contents), so hover and selection
+    // tint the row's cells instead. The tint is layered via background-IMAGE,
+    // not background-color, so a cell that carries its own opaque background —
+    // the sticky Actions column — stays opaque on hover/selection instead of
+    // turning translucent and letting the horizontally-scrolled cells bleed
+    // through it (which read as overlapping text in the Actions column).
+    '&:hover > td': {
+      backgroundImage: `linear-gradient(${hoverTint}, ${hoverTint})`,
+    },
+    '&[data-selected=true] > td': {
+      backgroundImage: `linear-gradient(${selectedTint}, ${selectedTint})`,
+    },
+  };
+});
 const StyledBody = styled('tbody')({ display: 'contents' });
 
 /**

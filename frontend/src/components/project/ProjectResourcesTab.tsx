@@ -27,7 +27,7 @@ import {
 } from '@mui/material';
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link as RouterLink, useHistory } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router-dom';
 import Deployment from '../../lib/k8s/deployment';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import Pod from '../../lib/k8s/pod';
@@ -307,9 +307,10 @@ function ResourceHealthChip({
 }
 
 /**
- * A one-line, kind-specific summary for the Details column, so the column is
- * meaningful for every kind instead of blank outside workloads. Falls back to
- * the apiVersion — every resource at least says what API it comes from.
+ * A one-line, kind-specific summary for the Details column (replicas,
+ * schedule, ports, keys, …). Returns '' when the kind has no detail worth
+ * showing, so the cell renders "N/A" instead of irrelevant filler such as the
+ * apiVersion.
  */
 export function getResourceDetails(resource: KubeObject): string {
   const kind = resource.kind;
@@ -381,7 +382,8 @@ export function getResourceDetails(resource: KubeObject): string {
         0
       )} address(es)`;
     default:
-      return json.apiVersion ?? '';
+      // No kind-specific detail worth showing — the cell will render "N/A".
+      return '';
   }
 }
 
@@ -407,7 +409,6 @@ export function ProjectResourcesTab({
   directObjectLinks,
 }: ProjectResourcesTabProps) {
   const { t } = useTranslation();
-  const history = useHistory();
 
   const resourceCategories = useResourceCategoriesList(projectResources);
 
@@ -505,15 +506,23 @@ export function ProjectResourcesTab({
       {
         id: 'details',
         gridTemplate: 'min-content',
-        // One line of kind-specific facts (replicas, schedule, ports, keys…)
-        // for EVERY kind — never a blank cell.
-        accessorFn: resource => getResourceDetails(resource),
+        // One line of kind-specific facts (replicas, schedule, ports, keys…);
+        // "N/A" when the kind has no detail worth showing — never filler.
+        accessorFn: resource => getResourceDetails(resource) || t('N/A'),
         header: t('Details'),
-        Cell: ({ cell }) => (
-          <Typography variant="body2" color="text.secondary" whiteSpace="nowrap">
-            {cell.getValue<string>()}
-          </Typography>
-        ),
+        Cell: ({ cell }) => {
+          const value = cell.getValue<string>();
+          const isNA = value === t('N/A');
+          return (
+            <Typography
+              variant="body2"
+              color={isNA ? 'text.disabled' : 'text.secondary'}
+              whiteSpace="nowrap"
+            >
+              {value}
+            </Typography>
+          );
+        },
       },
       {
         id: 'age',
@@ -548,16 +557,36 @@ export function ProjectResourcesTab({
           const resource = row.original;
           const isPod = resource.kind === 'Pod';
 
-          // Labeled pills, so no action has to be guessed from an icon. Every
-          // kind gets at least "View"; pods and scalables add their own.
+          // Only real operations belong here — the row name already links to
+          // the object, so there is no "View" action. Resources that expose no
+          // operation (Services, ConfigMaps, RBAC, …) show "n/a" rather than an
+          // empty cell or a button that does nothing.
+          if (!resource.isScalable && !isPod) {
+            return (
+              <Typography variant="caption" color="text.secondary">
+                {t('n/a')}
+              </Typography>
+            );
+          }
+
+          // Labeled pills, so no action has to be guessed from a bare icon.
+          // The :empty fallback covers the case where every action is hidden
+          // by RBAC (e.g. no scale/exec/delete permission): the cell shows a
+          // muted "n/a" instead of going blank.
           return (
-            <Box display="flex" alignItems="center" gap={1} justifyContent="flex-end">
-              <ActionButton
-                description={t('View')}
-                icon="mdi:open-in-app"
-                buttonStyle="pill"
-                onClick={() => history.push(resource.getDetailsLink())}
-              />
+            <Box
+              sx={theme => ({
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                justifyContent: 'flex-end',
+                '&:empty::after': {
+                  content: '"n/a"',
+                  color: theme.palette.text.secondary,
+                  fontSize: '0.75rem',
+                },
+              })}
+            >
               {resource.isScalable && (
                 <ScaleButton
                   item={resource as Deployment | StatefulSet | ReplicaSet}
@@ -626,7 +655,7 @@ export function ProjectResourcesTab({
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, showClusterColumn, directObjectLinks, history]
+    [t, showClusterColumn, directObjectLinks]
   );
 
   return (

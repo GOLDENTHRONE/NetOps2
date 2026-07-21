@@ -141,39 +141,6 @@ export function ResourceQuotaTable({
   );
 }
 
-/**
- * A compact, vertically stacked quota view for narrow places (the Overview
- * cards): one row per resource with "used / hard" and the usage bar under it.
- * Unlike the 4-column table, nothing gets cut off at card widths.
- */
-export function ResourceQuotaCompactList({
-  resourceStats,
-}: {
-  resourceStats: {
-    name: string;
-    hard: string;
-    used: string;
-  }[];
-}) {
-  return (
-    <Box>
-      {resourceStats.map(stat => (
-        <Box key={stat.name} sx={{ mb: 1.25 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, minWidth: 0 }}>
-            <Typography variant="body2" noWrap title={stat.name}>
-              {stat.name}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-              {formatQuotaValue(stat.name, stat.used)} / {formatQuotaValue(stat.name, stat.hard)}
-            </Typography>
-          </Box>
-          <QuotaUsageBar name={stat.name} used={stat.used} hard={stat.hard} />
-        </Box>
-      ))}
-    </Box>
-  );
-}
-
 export default function ResourceQuotaDetails(props: {
   name?: string;
   namespace?: string;

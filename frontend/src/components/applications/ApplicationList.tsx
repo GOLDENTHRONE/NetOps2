@@ -25,18 +25,14 @@ import {
   Typography,
   useTheme,
 } from '@mui/material';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
 import { AppHealth, evaluateApplicationHealth, healthSortRank } from './applicationHealth';
-import {
-  ApplicationHealthChip,
-  buildWorkloadObjectsMap,
-  LoadingDots,
-} from './ApplicationHealthChip';
+import { ApplicationHealthChip, buildWorkloadObjectsMap } from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
 import { groupResourcesByApplication, useAllApplicationResources } from './useApplicationResources';
 import { useApplicationDefinitions } from './useApplications';
@@ -206,6 +202,64 @@ interface AppRow extends ApplicationDefinition {
   resourcesLoading: boolean;
 }
 
+/**
+ * A single, professional full-page loading state for the whole table: a header
+ * band plus shimmer rows, shown while application definitions and their
+ * resources load. This replaces per-cell placeholders — every cell (name,
+ * clusters, resource count, health) appears at once, fully populated, instead
+ * of the Resources/Health columns visibly filling in after the rest.
+ */
+function ApplicationsTableSkeleton({ rows = 8 }: { rows?: number }) {
+  const { t } = useTranslation(['translation']);
+  return (
+    <Box aria-busy="true" aria-label={t('translation|Loading applications')}>
+      <Box
+        sx={theme => ({
+          border: '1px solid',
+          borderColor: theme.palette.tables.head.borderColor,
+          borderRadius: '10px',
+          overflow: 'hidden',
+        })}
+      >
+        <Box
+          sx={theme => ({
+            display: 'flex',
+            gap: 3,
+            px: 2,
+            py: 1.25,
+            backgroundColor: theme.palette.background.muted,
+            borderBottom: '1px solid',
+            borderColor: theme.palette.divider,
+          })}
+        >
+          {['30%', '10%', '12%', '28%'].map((w, i) => (
+            <Skeleton key={i} variant="text" width={w} height={20} />
+          ))}
+        </Box>
+        {Array.from({ length: rows }).map((_, r) => (
+          <Box
+            key={r}
+            sx={theme => ({
+              display: 'flex',
+              alignItems: 'center',
+              gap: 3,
+              px: 2,
+              py: 1.5,
+              borderBottom: r < rows - 1 ? '1px solid' : 'none',
+              borderColor: theme.palette.divider,
+            })}
+          >
+            <Skeleton variant="text" width="30%" height={18} />
+            <Skeleton variant="text" width="6%" height={18} />
+            <Skeleton variant="rounded" width={110} height={24} />
+            <Skeleton variant="text" width="26%" height={18} />
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
 export default function ApplicationList() {
   const { t } = useTranslation(['translation', 'glossary']);
   const { applications, errors, isLoading } = useApplicationDefinitions();
@@ -259,6 +313,24 @@ export default function ApplicationList() {
       }),
     [applications, summaries, resourcesLoading]
   );
+
+  // Reveal the fully-populated table only once the data it shows is ready, so
+  // the Resources/Health columns never visibly fill in after the rest. A
+  // safety timeout reveals whatever has arrived if one cluster keeps a list
+  // pending, so a single slow cluster can never block the whole table forever.
+  const dataReady = !isLoading && !resourcesLoading;
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    if (revealed) {
+      return;
+    }
+    if (dataReady) {
+      setRevealed(true);
+      return;
+    }
+    const id = setTimeout(() => setRevealed(true), 10000);
+    return () => clearTimeout(id);
+  }, [dataReady, revealed]);
 
   // No selection means show every application (all namespaces).
   const filterFunction = useCallback(
@@ -422,27 +494,11 @@ export default function ApplicationList() {
 
       <ClusterGroupErrorMessage errors={[...errors, ...resourceErrors]} />
 
-      {isLoading ? (
-        // While the application list itself is loading, show the same quiet
-        // three-dot pulse as Headlamp's splash on a soft neutral surface,
-        // instead of a spinner — calmer and consistent with the app's opening.
-        <Box
-          sx={theme => ({
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: 1.5,
-            minHeight: 260,
-            borderRadius: '10px',
-            backgroundColor: theme.palette.background.muted,
-          })}
-        >
-          <LoadingDots size={10} />
-          <Typography variant="body2" color="text.secondary">
-            {t('translation|Discovering applications…')}
-          </Typography>
-        </Box>
+      {!revealed ? (
+        // One professional full-page loading state (header + shimmer rows) for
+        // the whole table, instead of letting the Resources/Health cells fill
+        // in individually after the name/cluster columns.
+        <ApplicationsTableSkeleton />
       ) : (
         <Table
           columns={columns}
@@ -455,7 +511,10 @@ export default function ApplicationList() {
           // Resources/Health cells; the id keeps sorting and selection stable.
           getRowId={row => row.id}
           initialState={{
-            sorting: [{ id: 'name', desc: false }],
+            // Default to health severity (worst first) so Critical/Unhealthy
+            // applications are at the top, then Degraded/Progressing, then
+            // Healthy — an operator sees what needs attention without sorting.
+            sorting: [{ id: 'health', desc: false }],
           }}
         />
       )}
