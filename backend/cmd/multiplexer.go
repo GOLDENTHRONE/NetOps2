@@ -221,6 +221,14 @@ func NewMultiplexer(kubeConfigStore kubeconfig.ContextStore, unsafeUseServiceAcc
 	}
 }
 
+func (m *Multiplexer) SetOriginValidator(validator func(*http.Request) bool) {
+	if validator == nil {
+		return
+	}
+
+	m.upgrader.CheckOrigin = validator
+}
+
 // readServiceAccountToken reads the service account token from path, caching the value
 // per path and refreshing it when the file's mtime changes (e.g. kubelet token rotation).
 func (m *Multiplexer) readServiceAccountToken(path string) (string, error) {

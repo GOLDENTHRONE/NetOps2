@@ -233,6 +233,16 @@ var ParseWithEnvTests = []struct {
 			assert.Equal(t, "X-Env-Token-Header", conf.ProxyAuthTokenHeader)
 		},
 	},
+	{
+		name: "cors_allowed_origins_from_env",
+		args: []string{"go run ./cmd"},
+		env: map[string]string{
+			"HEADLAMP_CONFIG_CORS_ALLOWED_ORIGINS": "https://a.example.com,https://b.example.com",
+		},
+		verify: func(t *testing.T, conf *config.Config) {
+			assert.Equal(t, "https://a.example.com,https://b.example.com", conf.CORSAllowedOrigins)
+		},
+	},
 }
 
 func TestParseWithEnv(t *testing.T) {
@@ -438,6 +448,13 @@ func TestProxyAuthFlags(t *testing.T) {
 			args: []string{"go run ./cmd", "--proxy-auth-token-header=X-Custom-Token"},
 			verify: func(t *testing.T, conf *config.Config) {
 				assert.Equal(t, "X-Custom-Token", conf.ProxyAuthTokenHeader)
+			},
+		},
+		{
+			name: "cors_allowed_origins_flag",
+			args: []string{"go run ./cmd", "--cors-allowed-origins=https://ui.example.com,https://admin.example.com"},
+			verify: func(t *testing.T, conf *config.Config) {
+				assert.Equal(t, "https://ui.example.com,https://admin.example.com", conf.CORSAllowedOrigins)
 			},
 		},
 	}

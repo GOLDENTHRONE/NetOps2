@@ -31,6 +31,21 @@ var (
 	AppName = "Headlamp"
 )
 
+var upstreamCORSHeaders = []string{
+	"Access-Control-Allow-Origin",
+	"Access-Control-Allow-Methods",
+	"Access-Control-Allow-Headers",
+	"Access-Control-Allow-Credentials",
+	"Access-Control-Expose-Headers",
+	"Access-Control-Max-Age",
+}
+
+func stripUpstreamCORSHeaders(header http.Header) {
+	for _, corsHeader := range upstreamCORSHeaders {
+		header.Del(corsHeader)
+	}
+}
+
 // userAgentRoundTripper wraps an http.RoundTripper and adds a Headlamp User-Agent header.
 type userAgentRoundTripper struct {
 	base      http.RoundTripper
@@ -435,6 +450,11 @@ func (c *Context) SetupProxy() error {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(URL)
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		stripUpstreamCORSHeaders(resp.Header)
+
+		return nil
+	}
 
 	restConf, err := c.RESTConfig()
 	if err == nil {

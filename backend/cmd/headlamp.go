@@ -330,6 +330,32 @@ func serveWithNoCacheHeader(fs http.Handler) http.HandlerFunc {
 	}
 }
 
+func newOriginValidator(devMode bool, allowedOrigins []string) func(string) bool {
+	if devMode {
+		return func(string) bool { return true }
+	}
+
+	allow := map[string]struct{}{}
+	for _, origin := range allowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin == "" {
+			continue
+		}
+
+		allow[origin] = struct{}{}
+	}
+
+	return func(origin string) bool {
+		if origin == "" {
+			return false
+		}
+
+		_, ok := allow[origin]
+
+		return ok
+	}
+}
+
 func defaultHeadlampKubeConfigFile() (string, error) {
 	return cfg.DefaultHeadlampKubeConfigFile()
 }
@@ -1142,24 +1168,20 @@ func createHeadlampHandler(ctx context.Context, config *HeadlampConfig) http.Han
 		http.Handle("/", r)
 	}
 
-	// On dev mode we're loose about where connections come from
-	if config.DevMode {
-		headers := handlers.AllowedHeaders([]string{
-			"X-HEADLAMP_BACKEND-TOKEN", "X-Requested-With", "Content-Type",
-			"Authorization", "Forward-To",
-			"KUBECONFIG", "X-HEADLAMP-USER-ID",
-		})
-		methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "HEAD", "DELETE", "PATCH", "OPTIONS"})
+	headers := handlers.AllowedHeaders([]string{
+		"X-HEADLAMP_BACKEND-TOKEN", "X-Requested-With", "Content-Type",
+		"Authorization", "Forward-To",
+		"KUBECONFIG", "X-HEADLAMP-USER-ID",
+	})
+	methods := handlers.AllowedMethods([]string{"GET", "POST", "PUT", "HEAD", "DELETE", "PATCH", "OPTIONS"})
+	corsOriginValidator := newOriginValidator(config.DevMode, config.CORSAllowedOrigins)
 
-		return handlers.CORS(
-			headers,
-			methods,
-			handlers.AllowCredentials(),
-			handlers.AllowedOriginValidator(func(s string) bool { return true }),
-		)(r)
-	}
-
-	return r
+	return handlers.CORS(
+		headers,
+		methods,
+		handlers.AllowCredentials(),
+		handlers.AllowedOriginValidator(corsOriginValidator),
+	)(r)
 }
 
 func clearRequestAuthorization(r *http.Request) {

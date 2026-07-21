@@ -14,6 +14,9 @@ type UserAgentRoundTripper struct {
 	UserAgent string
 }
 
+// StripUpstreamCORSHeaders is exported for testing.
+var StripUpstreamCORSHeaders = stripUpstreamCORSHeaders
+
 type roundTripperInterface interface {
 	RoundTrip(*http.Request) (*http.Response, error)
 }

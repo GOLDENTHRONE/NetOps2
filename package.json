@@ -98,5 +98,8 @@
     "dashboard",
     "cluster",
     "management"
-  ]
+  ],
+  "dependencies": {
+    "react-icons": "^5.7.0"
+  }
 }

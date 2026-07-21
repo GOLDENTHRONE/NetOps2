@@ -69,6 +69,7 @@ type HeadlampCFG struct {
 	Metrics                *telemetry.Metrics
 	BaseURL                string
 	ProxyURLs              []string
+	CORSAllowedOrigins     []string
 
 	TLSCertPath                  string
 	TLSKeyPath                   string
@@ -82,6 +83,7 @@ type HeadlampCFG struct {
 	ForceTheme                   string
 	UnsafeUseServiceAccountToken bool
 	ServiceAccountTokenPath      string
+	WSOriginAllowed              func(*http.Request) bool
 
 	EnableClusterInventory                bool
 	ClusterInventoryProviderFile          string

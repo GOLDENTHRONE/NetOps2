@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/kubeconfig"
@@ -249,6 +250,32 @@ func testPropagatesErrors(t *testing.T) {
 	if resp != nil && resp.Body != nil {
 		defer func() { _ = resp.Body.Close() }()
 	}
+}
+
+func TestStripUpstreamCORSHeaders(t *testing.T) {
+	header := make(http.Header)
+	header.Set("Access-Control-Allow-Origin", "https://upstream.example.com")
+	header.Set("Access-Control-Allow-Methods", "GET")
+	header.Set("Access-Control-Allow-Headers", "Authorization")
+	header.Set("Access-Control-Allow-Credentials", "true")
+	header.Set("Access-Control-Expose-Headers", "X-Test")
+	header.Set("Access-Control-Max-Age", "3600")
+	header.Set("Content-Type", "application/json")
+
+	kubeconfig.StripUpstreamCORSHeaders(header)
+
+	for _, key := range []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Allow-Credentials",
+		"Access-Control-Expose-Headers",
+		"Access-Control-Max-Age",
+	} {
+		assert.True(t, strings.TrimSpace(header.Get(key)) == "", "expected %s to be stripped", key)
+	}
+
+	assert.Equal(t, "application/json", header.Get("Content-Type"))
 }
 
 func TestUserAgentIntegration(t *testing.T) {

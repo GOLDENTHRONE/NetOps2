@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -229,6 +230,37 @@ func TestDialWebSocket_Errors(t *testing.T) {
 	ws, err = m.dialWebSocket("ws://localhost:12345", tlsConfig, "", nil)
 	assert.Error(t, err)
 	assert.Nil(t, ws)
+}
+
+func TestSetOriginValidator(t *testing.T) {
+	m := NewMultiplexer(kubeconfig.NewContextStore(), false)
+	m.SetOriginValidator(func(r *http.Request) bool {
+		return r.Header.Get("Origin") == "https://allowed.example.com"
+	})
+
+	allowedReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/wsMultiplexer", nil)
+	allowedReq.Header.Set("Origin", "https://allowed.example.com")
+	rejectedReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/wsMultiplexer", nil)
+	rejectedReq.Header.Set("Origin", "https://blocked.example.com")
+
+	assert.True(t, m.upgrader.CheckOrigin(allowedReq))
+	assert.False(t, m.upgrader.CheckOrigin(rejectedReq))
+}
+
+func TestNewOriginValidator_DevModeAllowsAll(t *testing.T) {
+	validator := newOriginValidator(true, []string{"https://ui.example.com"})
+
+	assert.True(t, validator("https://random.example.com"))
+	assert.True(t, validator(""))
+}
+
+func TestNewOriginValidator_ProdAllowsOnlyConfiguredOrigins(t *testing.T) {
+	validator := newOriginValidator(false, []string{"https://ui.example.com", " https://admin.example.com "})
+
+	assert.True(t, validator("https://ui.example.com"))
+	assert.True(t, validator("https://admin.example.com"))
+	assert.False(t, validator("https://other.example.com"))
+	assert.False(t, validator(""))
 }
 
 // TestDialWebSocket_BadHandshakeLogging verifies that when a WebSocket dial fails

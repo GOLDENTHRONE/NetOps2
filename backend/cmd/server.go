@@ -107,6 +107,24 @@ func buildHeadlampCFG(conf *config.Config, kubeConfigStore kubeconfig.ContextSto
 
 			return strings.Split(conf.ProxyURLs, ",")
 		}(),
+		CORSAllowedOrigins: func() []string {
+			if conf.CORSAllowedOrigins == "" {
+				return []string{}
+			}
+
+			origins := strings.Split(conf.CORSAllowedOrigins, ",")
+			trimmed := make([]string, 0, len(origins))
+			for _, origin := range origins {
+				origin = strings.TrimSpace(origin)
+				if origin == "" {
+					continue
+				}
+
+				trimmed = append(trimmed, origin)
+			}
+
+			return trimmed
+		}(),
 		ClusterInventoryProviderFile:          conf.ClusterInventoryProviderFile,
 		ClusterInventoryLabelSelector:         conf.ClusterInventoryLabelSelector,
 		ClusterInventoryRootReconcileInterval: conf.ClusterInventoryRootReconcileInterval,
@@ -235,6 +253,18 @@ func createHeadlampConfig(conf *config.Config) *HeadlampConfig {
 		logger.Log(logger.LevelError, nil, err, "failed to compile proxy URL patterns")
 		os.Exit(1)
 	}
+
+	corsValidator := newOriginValidator(cfg.DevMode, cfg.CORSAllowedOrigins)
+	cfg.WSOriginAllowed = func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+
+		return corsValidator(origin)
+	}
+	multiplexer.SetOriginValidator(func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+
+		return corsValidator(origin)
+	})
 
 	return &HeadlampConfig{
 		HeadlampConfig:    cfg,

@@ -840,6 +840,92 @@ func TestExternalProxyTimeout(t *testing.T) {
 	assert.Contains(t, rr.Body.String(), "context deadline exceeded")
 }
 
+func TestClusterProxyStripsUpstreamCORSHeaders(t *testing.T) {
+	clusterAPI := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "https://upstream.example.com")
+		w.Header().Set("Access-Control-Allow-Methods", "GET")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Upstream")
+		w.Header().Set("Access-Control-Max-Age", "7200")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer clusterAPI.Close()
+
+	store := kubeconfig.NewContextStore()
+	require.NoError(t, store.AddContext(&kubeconfig.Context{
+		Name: "test-cluster",
+		Cluster: &api.Cluster{
+			Server:                   clusterAPI.URL,
+			InsecureSkipTLSVerify:    true,
+			CertificateAuthorityData: []byte(""),
+		},
+		KubeContext: &api.Context{Cluster: "test-cluster", AuthInfo: "test-cluster"},
+		AuthInfo:    &api.AuthInfo{},
+	}))
+
+	handler := createHeadlampHandler(context.Background(), &HeadlampConfig{
+		HeadlampConfig: &headlampconfig.HeadlampConfig{
+			HeadlampCFG: &headlampconfig.HeadlampCFG{
+				UseInCluster:        false,
+				KubeConfigStore:     store,
+				CORSAllowedOrigins:  []string{"https://ui.example.com"},
+				UnsafeUseServiceAccountToken: false,
+			},
+			Cache:            cache.New[interface{}](),
+			TelemetryConfig:  GetDefaultTestTelemetryConfig(),
+			TelemetryHandler: &telemetry.RequestHandler{},
+		},
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/clusters/test-cluster/version", nil)
+	req.Header.Set("Origin", "https://ui.example.com")
+	req.Header.Set("Authorization", "Bearer test-token")
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "https://ui.example.com", rr.Header().Get("Access-Control-Allow-Origin"))
+	for _, key := range []string{
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Allow-Credentials",
+		"Access-Control-Expose-Headers",
+		"Access-Control-Max-Age",
+	} {
+		assert.LessOrEqual(t, len(rr.Header().Values(key)), 1, "expected single value for %s", key)
+	}
+}
+
+func TestPreflightAllowedOriginAndMethod(t *testing.T) {
+	handler := createHeadlampHandler(context.Background(), &HeadlampConfig{
+		HeadlampConfig: &headlampconfig.HeadlampConfig{
+			HeadlampCFG: &headlampconfig.HeadlampCFG{
+				UseInCluster:       false,
+				KubeConfigStore:    kubeconfig.NewContextStore(),
+				CORSAllowedOrigins: []string{"https://ui.example.com"},
+			},
+			Cache:            cache.New[interface{}](),
+			TelemetryConfig:  GetDefaultTestTelemetryConfig(),
+			TelemetryHandler: &telemetry.RequestHandler{},
+		},
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "/config", nil)
+	req.Header.Set("Origin", "https://ui.example.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Equal(t, "https://ui.example.com", rr.Header().Get("Access-Control-Allow-Origin"))
+	assert.Equal(t, "true", rr.Header().Get("Access-Control-Allow-Credentials"))
+}
+
 func TestDrainAndCordonNode(t *testing.T) { //nolint:funlen
 	type test struct {
 		handler http.Handler
