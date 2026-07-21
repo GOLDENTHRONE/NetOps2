@@ -194,10 +194,10 @@ export function evaluateWorkload(resource: ResourceLike): WorkloadHealth {
   }
 
   if (ready === 0) {
-    return { ...base, state: 'down', reason: `0/${desired} replicas ready` };
+    return { ...base, state: 'down', reason: `No replicas ready (0/${desired})` };
   }
   if (ready < desired) {
-    return { ...base, state: 'degraded', reason: `${ready}/${desired} replicas ready` };
+    return { ...base, state: 'degraded', reason: `Only ${ready}/${desired} replicas ready` };
   }
   if (updated < desired) {
     return { ...base, state: 'progressing', reason: `Rolling out (${updated}/${desired} updated)` };

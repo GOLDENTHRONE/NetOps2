@@ -70,31 +70,27 @@ export function ResourceCategoriesList({
     >
       <List dense>
         {categoryList.map(({ category, items, health }) => {
+          // Only categories with kinds that report readiness (Workloads) get a
+          // health icon + color. Network / Storage / Security / Configuration
+          // are counts only: no icon, plain black number — a status glyph on a
+          // ConfigMap or Service would be meaningless.
           const hasSignal = categoryHasHealthSignal(items);
           const error = health.error ?? 0;
           const warning = health.warning ?? 0;
           const success = health.success ?? 0;
 
-          const healthColor = !hasSignal
-            ? 'text.disabled'
-            : error > 0
-            ? 'error.main'
-            : warning > 0
-            ? 'warning.main'
-            : items.length > 0
-            ? 'success.main'
-            : 'grey.500';
+          const healthColor =
+            error > 0
+              ? 'error.main'
+              : warning > 0
+              ? 'warning.main'
+              : items.length > 0
+              ? 'success.main'
+              : 'grey.500';
 
-          // A short, technical explanation of what the icon means, so the
-          // ✓ / ! / ✕ never has to be guessed at.
-          let tooltip: string;
-          let healthIcon: string;
-          if (!hasSignal) {
-            // These kinds (ConfigMaps, Services, RBAC, …) have no readiness
-            // in Kubernetes: show a neutral dot, not a green check.
-            healthIcon = 'mdi:minus-circle-outline';
-            tooltip = t('translation|Count only — these kinds do not report a health status.');
-          } else {
+          let tooltip = '';
+          let healthIcon = '';
+          if (hasSignal) {
             healthIcon = getHealthIcon(success, error, warning);
             if (error > 0) {
               tooltip = t(
@@ -111,6 +107,25 @@ export function ResourceCategoriesList({
             }
           }
 
+          const countNode = (
+            <Box display="flex" alignItems="center" gap={0.5}>
+              <Typography
+                variant="h6"
+                sx={{
+                  // Health-bearing categories color the count by verdict;
+                  // count-only categories stay plain black for readability.
+                  color: hasSignal && items.length > 0 ? healthColor : 'text.primary',
+                  lineHeight: 1,
+                }}
+              >
+                {items.length}
+              </Typography>
+              {hasSignal && items.length > 0 && (
+                <Box component={Icon} icon={healthIcon} sx={{ fontSize: 20, color: healthColor }} />
+              )}
+            </Box>
+          );
+
           return (
             <ListItem key={category.label} disablePadding>
               <ListItemButton
@@ -120,28 +135,13 @@ export function ResourceCategoriesList({
                 <ListItemIcon>
                   <Icon icon={category.icon} style={{ fontSize: 32 }} />
                 </ListItemIcon>
-                <ListItemText primary={category.label} secondary={category.description} />
+                <ListItemText
+                  primary={category.label}
+                  secondary={category.description}
+                  primaryTypographyProps={{ sx: { color: 'text.primary', fontWeight: 600 } }}
+                />
                 <ListItemIcon sx={{ justifyContent: 'flex-end' }}>
-                  <LightTooltip title={tooltip}>
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Typography
-                        variant="h6"
-                        sx={{
-                          color: items.length > 0 ? healthColor : 'text.primary',
-                          lineHeight: 1,
-                        }}
-                      >
-                        {items.length}
-                      </Typography>
-                      {items.length > 0 && (
-                        <Box
-                          component={Icon}
-                          icon={healthIcon}
-                          sx={{ fontSize: 20, color: healthColor }}
-                        />
-                      )}
-                    </Box>
-                  </LightTooltip>
+                  {tooltip ? <LightTooltip title={tooltip}>{countNode}</LightTooltip> : countNode}
                 </ListItemIcon>
               </ListItemButton>
             </ListItem>

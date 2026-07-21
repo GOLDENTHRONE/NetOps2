@@ -158,28 +158,42 @@ export function HealthBreakdown({
       {health.totalWorkloads > 0 && (
         <>
           <Divider sx={{ my: 1 }} />
-          <Typography variant="caption" sx={{ fontWeight: 700 }}>
-            {t('translation|{{ ready }}/{{ total }} workloads ready', {
-              ready: health.readyWorkloads,
-              total: health.totalWorkloads,
-            })}
-          </Typography>
-          <Box sx={{ mt: 0.5 }}>
-            {(problems.length > 0 ? problems : health.workloads).slice(0, 8).map(w => (
-              <WorkloadRow
-                key={`${w.kind}/${w.namespace}/${w.name}`}
-                w={w}
-                kubeObject={workloadObjects?.get(`${w.kind}/${w.namespace}/${w.name}`)}
-              />
-            ))}
-            {problems.length > 8 && (
-              <Typography variant="caption" color="text.secondary">
-                {t('translation|…and {{ count }} more with problems', {
-                  count: problems.length - 8,
+          {problems.length > 0 ? (
+            // Problem apps lead with what is wrong and list ONLY the failing
+            // workloads — never the healthy "3/3 ready" rows — so an operator
+            // sees the cause immediately, not stats that look fine.
+            <>
+              <Typography variant="caption" sx={{ fontWeight: 700, color }}>
+                {t('translation|{{ count }} of {{ total }} workloads not ready', {
+                  count: problems.length,
+                  total: health.totalWorkloads,
                 })}
               </Typography>
-            )}
-          </Box>
+              <Box sx={{ mt: 0.5 }}>
+                {problems.slice(0, 8).map(w => (
+                  <WorkloadRow
+                    key={`${w.kind}/${w.namespace}/${w.name}`}
+                    w={w}
+                    kubeObject={workloadObjects?.get(`${w.kind}/${w.namespace}/${w.name}`)}
+                  />
+                ))}
+                {problems.length > 8 && (
+                  <Typography variant="caption" color="text.secondary">
+                    {t('translation|…and {{ count }} more with problems', {
+                      count: problems.length - 8,
+                    })}
+                  </Typography>
+                )}
+              </Box>
+            </>
+          ) : (
+            // Healthy app: the positive stat is the point here.
+            <Typography variant="caption" sx={{ fontWeight: 700 }}>
+              {t('translation|All {{ total }} workloads ready', {
+                total: health.totalWorkloads,
+              })}
+            </Typography>
+          )}
         </>
       )}
 

@@ -80,32 +80,48 @@ function clusterStatusFacts(
 ): { label: string; value: string; bad?: boolean }[] {
   const facts: { label: string; value: string; bad?: boolean }[] = [];
 
-  // API reachability, from the real /version health probe.
+  // API reachability + authn/authz, from the real /version health probe.
   if (error === null || error === undefined) {
-    facts.push({ label: t('translation|API server'), value: t('translation|Reachable (200 OK)') });
-    facts.push({ label: t('translation|Auth'), value: t('translation|Accepted') });
-  } else if (error.status === 401) {
-    facts.push({ label: t('translation|API server'), value: t('translation|Reachable') });
     facts.push({
-      label: t('translation|Auth'),
-      value: t('translation|401 Unauthorized'),
+      label: t('translation|API server'),
+      value: t('translation|Responding to /version (HTTP 200)'),
+    });
+    facts.push({
+      label: t('translation|Authentication'),
+      value: t('translation|Verified — credentials accepted'),
+    });
+  } else if (error.status === 401) {
+    facts.push({
+      label: t('translation|API server'),
+      value: t('translation|Responding (HTTP 401)'),
+    });
+    facts.push({
+      label: t('translation|Authentication'),
+      value: t('translation|Failed — credentials rejected'),
       bad: true,
     });
   } else if (error.status === 403) {
-    facts.push({ label: t('translation|API server'), value: t('translation|Reachable') });
-    facts.push({ label: t('translation|RBAC'), value: t('translation|403 Forbidden'), bad: true });
+    facts.push({
+      label: t('translation|API server'),
+      value: t('translation|Responding (HTTP 403)'),
+    });
+    facts.push({
+      label: t('translation|Authorization'),
+      value: t('translation|Denied — RBAC forbids access'),
+      bad: true,
+    });
   } else {
     facts.push({
       label: t('translation|API server'),
       value: error.status
-        ? t('translation|No response (HTTP {{ status }})', { status: error.status })
-        : t('translation|No response'),
+        ? t('translation|Unreachable (HTTP {{ status }})', { status: error.status })
+        : t('translation|Unreachable — no response'),
       bad: true,
     });
   }
 
   if (version) {
-    facts.push({ label: t('translation|Version'), value: version });
+    facts.push({ label: t('translation|Kubernetes version'), value: version });
   }
 
   // Control plane health, when the fleet inventory reports it.

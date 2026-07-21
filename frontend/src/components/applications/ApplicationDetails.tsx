@@ -40,7 +40,7 @@ import { ProjectResourcesTab, useResourceCategoriesList } from '../project/Proje
 import { ResourceCategoriesList } from '../project/ResourceCategoriesList';
 import { GraphFilter } from '../resourceMap/graph/graphFiltering';
 import { GraphView } from '../resourceMap/GraphView';
-import { ResourceQuotaCompactList } from '../resourceQuota/Details';
+import { ResourceQuotaTable } from '../resourceQuota/Details';
 import { evaluateApplicationHealth } from './applicationHealth';
 import { ApplicationHealthChip, buildWorkloadObjectsMap } from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
@@ -352,7 +352,12 @@ export function ApplicationOverview({
                     </Typography>
                     <EditButton item={it} />
                   </Box>
-                  <ResourceQuotaCompactList resourceStats={it.resourceStats} />
+                  {/* The original table design, but in a horizontally
+                      scrollable container so wide values (e.g. large memory
+                      limits) scroll instead of being clipped by the card. */}
+                  <Box sx={{ overflowX: 'auto' }}>
+                    <ResourceQuotaTable resourceStats={it.resourceStats} />
+                  </Box>
                 </Box>
               ))}
 
