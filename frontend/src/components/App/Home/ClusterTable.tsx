@@ -37,8 +37,10 @@ import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSet
 import { formatClusterPathParam } from '../../../lib/cluster';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
-import { Cluster } from '../../../lib/k8s/cluster';
+import { Cluster, KubeMetrics } from '../../../lib/k8s/cluster';
+import Node from '../../../lib/k8s/node';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
+import { parseCpu, parseRam } from '../../../lib/units';
 import { getClusterPrefixedPath } from '../../../lib/util';
 import { useTypedSelector } from '../../../redux/hooks';
 import { Loader } from '../../common';
@@ -84,11 +86,7 @@ function clusterStatusFacts(
   if (error === null || error === undefined) {
     facts.push({
       label: t('translation|API server'),
-      value: t('translation|Responding to /version (HTTP 200)'),
-    });
-    facts.push({
-      label: t('translation|Authentication'),
-      value: t('translation|Verified — credentials accepted'),
+      value: t('translation|Reachable (HTTP 200)'),
     });
   } else if (error.status === 401) {
     facts.push({
@@ -140,6 +138,141 @@ function clusterStatusFacts(
   }
 
   return facts;
+}
+
+/**
+ * Fetched lazily when the active-cluster popover is open.
+ * Shows node count, ready nodes, CPU %, and Memory %.
+ */
+
+/** Pulsing dots that signal "data incoming" instead of a static ellipsis. */
+const loadingDotsKeyframes = `
+@keyframes hlPulseDots {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}`;
+
+function LoadingDots() {
+  return (
+    <>
+      <style>{loadingDotsKeyframes}</style>
+      <Box component="span" sx={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
+        {[0, 1, 2].map(i => (
+          <Box
+            key={i}
+            component="span"
+            sx={{
+              width: 4,
+              height: 4,
+              borderRadius: '50%',
+              bgcolor: 'text.secondary',
+              animation: 'hlPulseDots 1.2s infinite',
+              animationDelay: `${i * 0.2}s`,
+            }}
+          />
+        ))}
+      </Box>
+    </>
+  );
+}
+
+function ActiveClusterExtraFacts({
+  clusterName,
+  t,
+}: {
+  clusterName: string;
+  t: (key: string, opts?: any) => string;
+}) {
+  // One-shot fetch (refetchInterval disables the watch websocket): opening the
+  // popover should not open a long-lived socket per cluster.
+  const [nodes] = Node.useList({ cluster: clusterName, refetchInterval: 0 });
+  const [nodeMetrics, metricsError] = Node.useMetrics(clusterName);
+
+  const loading = <LoadingDots />;
+
+  const rows = useMemo<{ label: string; value: React.ReactNode }[]>(() => {
+    const totalNodes = nodes !== null ? nodes.length : null;
+    const readyNodes =
+      nodes !== null
+        ? nodes.filter(n =>
+            n.status?.conditions?.some((c: any) => c.type === 'Ready' && c.status === 'True')
+          ).length
+        : null;
+
+    const metricsUnavailable = !!metricsError;
+
+    let cpuPercent: number | null = null;
+    let memPercent: number | null = null;
+
+    if (nodes && nodeMetrics && !metricsUnavailable) {
+      const totalCpuCapacity = nodes.reduce(
+        (sum, n) => sum + parseCpu((n.status?.capacity as any)?.cpu ?? '0'),
+        0
+      );
+      const usedCpu = (nodeMetrics as KubeMetrics[]).reduce(
+        (sum, m) => sum + parseCpu(m.usage.cpu),
+        0
+      );
+      if (totalCpuCapacity > 0) {
+        cpuPercent = Math.round((usedCpu / totalCpuCapacity) * 100);
+      }
+
+      const totalMemCapacity = nodes.reduce(
+        (sum, n) => sum + parseRam((n.status?.capacity as any)?.memory ?? '0'),
+        0
+      );
+      const usedMem = (nodeMetrics as KubeMetrics[]).reduce(
+        (sum, m) => sum + parseRam(m.usage.memory),
+        0
+      );
+      if (totalMemCapacity > 0) {
+        memPercent = Math.round((usedMem / totalMemCapacity) * 100);
+      }
+    }
+
+    return [
+      {
+        label: t('translation|Nodes'),
+        value:
+          totalNodes === null
+            ? loading
+            : readyNodes !== null
+            ? `${totalNodes} (${readyNodes} Ready)`
+            : `${totalNodes}`,
+      },
+      {
+        label: t('translation|CPU'),
+        value: metricsUnavailable
+          ? t('translation|N/A')
+          : cpuPercent === null
+          ? loading
+          : `${cpuPercent}%`,
+      },
+      {
+        label: t('translation|Memory'),
+        value: metricsUnavailable
+          ? t('translation|N/A')
+          : memPercent === null
+          ? loading
+          : `${memPercent}%`,
+      },
+    ];
+  }, [nodes, nodeMetrics, metricsError, t, loading]);
+
+  return (
+    <>
+      {rows.map(row => (
+        <React.Fragment key={row.label}>
+          <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+            {row.label}
+          </Typography>
+          <Typography variant="caption" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>
+            {row.value}
+          </Typography>
+        </React.Fragment>
+      ))}
+    </>
+  );
 }
 
 function ClusterStatus({
@@ -288,6 +421,9 @@ function ClusterStatus({
               </Typography>
             </React.Fragment>
           ))}
+          {kind === 'active' && !!anchorEl && (
+            <ActiveClusterExtraFacts clusterName={cluster.name} t={t} />
+          )}
         </Box>
       </Popover>
     </>
