@@ -19,27 +19,22 @@ import { Icon } from '@iconify/react';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Grid from '@mui/material/Grid';
+import Chip from '@mui/material/Chip';
+import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
-import ListItem from '@mui/material/ListItem';
-import Popover from '@mui/material/Popover';
 import { useTheme } from '@mui/material/styles';
+import Tab from '@mui/material/Tab';
+import Tabs from '@mui/material/Tabs';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
 import { useHistory } from 'react-router';
-import { FixedSizeList, ListChildComponentProps } from 'react-window';
-import { getAutoConnectClusterNames } from '../../../helpers/clusterAutoConnect';
-import { useClustersConf } from '../../../lib/k8s';
-import Event, { useEventWarningList } from '../../../lib/k8s/event';
+import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { useTypedSelector } from '../../../redux/hooks';
-import Empty from '../../common/EmptyContent';
-import { DateLabel } from '../../common/Label';
 import {
-  defaultMaxNotificationsStored,
   loadNotifications,
   Notification,
   NotificationIface,
@@ -47,239 +42,339 @@ import {
   updateNotifications,
 } from './notificationsSlice';
 
-function NotificationsList(props: {
-  notifications: NotificationIface[];
-  clickEventHandler: (notification?: NotificationIface, closeMenu?: boolean) => void;
+/** Format a date as relative time (e.g. "2m ago", "3h ago", "5d ago"). */
+function timeAgo(date: number | string): string {
+  const now = Date.now();
+  const then = typeof date === 'number' ? date : new Date(date).getTime();
+  const diffS = Math.max(0, Math.floor((now - then) / 1000));
+  if (diffS < 60) return `${diffS}s ago`;
+  const diffM = Math.floor(diffS / 60);
+  if (diffM < 60) return `${diffM}m ago`;
+  const diffH = Math.floor(diffM / 60);
+  if (diffH < 24) return `${diffH}h ago`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 30) return `${diffD}d ago`;
+  const diffMo = Math.floor(diffD / 30);
+  return `${diffMo}mo ago`;
+}
+
+/** Single notification card. */
+function NotificationCard({
+  notification,
+  onMarkRead,
+  onClick,
+}: {
+  notification: NotificationIface;
+  onMarkRead: (n: NotificationIface) => void;
+  onClick: (n: NotificationIface) => void;
 }) {
-  const { notifications, clickEventHandler } = props;
-  const { t } = useTranslation();
-  const history = useHistory();
   const theme = useTheme();
-  const config = useTypedSelector(state => state.config);
+  const { t } = useTranslation();
+  const isUnread = !notification.seen;
 
-  if (!notifications || notifications.length === 0) {
-    return <Empty>{t(`translation|You don't have any notifications right now`)}</Empty>;
-  }
-
-  function notificationSeenUnseenHandler(event: any, notification?: NotificationIface) {
-    event.stopPropagation();
-    if (!notification) {
-      return;
-    }
-    clickEventHandler(notification);
-  }
-
-  function notificationItemClickHandler(notification: NotificationIface) {
-    notification.url && history.push(notification.url);
-    clickEventHandler(notification, true);
-  }
-
-  function Row(props: ListChildComponentProps) {
-    const { index, style } = props;
-    const notification = notifications[index];
-    if (notification.deleted) {
-      return null;
-    }
-
-    return (
-      <ListItem
-        button
-        key={`${notification}__${index}`}
-        sx={{
-          '&.MuiMenuItem-root': {
-            borderBottom: `1px solid ${theme.palette.notificationBorderColor}`,
-            padding: '1rem',
-          },
-        }}
-        style={style}
-      >
-        <Grid
-          container
-          justifyContent="space-between"
-          spacing={1}
-          onClick={() => notificationItemClickHandler(notification)}
-        >
-          <Grid item md={notification.seen ? 11 : 10}>
-            <Tooltip title={notification.message || t('translation|No message')}>
-              <Typography style={{ fontWeight: notification.seen ? 'normal' : 'bold' }} noWrap>
-                {`${notification.message || t('translation|No message')}`}
-              </Typography>
-            </Tooltip>
-          </Grid>
-          {!notification.seen && (
-            <Grid item md={1}>
-              <Tooltip title={t('translation|Mark as read')}>
-                <IconButton
-                  onClick={e => notificationSeenUnseenHandler(e, notification)}
-                  aria-label={t('translation|Mark as read')}
-                  size="medium"
-                >
-                  <Icon icon="mdi:circle" color={theme.palette.error.main} height={12} width={12} />
-                </IconButton>
-              </Tooltip>
-            </Grid>
-          )}
-          <Grid item md={12}>
-            <Box display={'flex'} alignItems="center">
-              {Object.entries(config?.clusters || {}).length > 1 && notification.cluster && (
-                <Box
-                  border={1}
-                  p={0.5}
-                  mr={1}
-                  textOverflow="ellipsis"
-                  overflow={'hidden'}
-                  whiteSpace="nowrap"
-                >
-                  {notification.cluster}
-                </Box>
-              )}
-              <DateLabel date={notification.date} />
-            </Box>
-          </Grid>
-        </Grid>
-      </ListItem>
-    );
-  }
+  // Use same cloud icons as the All Clusters table
+  const iconName = notification.id?.startsWith('cluster-not-active')
+    ? 'mdi:cloud-off'
+    : 'mdi:cloud-alert';
+  const iconColor = notification.id?.startsWith('cluster-not-active')
+    ? theme.palette.error.main
+    : theme.palette.warning.main;
 
   return (
-    <FixedSizeList
-      itemCount={notifications?.length}
-      height={400}
-      itemData={notifications}
-      width="100"
-      itemSize={100}
+    <Box
+      sx={{
+        display: 'flex',
+        gap: 1.5,
+        p: 2,
+        mx: 2,
+        mb: 1.5,
+        borderRadius: '12px',
+        border: '1px solid',
+        borderColor: isUnread ? theme.palette.primary.main : theme.palette.divider,
+        backgroundColor: isUnread
+          ? `${theme.palette.primary.main}06`
+          : theme.palette.background.paper,
+        cursor: notification.url ? 'pointer' : 'default',
+        transition: 'background-color 0.15s',
+        '&:hover': {
+          backgroundColor: isUnread
+            ? `${theme.palette.primary.main}12`
+            : theme.palette.action.hover,
+        },
+      }}
+      onClick={() => onClick(notification)}
     >
-      {Row}
-    </FixedSizeList>
+      {/* Icon — matches All Clusters table status icons */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          width: 36,
+          height: 36,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: `${iconColor}14`,
+          mt: 0.25,
+        }}
+      >
+        <Icon icon={iconName} width={18} height={18} color={iconColor} />
+      </Box>
+
+      {/* Content */}
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        {/* Title + actions */}
+        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: isUnread ? 600 : 400,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1,
+              mr: 1,
+            }}
+            title={notification.message}
+          >
+            {notification.message || t('translation|No message')}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0 }}>
+            {isUnread && (
+              <Tooltip title={t('translation|Mark as read')}>
+                <IconButton
+                  size="small"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onMarkRead(notification);
+                  }}
+                  sx={{ color: theme.palette.success.main }}
+                >
+                  <Icon icon="mdi:check-circle-outline" width={20} height={20} />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
+        </Box>
+
+        {/* Cluster + time */}
+        <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, alignItems: 'center' }}>
+          {notification.cluster && (
+            <Chip
+              label={notification.cluster}
+              size="small"
+              sx={{ height: 20, fontSize: '0.7rem', maxWidth: 200 }}
+              variant="outlined"
+            />
+          )}
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+            {timeAgo(notification.date)}
+          </Typography>
+        </Box>
+      </Box>
+    </Box>
   );
 }
 
 export default function Notifications() {
-  const [anchorEl, setAnchorEl] = useState(null);
   const notifications = useTypedSelector(state => state.notifications.notifications);
   const dispatch = useDispatch();
   const clusters = useClustersConf();
-  // Only fetch warnings for auto-connect (recently-used) clusters to avoid a
-  // credential/exec process per cluster from the always-mounted bell.
-  const warnings = useEventWarningList(
-    getAutoConnectClusterNames(Object.values(clusters ?? {}).map(c => c.name)),
-    {
-      queryParams: {
-        limit: defaultMaxNotificationsStored,
-      },
-    }
-  );
   const { t } = useTranslation();
   const history = useHistory();
-  const maxNotificationsInPopup = 50;
+  const clusterList = useMemo(() => Object.values(clusters ?? {}), [clusters]);
+  const [, clusterErrors] = useClustersVersion(clusterList);
+  const prevClusterErrorsRef = useRef(clusterErrors);
+
+  function describeClusterState(status?: number) {
+    if (status === 401) {
+      return t('translation|Authentication required');
+    }
+    if (status === 403) {
+      return t('translation|Insufficient permissions');
+    }
+    return t('translation|Unavailable');
+  }
 
   useEffect(() => {
-    const notificationsToShow: NotificationIface[] = [];
+    // Track whether clusterErrors ref changed (new poll) vs just notifications changed (user action).
+    const clusterErrorsChanged = prevClusterErrorsRef.current !== clusterErrors;
+    prevClusterErrorsRef.current = clusterErrors;
+
     let currentNotifications = notifications;
     let changed = false;
 
+    // Hydrate from localStorage if redux store is empty (first mount).
     if (currentNotifications.length === 0) {
       currentNotifications = loadNotifications();
       changed = currentNotifications.length > 0;
     }
 
-    for (const [cluster, warningsInfo] of Object.entries(warnings)) {
-      const clusterWarnings = warningsInfo.warnings || [];
-      if (clusterWarnings.length === 0) {
+    // Preserve earliest "first seen" date per cluster before cleanup removes old-format entries.
+    const clusterFirstSeen: Record<string, number | string> = {};
+    for (const n of currentNotifications) {
+      if (!n.id?.startsWith('cluster-not-active:') && !n.message?.includes('is not active')) {
+        continue;
+      }
+      const cName =
+        n.cluster ||
+        clusterList.find(c => n.id?.startsWith(`cluster-not-active:${c.name}:`))?.name ||
+        clusterList.find(c => n.message?.includes(c.name))?.name;
+      if (!cName) continue;
+      const nTime = typeof n.date === 'string' ? new Date(n.date).getTime() : (n.date as number);
+      const prev = clusterFirstSeen[cName];
+      if (
+        prev === undefined ||
+        nTime < (typeof prev === 'string' ? new Date(prev).getTime() : prev)
+      ) {
+        clusterFirstSeen[cName] = n.date;
+      }
+    }
+
+    // --- CLEANUP: mark legacy + recovered as deleted ---
+    // Use map (not filter) because setNotifications merges with old state via _.uniqBy.
+    // Filtering would let mergeNotifications re-add the old version from state.
+    currentNotifications = currentNotifications.map(n => {
+      // Legacy old format ("Cluster X is not active") — mark deleted.
+      // Fresh notifications will be created below if the error is still active.
+      if (n.message?.includes('is not active') && !n.deleted) {
+        changed = true;
+        return { ...n, deleted: true };
+      }
+      // Cluster recovered (err === null) → mark all error notifications for this cluster deleted,
+      // regardless of ID format (base64 or stable) or message format.
+      if (n.cluster && !n.deleted) {
+        const err = clusterErrors[n.cluster];
+        if (
+          err === null &&
+          (n.id?.startsWith('cluster-not-active:') || n.message?.includes(' \u2014 '))
+        ) {
+          changed = true;
+          return { ...n, deleted: true };
+        }
+      }
+      // Also try matching by ID prefix for notifications with null cluster field.
+      if (!n.cluster && !n.deleted && n.id?.startsWith('cluster-not-active:')) {
+        const clusterName = clusterList.find(c =>
+          n.id?.startsWith(`cluster-not-active:${c.name}:`)
+        )?.name;
+        if (clusterName && clusterErrors[clusterName] === null) {
+          changed = true;
+          return { ...n, deleted: true };
+        }
+      }
+      return n;
+    });
+
+    // --- INSTANT ALERTS: cluster has error → ensure notification exists ---
+    const notificationsToAdd: NotificationIface[] = [];
+
+    for (const cluster of clusterList) {
+      const clusterName = cluster.name;
+      const err = clusterErrors[clusterName];
+
+      // undefined = not yet probed; null = active. Only act on errors.
+      if (err === undefined || err === null) {
         continue;
       }
 
-      clusterWarnings.forEach((event: Event) => {
-        const alreadyInNotificationList = !!currentNotifications.find(
-          notification => notification.id === event.metadata.uid
-        );
+      const statusText = describeClusterState(err?.status);
+      const message = `${clusterName} — ${statusText}`;
+      const stableId = `cluster-not-active:${clusterName}:${err?.status ?? 'down'}`;
 
-        if (alreadyInNotificationList) {
-          return;
+      const existingIdx = currentNotifications.findIndex(n => n.id === stableId);
+      if (existingIdx >= 0) {
+        const existing = currentNotifications[existingIdx];
+        // Only un-delete on new poll data (clusterErrorsChanged), not user actions.
+        // Always fix stale cluster/message fields.
+        const shouldUndelete = existing.deleted && clusterErrorsChanged;
+        const shouldFixFields = !existing.cluster || existing.message !== message;
+        if (shouldUndelete || shouldFixFields) {
+          currentNotifications = currentNotifications.map((n, i) =>
+            i === existingIdx
+              ? {
+                  ...n,
+                  ...(shouldUndelete ? { deleted: false } : {}),
+                  cluster: clusterName,
+                  message,
+                }
+              : n
+          );
+          changed = true;
         }
-
-        const message = event.message;
-        const date = new Date(event.metadata.creationTimestamp).getTime();
-        const notification = new Notification({ message, date, cluster });
-        notification.id = event.metadata.uid;
-        notification.url =
-          createRouteURL('cluster', { cluster }) + `?eventsFilter=${notification.id}`;
-
+      } else {
+        // Use preserved first-seen date (shows how long cluster been down).
+        const notification = new Notification({
+          message,
+          date: clusterFirstSeen[clusterName] ?? Date.now(),
+          cluster: clusterName,
+        });
+        notification.url = createRouteURL('cluster', { cluster: clusterName });
+        notification.id = stableId;
         changed = true;
-
-        const notiJson = notification.toJSON();
-        notificationsToShow.push(notiJson);
-      });
+        notificationsToAdd.push(notification.toJSON());
+      }
     }
 
-    // It's important to dispatch only if something changed, otherwise we will get into an infinite loop.
     if (changed) {
-      // we are here means the events list changed and we have now new set of events, so we will notify the store about it
-      dispatch(setNotifications(notificationsToShow.concat(currentNotifications)));
+      dispatch(setNotifications(notificationsToAdd.concat(currentNotifications)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [warnings, notifications]);
+  }, [clusterErrors, clusterList, notifications]);
 
-  const [areAllNotificationsInDeleteState, areThereUnseenNotifications, filteredNotifications] =
+  const [areAllNotificationsInDeleteState, areThereUnseenNotifications, unreadCount] =
     useMemo(() => {
-      const allindelete = notifications.filter(notification => !notification.deleted).length === 0;
-      return [
-        allindelete,
-        notifications.filter(notification => notification.seen !== true).length > 0,
-        allindelete ? [] : notifications.slice(0, maxNotificationsInPopup),
-      ];
+      const live = notifications.filter(n => !n.deleted);
+      return [live.length === 0, live.some(n => !n.seen), live.filter(n => !n.seen).length];
     }, [notifications]);
 
-  const handleClick = (event: any) => {
-    setAnchorEl(event.currentTarget);
-  };
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [tab, setTab] = useState<'unread' | 'all'>('unread');
 
-  const handleClose = () => {
-    setAnchorEl(null);
+  const handleOpen = () => {
+    setDrawerOpen(true);
   };
+  const handleClose = () => setDrawerOpen(false);
 
   function handleNotificationMarkAllRead() {
-    const massagedNotifications = notifications.map(notification => {
-      const updatedNotification = Object.assign(new Notification(), notification);
-      updatedNotification.seen = true;
-      return updatedNotification;
+    const updated = notifications.map(n => {
+      const copy = Object.assign(new Notification(), n);
+      copy.seen = true;
+      return copy;
     });
-    dispatch(setNotifications(massagedNotifications));
+    dispatch(setNotifications(updated));
   }
 
-  function handleNotificationClear() {
-    const massagedNotifications = notifications.map(notification => {
-      const updatedNotification = Object.assign(new Notification(), notification);
-      updatedNotification.deleted = true;
-      return updatedNotification;
-    });
-    dispatch(setNotifications(massagedNotifications));
+  function handleMarkOneRead(notification: NotificationIface) {
+    dispatch(updateNotifications({ ...notification, seen: true }));
   }
 
-  function menuItemClickHandler(notification?: NotificationIface, closeMenu?: boolean) {
-    if (notification) {
-      dispatch(updateNotifications(notification));
+  function handleCardClick(notification: NotificationIface) {
+    if (notification.url) {
+      history.push(notification.url);
     }
-    if (closeMenu) {
-      setAnchorEl(null);
+    if (!notification.seen) {
+      dispatch(updateNotifications({ ...notification, seen: true }));
     }
   }
 
-  const notificationMenuId = 'notification-menu';
-  const show = Boolean(anchorEl);
+  const visibleNotifications = useMemo(() => {
+    const live = notifications.filter(n => !n.deleted);
+    if (tab === 'unread') return live.filter(n => !n.seen);
+    return live;
+  }, [notifications, tab]);
 
   return (
     <>
       <IconButton
         aria-label={t('translation|Show notifications')}
-        aria-controls={show ? notificationMenuId : ''}
         aria-haspopup="true"
-        onClick={handleClick}
+        onClick={handleOpen}
         size="medium"
       >
         {!areAllNotificationsInDeleteState && areThereUnseenNotifications ? (
           <Badge variant="dot" color="error">
-            <Tooltip title={`${t('translation|You have unread notifications')}`}>
+            <Tooltip title={t('translation|You have unread notifications')}>
               <Icon icon={bellIcon} />
             </Tooltip>
           </Badge>
@@ -287,83 +382,112 @@ export default function Notifications() {
           <Icon icon={bellIcon} />
         )}
       </IconButton>
-      <Popover
-        anchorEl={anchorEl}
-        open={show}
+
+      <Drawer
+        anchor="right"
+        open={drawerOpen}
         onClose={handleClose}
-        sx={{
-          '& .MuiPaper-root': {
-            width: '30vw',
-            minWidth: '300px',
-            maxHeight: '70vh',
+        disableScrollLock
+        PaperProps={{
+          sx: {
+            width: { xs: '100%', sm: 420 },
+            maxWidth: '100vw',
+            top: '64px',
+            height: 'calc(100% - 64px)',
+            borderRadius: { sm: '16px 0 0 16px' },
+            display: 'flex',
+            flexDirection: 'column',
           },
         }}
-        anchorOrigin={{
-          vertical: 'bottom',
-          horizontal: 'left',
-        }}
-        transformOrigin={{
-          vertical: 'top',
-          horizontal: 'left',
-        }}
-        id={notificationMenuId}
       >
-        <Box
-          sx={theme => ({
-            borderBottom: `1px solid ${theme.palette.notificationBorderColor}`,
-            padding: theme.spacing(1),
-          })}
-        >
-          <Grid container direction="row" justifyContent="space-between" alignItems="center">
-            <Grid item>
-              <Box mx={1}>
-                <Typography style={{ fontWeight: 'bold' }}>
-                  {t('translation|Notifications')}
-                </Typography>
-              </Box>
-            </Grid>
-            <Grid item>
-              <Button
-                sx={{
-                  textTransform: 'none',
-                  paddingTop: 0,
-                }}
-                color="primary"
-                onClick={handleNotificationMarkAllRead}
-                disabled={areAllNotificationsInDeleteState || !areThereUnseenNotifications}
-              >
-                {t('translation|Mark all as read')}
-              </Button>
-              <Button
-                sx={{
-                  textTransform: 'none',
-                  paddingTop: 0,
-                }}
-                color="primary"
-                onClick={handleNotificationClear}
-                disabled={areAllNotificationsInDeleteState}
-              >
-                {t('translation|Clear')}
-              </Button>
-            </Grid>
-          </Grid>
+        {/* Sticky header area */}
+        <Box sx={{ flexShrink: 0 }}>
+          {/* Header */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              px: 2.5,
+              py: 2,
+            }}
+          >
+            <IconButton onClick={handleClose} size="small" sx={{ mr: 0.5 }}>
+              <Icon icon="mdi:close" width={20} height={20} />
+            </IconButton>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              {t('translation|Notifications')}
+            </Typography>
+            {unreadCount > 0 && (
+              <Badge badgeContent={unreadCount} color="primary" sx={{ ml: 0.5 }} />
+            )}
+          </Box>
+
+          {/* Action buttons */}
+          <Box sx={{ display: 'flex', gap: 1, px: 2.5, pb: 1.5 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="success"
+              startIcon={<Icon icon="mdi:check-circle-outline" width={16} />}
+              onClick={handleNotificationMarkAllRead}
+              disabled={areAllNotificationsInDeleteState || !areThereUnseenNotifications}
+              sx={{ textTransform: 'none', borderRadius: '20px', fontSize: '0.8rem' }}
+            >
+              {t('translation|Mark all read')}
+            </Button>
+          </Box>
+
+          {/* Tabs */}
+          <Box sx={{ px: 2.5, borderBottom: 1, borderColor: 'divider' }}>
+            <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ minHeight: 36 }}>
+              <Tab
+                value="unread"
+                label={`${t('translation|Unread')} (${unreadCount})`}
+                icon={<Icon icon="mdi:email-outline" width={16} />}
+                iconPosition="start"
+                sx={{ textTransform: 'none', minHeight: 36, py: 0 }}
+              />
+              <Tab
+                value="all"
+                label={t('translation|All')}
+                icon={<Icon icon="mdi:eye-outline" width={16} />}
+                iconPosition="start"
+                sx={{ textTransform: 'none', minHeight: 36, py: 0 }}
+              />
+            </Tabs>
+          </Box>
         </Box>
-        <NotificationsList
-          notifications={filteredNotifications}
-          clickEventHandler={menuItemClickHandler}
-        />
-        <Button
-          fullWidth
-          color="primary"
-          onClick={() => {
-            history.push('/notifications');
-            setAnchorEl(null);
-          }}
-          style={{ textTransform: 'none' }}
-        >
-          {t('translation|View all notifications')}
-        </Button>
-      </Popover>
+
+        {/* Notification list */}
+        <Box sx={{ flex: 1, overflowY: 'auto', pt: 1.5 }}>
+          {visibleNotifications.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 6, px: 3 }}>
+              <Icon
+                icon="mdi:bell-check-outline"
+                width={48}
+                height={48}
+                color="inherit"
+                style={{ opacity: 0.3 }}
+              />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+                {tab === 'unread'
+                  ? t('translation|No unread notifications')
+                  : t("translation|You don't have any notifications right now")}
+              </Typography>
+            </Box>
+          ) : (
+            visibleNotifications.map(n => (
+              <NotificationCard
+                key={n.id}
+                notification={n}
+                onMarkRead={handleMarkOneRead}
+                onClick={handleCardClick}
+              />
+            ))
+          )}
+        </Box>
+      </Drawer>
     </>
   );
 }

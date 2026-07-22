@@ -47,6 +47,14 @@
     U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+html {
+  /* Headlamp is a fixed-layout SPA — all scrolling happens inside the app's
+     own content containers (sidebar, main area). The outer html/body must
+     never scroll: without this, Edge briefly flashes a scrollbar when MUI
+     Popover portals render, causing a horizontal layout shift ("shake"). */
+  overflow: hidden;
+}
+
 body {
   font-family: 'Overpass', sans-serif;
 }

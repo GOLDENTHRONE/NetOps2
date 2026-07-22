@@ -28,11 +28,14 @@ import {
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
-import { ClusterGroupErrorMessage } from '../cluster/ClusterGroupErrorMessage';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
 import { AppHealth, evaluateApplicationHealth, healthSortRank } from './applicationHealth';
-import { ApplicationHealthChip, buildWorkloadObjectsMap } from './ApplicationHealthChip';
+import {
+  ApplicationHealthChip,
+  buildWorkloadObjectsMap,
+  LoadingDots,
+} from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
 import { groupResourcesByApplication, useAllApplicationResources } from './useApplicationResources';
 import { useApplicationDefinitions } from './useApplications';
@@ -269,11 +272,7 @@ export default function ApplicationList() {
   // cluster, live-watched) instead of a fetch per row: rows read their counts
   // from this map, so the column fills in as fast as the lists arrive and
   // matches exactly what the application details page shows.
-  const {
-    items: allResources,
-    errors: resourceErrors,
-    isLoading: resourcesLoading,
-  } = useAllApplicationResources();
+  const { items: allResources, isLoading: resourcesLoading } = useAllApplicationResources();
 
   // Roll the resources up into one summary per application, once per data
   // batch: the resource count and a workload-based health verdict (see
@@ -318,7 +317,13 @@ export default function ApplicationList() {
   // the Resources/Health columns never visibly fill in after the rest. A
   // safety timeout reveals whatever has arrived if one cluster keeps a list
   // pending, so a single slow cluster can never block the whole table forever.
-  const dataReady = !isLoading && !resourcesLoading;
+  // Reveal the table as soon as the application (namespace) list is ready.
+  // The Resources/Health cells carry their own inline loading state (skeleton
+  // and chip spinner), so they fill in progressively as each cluster's lists
+  // arrive. Gating the whole table on resourcesLoading made a single
+  // unreachable cluster hold the reveal for the full safety timeout (~10s),
+  // even though every reachable cluster had already loaded.
+  const dataReady = !isLoading;
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
     if (revealed) {
@@ -367,7 +372,7 @@ export default function ApplicationList() {
         Cell: ({ cell }) => {
           const value = cell.getValue<number>();
           if (value === -1) {
-            return <Skeleton variant="rounded" width={32} height={18} />;
+            return <LoadingDots size={5} />;
           }
           return value;
         },
@@ -491,8 +496,6 @@ export default function ApplicationList() {
           onChange={setSelectedApplications}
         />
       </Box>
-
-      <ClusterGroupErrorMessage errors={[...errors, ...resourceErrors]} />
 
       {!revealed ? (
         // One professional full-page loading state (header + shimmer rows) for

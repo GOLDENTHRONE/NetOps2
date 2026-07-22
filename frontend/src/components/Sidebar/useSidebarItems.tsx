@@ -64,7 +64,11 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
 
   const [crds, error] = CRD.useList();
   if (error !== null) {
-    console.error('Failed to fetch CRDs:', error);
+    if (error.status === 404) {
+      console.debug('CRD endpoint not available for selected cluster(s); skipping CRD sidebar.');
+    } else {
+      console.error('Failed to fetch CRDs:', error);
+    }
   }
 
   const crdsSidebarEntries = useMemo(() => {

@@ -257,9 +257,7 @@ const notificationsSlice = createSlice({
 
       let updatedState = state.notifications.map(notification => {
         const updatedNotification = dispatchedNotifications.find(n => n.id === notification.id);
-        return updatedNotification
-          ? Notification.fromJSON({ ...updatedNotification, seen: true })
-          : notification;
+        return updatedNotification ? Notification.fromJSON(updatedNotification) : notification;
       });
 
       const newNotifications = dispatchedNotifications.filter(

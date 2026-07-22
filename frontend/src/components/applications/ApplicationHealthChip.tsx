@@ -15,17 +15,7 @@
  */
 
 import { Icon } from '@iconify/react';
-import {
-  alpha,
-  Box,
-  Divider,
-  Popover,
-  Skeleton,
-  Theme,
-  Tooltip,
-  Typography,
-  useTheme,
-} from '@mui/material';
+import { alpha, Box, Divider, Popover, Theme, Tooltip, Typography, useTheme } from '@mui/material';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
@@ -242,7 +232,19 @@ export function ApplicationHealthChip({
   const pillWidth = medium ? '9rem' : '8.25rem';
 
   if (!health && loading) {
-    return <Skeleton variant="rounded" width={pillWidth} height={medium ? 28 : 24} />;
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: pillWidth,
+          height: medium ? 28 : 24,
+        }}
+      >
+        <LoadingDots size={medium ? 6 : 5} />
+      </Box>
+    );
   }
   if (!health) {
     return null;

@@ -53,6 +53,7 @@ import { GlobalSearch } from '../globalSearch/GlobalSearch';
 import HeadlampButton from '../Sidebar/HeadlampButton';
 import { setWhetherSidebarOpen } from '../Sidebar/sidebarSlice';
 import { AppLogo } from './AppLogo';
+import { Notifications } from './Notifications';
 import { handleLogoutPathUpdate } from './TopBar.utils';
 
 export interface TopBarProps {}
@@ -470,7 +471,7 @@ export const PureTopBar = memo(
       ...appBarActions,
       {
         id: DefaultAppBarAction.NOTIFICATION,
-        action: null,
+        action: <Notifications />,
       },
       {
         id: DefaultAppBarAction.SETTINGS,

@@ -112,7 +112,7 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
   // The exact same shared, watched queries the Applications table uses: the
   // counts here always match the table, and navigating from the table to this
   // page is instant because the data is already in the cache.
-  const { items: allResources, errors, isLoading } = useAllApplicationResources();
+  const { items: allResources, isLoading } = useAllApplicationResources();
   // Filter by namespace only — exactly how the Applications table groups its
   // counts — so this page can never disagree with the table.
   const items = useMemo(
@@ -157,7 +157,6 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
           </Box>
         }
       >
-        <ClusterGroupErrorMessage errors={errors} />
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Tabs value={selectedTab} onChange={(event, newValue) => setSelectedTab(newValue)}>
             {tabs.map(tab => (
@@ -340,8 +339,8 @@ export function ApplicationOverview({
       </Grid>
 
       <Grid item xs={12} md={4}>
-        <Card sx={{ height: '100%' }}>
-          <CardContent>
+        <Card sx={{ height: '100%', minWidth: 0 }}>
+          <CardContent sx={{ minWidth: 0 }}>
             <Typography variant="h6">{t('translation|Resource Quotas')}</Typography>
             <Box>
               {(resourceQuotas ?? []).map(it => (

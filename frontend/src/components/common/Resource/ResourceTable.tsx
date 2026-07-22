@@ -50,7 +50,6 @@ import { useNamespaces } from '../../../redux/filterSlice';
 import { HeadlampEventType, useEventCallback } from '../../../redux/headlampEventSlice';
 import { useTypedSelector } from '../../../redux/hooks';
 import { useSettings } from '../../App/Settings/hook';
-import { ClusterGroupErrorMessage } from '../../cluster/ClusterGroupErrorMessage';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import { DateLabel } from '../Label';
 import Link from '../Link';
@@ -319,7 +318,6 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
     actions,
     enableRowActions = false,
     enableRowSelection = false,
-    errors,
   } = props;
   const { t } = useTranslation(['glossary', 'translation']);
   const theme = useTheme();
@@ -683,7 +681,6 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
 
   return (
     <>
-      <ClusterGroupErrorMessage errors={errors} />
       <Table<RowItem>
         id={tableId}
         enableFullScreenToggle={false}

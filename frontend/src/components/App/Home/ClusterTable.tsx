@@ -19,7 +19,6 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Popover from '@mui/material/Popover';
-import Skeleton from '@mui/material/Skeleton';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import {
@@ -657,9 +656,7 @@ export default function ClusterTable({
           Cell: ({ cell }) => {
             const value = cell.getValue<string>();
             if (value === '⋯') {
-              // A quiet pill-shaped skeleton while the (now small, capped)
-              // events query is in flight — not a mystery glyph.
-              return <Skeleton variant="rounded" width={28} height={18} />;
+              return <LoadingDots />;
             }
             if (value === 'n/a') {
               return (
@@ -678,12 +675,27 @@ export default function ClusterTable({
         {
           id: 'version',
           header: t('glossary|Kubernetes Version'),
-          accessorFn: ({ name }) =>
-            isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
+          accessorFn: ({ name }) => {
+            if (!isClusterConnected(name)) return '';
+            if (versions[name]?.gitVersion) return versions[name].gitVersion;
+            if (errors[name]) return 'n/a';
+            return '⋯';
+          },
           Cell: ({ cell }) => {
             const value = cell.getValue<string>();
             if (value === '⋯') {
-              return <Skeleton variant="rounded" width={64} height={18} />;
+              return <LoadingDots />;
+            }
+            if (value === 'n/a') {
+              return (
+                <LightTooltip
+                  title={t('translation|Version unavailable — cluster is not reachable.')}
+                >
+                  <Typography component="span" variant="caption" color="text.secondary">
+                    n/a
+                  </Typography>
+                </LightTooltip>
+              );
             }
             return value;
           },

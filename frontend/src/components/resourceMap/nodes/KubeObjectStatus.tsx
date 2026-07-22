@@ -70,6 +70,14 @@ export function getStatus(w: KubeObject): KubeObjectStatus {
     return WORKLOAD_STATE_TO_STATUS[evaluateWorkload(w.jsonData).state];
   }
 
+  // PersistentVolumeClaims: Pending = warning, Lost = error
+  if (w.kind === 'PersistentVolumeClaim') {
+    const phase = (w.jsonData as any).status?.phase;
+    if (phase === 'Lost') return 'error';
+    if (phase === 'Pending') return 'warning';
+    return 'success';
+  }
+
   return 'success';
 }
 

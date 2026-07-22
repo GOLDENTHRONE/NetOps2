@@ -36,7 +36,13 @@ export function ClusterGroupErrorMessage({ errors }: ClusterGroupErrorMessagePro
     return null;
   }
 
-  return errors.map((error, i) => <ErrorMessage error={error} key={error.stack ?? i} />);
+  return errors.map((error, i) => {
+    const key = [error.stack, error.cluster, error.namespace, error.status, error.message, i]
+      .filter(Boolean)
+      .join('|');
+
+    return <ErrorMessage error={error} key={key} />;
+  });
 }
 
 function ErrorMessage({ error }: { error: ApiError }) {

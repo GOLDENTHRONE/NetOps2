@@ -16,6 +16,7 @@
 
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
@@ -56,11 +57,17 @@ export default function NotificationList() {
     return !!notifications.find(notification => !notification.deleted && !notification.seen);
   }, [notifications]);
 
+  const visibleTableData = useMemo(() => {
+    return notifications.filter(n => !n.deleted);
+  }, [notifications]);
+
   function notificationSeenUnseenHandler(event: any, notification?: NotificationIface) {
     if (!notification) {
       return;
     }
-    dispatch(updateNotifications(notification));
+    const toggled = Object.assign(new Notification(), notification);
+    toggled.seen = !notification.seen;
+    dispatch(updateNotifications(toggled));
   }
 
   function clearAllNotifications() {
@@ -210,29 +217,38 @@ export default function NotificationList() {
                 ),
               },
               {
-                header: t('translation|Visible'),
+                header: t('translation|Status'),
                 gridTemplate: 'min-content',
                 accessorKey: 'seen',
                 Cell: ({ row: { original: notification } }) =>
-                  !notification.seen && (
-                    <Tooltip title={t(`translation|Mark as read`)}>
-                      <IconButton
+                  notification.seen ? (
+                    <Tooltip title={t(`translation|Click to mark as unread`)}>
+                      <Chip
+                        label={t(`translation|Read`)}
+                        size="small"
+                        icon={<Icon icon="mdi:check-circle" width={14} height={14} />}
                         onClick={e => notificationSeenUnseenHandler(e, notification)}
-                        aria-label={t(`translation|Mark as read`)}
-                        size="medium"
-                      >
-                        <Icon
-                          icon="mdi:circle"
-                          color={theme.palette.error.main}
-                          height={12}
-                          width={12}
-                        />
-                      </IconButton>
+                        color="success"
+                        variant="outlined"
+                        sx={{ cursor: 'pointer', fontSize: '0.75rem', height: 24 }}
+                      />
+                    </Tooltip>
+                  ) : (
+                    <Tooltip title={t(`translation|Click to mark as read`)}>
+                      <Chip
+                        label={t(`translation|Unread`)}
+                        size="small"
+                        icon={<Icon icon="mdi:circle" width={10} height={10} />}
+                        onClick={e => notificationSeenUnseenHandler(e, notification)}
+                        color="error"
+                        variant="filled"
+                        sx={{ cursor: 'pointer', fontSize: '0.75rem', height: 24 }}
+                      />
                     </Tooltip>
                   ),
               },
             ]}
-            data={notifications}
+            data={visibleTableData}
           />
         </Box>
       )}
