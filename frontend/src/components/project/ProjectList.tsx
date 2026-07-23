@@ -20,6 +20,7 @@ import { groupBy, uniq } from 'lodash';
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
+import { KubeObject } from '../../lib/k8s/KubeObject';
 import Namespace from '../../lib/k8s/namespace';
 import { useTypedSelector } from '../../redux/hooks';
 import { ProjectDefinition } from '../../redux/projectsSlice';
@@ -28,7 +29,7 @@ import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
 import { NewProjectPopup } from './NewProjectPopup';
 import { getHealthIcon, getResourcesHealth, PROJECT_ID_LABEL } from './projectUtils';
-import { useProjectItems } from './useProjectResources';
+import { useAllProjectItems } from './useProjectResources';
 
 // The labelSelector on Namespace.useList filters at the API level, but the
 // returned list can still transiently include items without metadata.labels
@@ -87,6 +88,22 @@ export const useProject = (name: string) => {
   );
 };
 
+/** Health severity rank — worst first for sorting. */
+const HEALTH_RANK: Record<string, number> = {
+  Unhealthy: 0,
+  Degraded: 1,
+  Healthy: 2,
+  'No Resources': 3,
+};
+
+/** A project with pre-computed health so the table can sort/filter. */
+interface ProjectRow extends ProjectDefinition {
+  resourceCount: number;
+  healthLabel: string;
+  healthStatus: 'error' | 'warning' | 'success';
+  healthIcon: string;
+}
+
 export default function ProjectList() {
   const { t } = useTranslation();
   const [showCreate, setShowCreate] = useState(false);
@@ -94,70 +111,91 @@ export default function ProjectList() {
 
   const projects = useProjects();
 
+  // Fetch resources for all projects in one batch so health can be pre-computed
+  // and the table can sort/filter by health without per-cell hooks.
+  const { items: allItems } = useAllProjectItems(projects);
+
+  // Group resources by project (namespace membership) and compute health.
+  const tableData = useMemo<ProjectRow[]>(() => {
+    const byNamespace = new Map<string, KubeObject[]>();
+    for (const item of allItems) {
+      const ns = item.metadata?.namespace;
+      if (!ns) continue;
+      if (!byNamespace.has(ns)) byNamespace.set(ns, []);
+      byNamespace.get(ns)!.push(item);
+    }
+
+    return projects.map(project => {
+      const items = project.namespaces.flatMap(ns => byNamespace.get(ns) ?? []);
+      const projectHealth = getResourcesHealth(items);
+      const healthLabel =
+        items.length === 0
+          ? t('No Resources')
+          : projectHealth.error > 0
+          ? t('Unhealthy')
+          : projectHealth.warning > 0
+          ? t('Degraded')
+          : t('Healthy');
+      const healthStatus: 'error' | 'warning' | 'success' =
+        projectHealth.error > 0 ? 'error' : projectHealth.warning > 0 ? 'warning' : 'success';
+      const healthIcon = getHealthIcon(
+        projectHealth.success,
+        projectHealth.error,
+        projectHealth.warning
+      );
+      return {
+        ...project,
+        resourceCount: items.length,
+        healthLabel,
+        healthStatus,
+        healthIcon,
+      };
+    });
+  }, [projects, allItems, t]);
+
   const handleCreateProject = () => {
     setShowCreate(true);
   };
 
-  const columns = useMemo(() => {
-    const columns: TableColumn<ProjectDefinition, any>[] = [
+  const columns = useMemo<TableColumn<ProjectRow, any>[]>(() => {
+    return [
       {
         id: 'name',
         header: t('Name'),
         accessorFn: it => it.id,
         Cell: ({ row: { original } }) => (
-          <>
-            <Link routeName="projectDetails" params={{ name: original.id }}>
-              {original.id}
-            </Link>
-          </>
+          <Link routeName="projectDetails" params={{ name: original.id }}>
+            {original.id}
+          </Link>
         ),
       },
       {
         id: 'resources',
         header: t('Resources'),
-        Cell: ({ row: { original } }) => {
-          const { items } = useProjectItems(original, { disableWatch: true });
-          return items.length;
-        },
+        accessorFn: it => it.resourceCount,
         gridTemplate: 'min-content',
       },
       {
         id: 'health',
         header: t('Health'),
-        Cell: ({ row: { original } }) => {
-          const { items } = useProjectItems(original, { disableWatch: true });
-          const projectHealth = getResourcesHealth(items);
-          return (
-            <StatusLabel
-              status={
-                projectHealth.error > 0
-                  ? 'error'
-                  : projectHealth.warning > 0
-                  ? 'warning'
-                  : 'success'
-              }
-            >
-              <Icon
-                icon={getHealthIcon(
-                  projectHealth.success,
-                  projectHealth.error,
-                  projectHealth.warning
-                )}
-                style={{
-                  fontSize: 24,
-                }}
-              />
-              {items.length === 0
-                ? t('No Resources')
-                : projectHealth.error > 0
-                ? t('Unhealthy')
-                : projectHealth.warning > 0
-                ? t('Degraded')
-                : t('Healthy')}
-            </StatusLabel>
-          );
-        },
+        accessorFn: it => it.healthLabel,
+        filterVariant: 'select',
+        sortingFn: (rowA, rowB) =>
+          (HEALTH_RANK[rowA.original.healthLabel] ?? 4) -
+          (HEALTH_RANK[rowB.original.healthLabel] ?? 4),
         gridTemplate: 'min-content',
+        muiTableHeadCellProps: {
+          align: 'center',
+        },
+        muiTableBodyCellProps: {
+          sx: { justifyContent: 'center' },
+        },
+        Cell: ({ row: { original } }) => (
+          <StatusLabel status={original.healthStatus}>
+            <Icon icon={original.healthIcon} style={{ fontSize: 24 }} />
+            {original.healthLabel}
+          </StatusLabel>
+        ),
       },
       {
         id: 'clusters',
@@ -170,8 +208,6 @@ export default function ProjectList() {
         accessorFn: it => it.namespaces.join(', '),
       },
     ];
-
-    return columns;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -222,7 +258,14 @@ export default function ProjectList() {
         </Button>
       </Box>
 
-      <Table key={pluginApiResources.length} columns={columns} data={projects} />
+      <Table
+        key={pluginApiResources.length}
+        columns={columns}
+        data={tableData}
+        initialState={{
+          sorting: [{ id: 'health', desc: false }],
+        }}
+      />
     </>
   );
 }

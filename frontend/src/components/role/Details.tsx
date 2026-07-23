@@ -48,19 +48,24 @@ export default function RoleDetails(props: {
                   columns={[
                     {
                       label: t('API Groups'),
-                      getter: ({ apiGroups = [] }) => apiGroups.join(', '),
+                      getter: ({ apiGroups = [] }) => {
+                        if (apiGroups.length === 0) return 'N/A';
+                        return apiGroups.map((g: string) => (g === '' ? 'core' : g)).join(', ');
+                      },
                     },
                     {
                       label: t('Resources'),
-                      getter: ({ resources = [] }) => resources.join(', '),
+                      getter: ({ resources = [] }) =>
+                        resources.length > 0 ? resources.join(', ') : 'N/A',
                     },
                     {
                       label: t('Non Resources'),
-                      getter: ({ nonResources = [] }) => nonResources.join(', '),
+                      getter: ({ nonResourceURLs = [] }) =>
+                        nonResourceURLs.length > 0 ? nonResourceURLs.join(', ') : 'None',
                     },
                     {
                       label: t('Verbs'),
-                      getter: ({ verbs = [] }) => verbs.join(', '),
+                      getter: ({ verbs = [] }) => (verbs.length > 0 ? verbs.join(', ') : 'N/A'),
                     },
                   ]}
                   data={item.rules || []}

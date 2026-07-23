@@ -23,12 +23,16 @@ import {
   ListItemIcon,
   ListItemText,
   Popover,
+  Tooltip,
   Typography,
 } from '@mui/material';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import { ResourceCategory } from '../../lib/k8s/ResourceCategory';
+import { evaluateApplicationHealth } from '../applications/applicationHealth';
+import { buildWorkloadObjectsMap, HealthBreakdown } from '../applications/ApplicationHealthChip';
+import Link from '../common/Link';
 import { KubeObjectStatus } from '../resourceMap/nodes/KubeObjectStatus';
 
 /** The kinds whose getStatus verdict is a real health signal (readiness); for
@@ -93,69 +97,169 @@ function kindCounts(items: KubeObject[]): Record<string, number> {
   return counts;
 }
 
-/** Popover content: breakdown by kind and health state for a category. */
+/** Workload kinds that evaluateApplicationHealth understands. */
+const WORKLOAD_KINDS = new Set([
+  'Deployment',
+  'StatefulSet',
+  'DaemonSet',
+  'ReplicaSet',
+  'Job',
+  'Pod',
+]);
+
+/** Per-category short descriptor explaining what these resources do. */
+const CATEGORY_EXPLANATIONS: Record<string, string> = {
+  Network: 'Services route traffic to Pods.',
+  Security: 'RBAC objects define access permissions.',
+  Configuration: 'ConfigMaps and Secrets feed configuration to Pods.',
+  Storage: 'PVCs manage storage binding.',
+};
+
+/** Returns non-Bound PVCs with their phase and requested size. */
+function getPvcProblems(
+  items: KubeObject[]
+): Array<{ item: KubeObject; phase: string; size: string }> {
+  const problems: Array<{ item: KubeObject; phase: string; size: string }> = [];
+  for (const item of items) {
+    if (item.kind === 'PersistentVolumeClaim') {
+      const phase = (item.jsonData as any).status?.phase ?? 'Unknown';
+      if (phase !== 'Bound') {
+        const size = (item.jsonData as any).spec?.resources?.requests?.storage ?? 'unknown';
+        problems.push({ item, phase, size });
+      }
+    }
+  }
+  return problems;
+}
+
+/** Counts total PVCs and how many are Bound. */
+function pvcSummary(items: KubeObject[]): { total: number; bound: number } {
+  let total = 0;
+  let bound = 0;
+  for (const item of items) {
+    if (item.kind === 'PersistentVolumeClaim') {
+      total++;
+      if ((item.jsonData as any).status?.phase === 'Bound') bound++;
+    }
+  }
+  return { total, bound };
+}
+
+/** Popover content: uses HealthBreakdown for workload categories,
+ * PVC phase breakdown for storage, and short descriptors for the rest. */
 function CategoryPopoverContent({
   category,
   items,
-  health,
 }: {
   category: ResourceCategory;
   items: KubeObject[];
   health: Record<KubeObjectStatus, number>;
 }) {
   const { t } = useTranslation();
-  const hasSignal = categoryHasHealthSignal(items);
-  const error = health.error ?? 0;
-  const warning = health.warning ?? 0;
-  const success = health.success ?? 0;
-  const counts = kindCounts(items);
+  const hasWorkloads = items.some(it => WORKLOAD_KINDS.has(it.kind));
 
-  return (
-    <Box sx={{ p: 2, minWidth: 220, maxWidth: 320 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-        {category.label}
-      </Typography>
+  // Workload categories: use the same HealthBreakdown as the health chip.
+  const appHealth = useMemo(
+    () => (hasWorkloads ? evaluateApplicationHealth(items.map(it => it.jsonData)) : null),
+    [hasWorkloads, items]
+  );
+  const workloadObjects = useMemo(
+    () => (appHealth ? buildWorkloadObjectsMap(items, appHealth) : undefined),
+    [appHealth, items]
+  );
 
-      {/* Per-kind breakdown */}
-      {Object.entries(counts).map(([kind, count]) => (
-        <Typography key={kind} variant="body2" sx={{ py: 0.25 }}>
-          {kind}: {count}
+  if (hasWorkloads && appHealth) {
+    return (
+      <Box sx={{ p: 2, minWidth: 260, maxWidth: 380, maxHeight: 400, overflowY: 'auto' }}>
+        <HealthBreakdown health={appHealth} workloadObjects={workloadObjects} />
+      </Box>
+    );
+  }
+
+  // Storage category: summary line + problem PVC list with clickable links
+  const { total: pvcTotal, bound: pvcBound } = pvcSummary(items);
+  const hasPvcs = pvcTotal > 0;
+  if (hasPvcs) {
+    const problems = getPvcProblems(items);
+
+    return (
+      <Box sx={{ p: 2, minWidth: 260, maxWidth: 380, maxHeight: 400, overflowY: 'auto' }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+          {category.label} - {pvcBound}/{pvcTotal} PVCs bound
         </Typography>
-      ))}
-
-      {/* Health summary for categories with signals */}
-      {hasSignal && items.length > 0 && (
-        <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-          {error > 0 && (
-            <Typography variant="body2" color="error.main" sx={{ fontWeight: 600 }}>
-              {t('translation|{{ count }} unhealthy (no ready replicas or failed)', {
-                count: error,
-              })}
-            </Typography>
-          )}
-          {warning > 0 && (
-            <Typography variant="body2" color="warning.main" sx={{ fontWeight: 600 }}>
-              {t('translation|{{ count }} degraded (fewer ready replicas than desired)', {
-                count: warning,
-              })}
-            </Typography>
-          )}
-          {success > 0 && (
-            <Typography variant="body2" color="success.main">
-              {t('translation|{{ count }} healthy', { count: success })}
+        <Box sx={{ borderTop: '1px solid', borderColor: 'divider', pt: 1 }}>
+          {problems.length > 0 ? (
+            problems.map(({ item, phase, size }) => (
+              <Box
+                key={item.metadata.uid}
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    backgroundColor: phase === 'Lost' ? 'error.main' : 'warning.main',
+                    flexShrink: 0,
+                  }}
+                />
+                <Typography
+                  variant="caption"
+                  sx={{ flex: 1, minWidth: 0 }}
+                  noWrap
+                  title={item.metadata.name}
+                >
+                  <Link kubeObject={item}>{item.metadata.name}</Link> ({size})
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: phase === 'Lost' ? 'error.main' : 'warning.main',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  - {phase}
+                </Typography>
+              </Box>
+            ))
+          ) : (
+            <Typography variant="caption" color="success.main">
+              {t('translation|All PVCs are bound.')}
             </Typography>
           )}
         </Box>
-      )}
+      </Box>
+    );
+  }
 
-      {/* Count-only categories: explain why there is no health signal */}
-      {!hasSignal && items.length > 0 && (
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          {t('translation|No runtime health signal for this resource type.')}
-        </Typography>
-      )}
+  // Non-signal categories: per-kind counts + short descriptor
+  const explanation = CATEGORY_EXPLANATIONS[category.label] ?? '';
 
-      {items.length === 0 && (
+  return (
+    <Box sx={{ p: 2, minWidth: 240, maxWidth: 340 }}>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+        {category.label}
+      </Typography>
+      {items.length > 0 ? (
+        <Box>
+          {Object.entries(kindCounts(items)).map(([kind, count]) => (
+            <Typography key={kind} variant="body2" sx={{ py: 0.25 }}>
+              {kind}: {count}
+            </Typography>
+          ))}
+          {explanation && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ mt: 1.5, display: 'block', lineHeight: 1.4 }}
+            >
+              {t(`translation|${explanation}`)}
+            </Typography>
+          )}
+        </Box>
+      ) : (
         <Typography variant="caption" color="text.secondary">
           {t('translation|No resources in this category.')}
         </Typography>
@@ -194,26 +298,28 @@ function CategoryRow({
       : 'grey.500';
 
   const countNode = (
-    <Box
-      display="flex"
-      alignItems="center"
-      gap={0.5}
-      onClick={e => {
-        e.stopPropagation();
-        setAnchorEl(e.currentTarget);
-      }}
-      sx={{ cursor: 'pointer' }}
-    >
-      <Typography
-        variant="h6"
-        sx={{
-          color: hasSignal && items.length > 0 ? healthColor : 'text.primary',
-          lineHeight: 1,
+    <Tooltip title="Click to see" arrow>
+      <Box
+        display="flex"
+        alignItems="center"
+        gap={0.5}
+        onClick={e => {
+          e.stopPropagation();
+          setAnchorEl(e.currentTarget);
         }}
+        sx={{ cursor: 'pointer' }}
       >
-        {items.length}
-      </Typography>
-    </Box>
+        <Typography
+          variant="h6"
+          sx={{
+            color: hasSignal && items.length > 0 ? healthColor : 'text.primary',
+            lineHeight: 1,
+          }}
+        >
+          {items.length}
+        </Typography>
+      </Box>
+    </Tooltip>
   );
 
   return (

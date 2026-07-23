@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import { uniqBy } from 'lodash';
-import { useState } from 'react';
+import { uniq, uniqBy } from 'lodash';
+import { useMemo, useState } from 'react';
 import { apiResourceId } from '../../lib/k8s/api/v2/ApiResource';
 import { useTypedSelector } from '../../redux/hooks';
 import { ProjectDefinition } from '../../redux/projectsSlice';
@@ -45,6 +45,33 @@ export function useProjectItems(
     MAX_ITEMS,
     disableWatch || resources.length > MAX_RESOURCES_TO_WATCH ? REFETCH_INTERVAL_MS : undefined,
     project.namespaces
+  );
+
+  return { items, errors, isLoading };
+}
+
+/**
+ * Fetches resources for ALL projects in a single batch of list queries. This
+ * allows the Projects list page to pre-compute health per project so the
+ * Health column can be sorted and filtered without calling hooks inside Cells.
+ */
+export function useAllProjectItems(projects: ProjectDefinition[]) {
+  const pluginApiResources = useTypedSelector(state => state.projects.apiResources);
+
+  const [resources] = useState(() =>
+    uniqBy([...defaultApiResources, ...pluginApiResources], r => apiResourceId(r))
+  );
+
+  // Collect all clusters and namespaces from every project into one query.
+  const allClusters = useMemo(() => uniq(projects.flatMap(p => p.clusters)), [projects]);
+  const allNamespaces = useMemo(() => uniq(projects.flatMap(p => p.namespaces)), [projects]);
+
+  const { items, errors, isLoading } = useKubeLists(
+    resources,
+    allClusters,
+    MAX_ITEMS,
+    resources.length > MAX_RESOURCES_TO_WATCH ? REFETCH_INTERVAL_MS : undefined,
+    allNamespaces
   );
 
   return { items, errors, isLoading };

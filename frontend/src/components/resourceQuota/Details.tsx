@@ -123,18 +123,22 @@ export function ResourceQuotaTable({
         {
           label: t('glossary|Resource'),
           getter: item => item.name,
+          gridTemplate: 'minmax(90px, 1.2fr)',
         },
         {
           label: t('translation|Used'),
           getter: item => formatQuotaValue(item.name, item.used),
+          gridTemplate: 'minmax(100px, 1.5fr)',
         },
         {
           label: t('translation|Hard'),
           getter: item => formatQuotaValue(item.name, item.hard),
+          gridTemplate: 'minmax(90px, 1.2fr)',
         },
         {
           label: t('translation|Usage'),
           getter: item => <QuotaUsageBar name={item.name} used={item.used} hard={item.hard} />,
+          gridTemplate: 'minmax(140px, 1.5fr)',
         },
       ]}
     />

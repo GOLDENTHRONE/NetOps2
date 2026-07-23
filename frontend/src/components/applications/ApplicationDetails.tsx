@@ -25,9 +25,9 @@ import {
   Tabs,
   Typography,
 } from '@mui/material';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link as RouterLink, useParams } from 'react-router-dom';
+import { Link as RouterLink, useHistory, useLocation, useParams } from 'react-router-dom';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import ResourceQuota from '../../lib/k8s/resourceQuota';
 import { SelectedClustersContext } from '../../lib/k8s/SelectedClustersContext';
@@ -42,7 +42,11 @@ import { GraphFilter } from '../resourceMap/graph/graphFiltering';
 import { GraphView } from '../resourceMap/GraphView';
 import { ResourceQuotaTable } from '../resourceQuota/Details';
 import { evaluateApplicationHealth } from './applicationHealth';
-import { ApplicationHealthChip, buildWorkloadObjectsMap } from './ApplicationHealthChip';
+import {
+  ApplicationHealthChip,
+  buildWorkloadObjectsMap,
+  LoadingDots,
+} from './ApplicationHealthChip';
 import { ApplicationDefinition, NOT_AVAILABLE } from './applicationUtils';
 import { useAllApplicationResources } from './useApplicationResources';
 import { useApplication } from './useApplications';
@@ -106,8 +110,39 @@ function MetadataValue({ value }: { value: string }) {
 
 function ApplicationDetailsContent({ application }: { application: ApplicationDefinition }) {
   const { t } = useTranslation(['translation', 'glossary']);
-  const [selectedTab, setSelectedTab] = useState<string>(TAB_IDS.OVERVIEW);
-  const [selectedCategoryName, setSelectedCategoryName] = useState<string>();
+  const location = useLocation();
+  const history = useHistory();
+
+  // Persist tab + category in URL search params so browser Back restores
+  // the exact view (e.g. Resources → Network) instead of resetting to Overview.
+  const searchParams = new URLSearchParams(location.search);
+  const selectedTab = searchParams.get('tab') || TAB_IDS.OVERVIEW;
+  const selectedCategoryName = searchParams.get('category') || undefined;
+
+  const updateSearchParams = (updates: Record<string, string | null>) => {
+    const next = new URLSearchParams(location.search);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null) {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
+    }
+    history.replace({ ...location, search: next.toString() });
+  };
+
+  const setSelectedTab = (tab: string) => {
+    const updates: Record<string, string | null> = { tab };
+    // Clear category when switching tabs (irrelevant outside Resources).
+    if (tab !== TAB_IDS.RESOURCES) {
+      updates.category = null;
+    }
+    updateSearchParams(updates);
+  };
+
+  const setSelectedCategoryName = (name: string | undefined) => {
+    updateSearchParams({ category: name ?? null });
+  };
 
   // The exact same shared, watched queries the Applications table uses: the
   // counts here always match the table, and navigating from the table to this
@@ -182,9 +217,9 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
           <ApplicationOverview
             application={application}
             applicationResources={items}
+            resourcesLoading={isLoading}
             onCategoryClick={category => {
-              setSelectedCategoryName(category);
-              setSelectedTab(TAB_IDS.RESOURCES);
+              updateSearchParams({ tab: TAB_IDS.RESOURCES, category });
             }}
           />
         )}
@@ -210,10 +245,12 @@ function ApplicationDetailsContent({ application }: { application: ApplicationDe
 export function ApplicationOverview({
   application,
   applicationResources,
+  resourcesLoading = false,
   onCategoryClick,
 }: {
   application: ApplicationDefinition;
   applicationResources: KubeObject[];
+  resourcesLoading?: boolean;
   onCategoryClick: (categoryName: string) => void;
 }) {
   const { t } = useTranslation(['translation', 'glossary']);
@@ -222,7 +259,11 @@ export function ApplicationOverview({
   // application fetch (their lists are skipped for cost, see
   // useAllApplicationResources), so fetch just this namespace's quotas here —
   // a tiny, namespace-scoped request per cluster.
-  const { items: resourceQuotas } = ResourceQuota.useList({
+  const {
+    items: resourceQuotas,
+    isLoading: quotasLoading,
+    isFetching: quotasFetching,
+  } = ResourceQuota.useList({
     clusters: application.clusters,
     namespace: application.id,
   });
@@ -333,14 +374,34 @@ export function ApplicationOverview({
         <Card sx={{ height: '100%' }}>
           <CardContent>
             <Typography variant="h6">{t('translation|Resources')}</Typography>
-            <ResourceCategoriesList categoryList={categoryList} onCategoryClick={onCategoryClick} />
+            {resourcesLoading && categoryList.length === 0 ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <LoadingDots />
+              </Box>
+            ) : !resourcesLoading && categoryList.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ my: 2 }}>
+                {t('translation|No resources found in this namespace.')}
+              </Typography>
+            ) : (
+              <>
+                <ResourceCategoriesList
+                  categoryList={categoryList}
+                  onCategoryClick={onCategoryClick}
+                />
+                {resourcesLoading && categoryList.length > 0 && (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                    <LoadingDots />
+                  </Box>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
       </Grid>
 
-      <Grid item xs={12} md={4}>
-        <Card sx={{ height: '100%', minWidth: 0 }}>
-          <CardContent sx={{ minWidth: 0 }}>
+      <Grid item xs={12} md={4} sx={{ minWidth: 0 }}>
+        <Card sx={{ height: '100%' }}>
+          <CardContent sx={{ minWidth: 0, px: 2 }}>
             <Typography variant="h6">{t('translation|Resource Quotas')}</Typography>
             <Box>
               {(resourceQuotas ?? []).map(it => (
@@ -351,16 +412,26 @@ export function ApplicationOverview({
                     </Typography>
                     <EditButton item={it} />
                   </Box>
-                  {/* The original table design, but in a horizontally
-                      scrollable container so wide values (e.g. large memory
-                      limits) scroll instead of being clipped by the card. */}
-                  <Box sx={{ overflowX: 'auto' }}>
+                  {/* Horizontally scrollable so wide values don't clip. */}
+                  <Box sx={{ overflowX: 'auto', width: '100%' }}>
                     <ResourceQuotaTable resourceStats={it.resourceStats} />
                   </Box>
                 </Box>
               ))}
 
-              {(resourceQuotas ?? []).length === 0 && (
+              {(quotasLoading || quotasFetching) && (resourceQuotas ?? []).length === 0 && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                  <LoadingDots />
+                </Box>
+              )}
+
+              {(quotasLoading || quotasFetching) && (resourceQuotas ?? []).length > 0 && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                  <LoadingDots />
+                </Box>
+              )}
+
+              {!quotasLoading && !quotasFetching && (resourceQuotas ?? []).length === 0 && (
                 // Say what the absence means instead of a bare "n/a": no
                 // ResourceQuota object exists in this namespace, so nothing
                 // caps its resource usage.

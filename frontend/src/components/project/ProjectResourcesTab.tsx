@@ -161,6 +161,20 @@ export function getResourceRowHealth(resource: KubeObject): ResourceRowHealth {
     return { state: 'scaledZero', label: 'Suspended' };
   }
 
+  if (kind === 'PersistentVolumeClaim') {
+    const phase = (resource.jsonData as any)?.status?.phase;
+    if (phase === 'Bound') {
+      return { state: 'ready', label: 'Bound', reason: 'PVC is bound to a PersistentVolume' };
+    }
+    if (phase === 'Pending') {
+      return { state: 'progressing', label: 'Pending', reason: 'Waiting for volume provisioning' };
+    }
+    if (phase === 'Lost') {
+      return { state: 'down', label: 'Lost', reason: 'Bound PersistentVolume no longer exists' };
+    }
+    return { state: 'degraded', label: phase ?? 'Unknown', reason: 'Unexpected PVC phase' };
+  }
+
   return { state: 'none', label: '' };
 }
 
@@ -333,11 +347,27 @@ export function getResourceDetails(resource: KubeObject): string {
     case 'CronJob':
       return `Schedule: ${spec.schedule ?? '?'}${spec.suspend ? ' (suspended)' : ''}`;
     case 'Service': {
+      const serviceType = spec.type || 'ClusterIP';
+      const clusterIP = spec.clusterIP || '';
       const ports = (spec.ports ?? [])
         .map((p: any) => `${p.port}${p.protocol && p.protocol !== 'TCP' ? '/' + p.protocol : ''}`)
         .slice(0, 4)
         .join(', ');
-      return `${spec.type || 'ClusterIP'}${ports ? ` · ${ports}` : ''}`;
+      const portsStr = ports ? ` · Ports: ${ports}` : '';
+
+      // ExternalName services have no ClusterIP — show the external hostname.
+      if (serviceType === 'ExternalName') {
+        return `ExternalName: ${spec.externalName || 'N/A'}`;
+      }
+
+      // Headless services explicitly set clusterIP to "None".
+      const isHeadless = clusterIP === 'None';
+      const ipDisplay = isHeadless ? 'None (Headless)' : clusterIP || 'None';
+
+      // For non-ClusterIP types (NodePort, LoadBalancer), append type label.
+      const typeSuffix = serviceType !== 'ClusterIP' ? ` (${serviceType})` : '';
+
+      return `ClusterIP: ${ipDisplay}${portsStr}${typeSuffix}`;
     }
     case 'Ingress': {
       const hosts = (spec.rules ?? []).map((r: any) => r.host).filter(Boolean);
