@@ -383,9 +383,7 @@ export function getResourceDetails(resource: KubeObject): string {
         status.capacity?.storage ?? spec.resources?.requests?.storage ?? '?'
       }${spec.storageClassName ? ` · ${spec.storageClassName}` : ''}`;
     case 'ConfigMap':
-      return `${
-        Object.keys(json.data ?? {}).length + Object.keys(json.binaryData ?? {}).length
-      } key(s)`;
+      return '';
     case 'Secret':
       return `${json.type ?? 'Opaque'} · ${Object.keys(json.data ?? {}).length} key(s)`;
     case 'HorizontalPodAutoscaler':
@@ -537,16 +535,16 @@ export function ProjectResourcesTab({
         id: 'details',
         gridTemplate: 'min-content',
         // One line of kind-specific facts (replicas, schedule, ports, keys…);
-        // "N/A" when the kind has no detail worth showing — never filler.
-        accessorFn: resource => getResourceDetails(resource) || t('N/A'),
+        // "n/a" when the kind has no detail worth showing — never filler.
+        accessorFn: resource => getResourceDetails(resource) || 'n/a',
         header: t('Details'),
         Cell: ({ cell }) => {
           const value = cell.getValue<string>();
-          const isNA = value === t('N/A');
+          const isNA = value === 'n/a';
           return (
             <Typography
-              variant="body2"
-              color={isNA ? 'text.disabled' : 'text.secondary'}
+              variant={isNA ? 'caption' : 'body2'}
+              color="text.secondary"
               whiteSpace="nowrap"
             >
               {value}

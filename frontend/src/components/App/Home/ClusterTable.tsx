@@ -38,8 +38,9 @@ import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster, KubeMetrics } from '../../../lib/k8s/cluster';
 import Node from '../../../lib/k8s/node';
+import Pod from '../../../lib/k8s/pod';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
-import { parseCpu, parseRam } from '../../../lib/units';
+import { parseCpu, parseRam, TO_GB, TO_ONE_CPU } from '../../../lib/units';
 import { getClusterPrefixedPath } from '../../../lib/util';
 import { useTypedSelector } from '../../../redux/hooks';
 import { Loader } from '../../common';
@@ -185,6 +186,7 @@ function ActiveClusterExtraFacts({
   // One-shot fetch (refetchInterval disables the watch websocket): opening the
   // popover should not open a long-lived socket per cluster.
   const [nodes] = Node.useList({ cluster: clusterName, refetchInterval: 0 });
+  const [pods] = Pod.useList({ cluster: clusterName, refetchInterval: 0 });
   const [nodeMetrics, metricsError] = Node.useMetrics(clusterName);
 
   const loading = <LoadingDots />;
@@ -200,8 +202,10 @@ function ActiveClusterExtraFacts({
 
     const metricsUnavailable = !!metricsError;
 
-    let cpuPercent: number | null = null;
-    let memPercent: number | null = null;
+    let cpuUsed: number | null = null;
+    let cpuTotal: number | null = null;
+    let memUsedGB: number | null = null;
+    let memTotalGB: number | null = null;
 
     if (nodes && nodeMetrics && !metricsUnavailable) {
       const totalCpuCapacity = nodes.reduce(
@@ -213,7 +217,8 @@ function ActiveClusterExtraFacts({
         0
       );
       if (totalCpuCapacity > 0) {
-        cpuPercent = Math.round((usedCpu / totalCpuCapacity) * 100);
+        cpuUsed = usedCpu / TO_ONE_CPU;
+        cpuTotal = totalCpuCapacity / TO_ONE_CPU;
       }
 
       const totalMemCapacity = nodes.reduce(
@@ -225,9 +230,22 @@ function ActiveClusterExtraFacts({
         0
       );
       if (totalMemCapacity > 0) {
-        memPercent = Math.round((usedMem / totalMemCapacity) * 100);
+        memUsedGB = usedMem / TO_GB;
+        memTotalGB = totalMemCapacity / TO_GB;
       }
     }
+
+    // Pod stats — mirror Overview's PodsStatusCircleChart logic
+    const totalPods = pods !== null ? pods.length : null;
+    const readyPods =
+      pods !== null
+        ? pods.filter(p => {
+            if (p.status?.phase === 'Succeeded') return true;
+            return p.status?.conditions?.some(
+              (c: any) => c.type === 'Ready' && c.status === 'True'
+            );
+          }).length
+        : null;
 
     return [
       {
@@ -240,23 +258,40 @@ function ActiveClusterExtraFacts({
             : `${totalNodes}`,
       },
       {
+        label: t('translation|Pods'),
+        value:
+          totalPods === null
+            ? loading
+            : readyPods !== null && totalPods > 0
+            ? `${readyPods} / ${totalPods} Requested (${((readyPods / totalPods) * 100).toFixed(
+                1
+              )}%)`
+            : `${totalPods}`,
+      },
+      {
         label: t('translation|CPU'),
         value: metricsUnavailable
           ? t('translation|N/A')
-          : cpuPercent === null
+          : cpuUsed === null || cpuTotal === null
           ? loading
-          : `${cpuPercent}%`,
+          : `${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(0)} units (${(
+              (cpuUsed / cpuTotal) *
+              100
+            ).toFixed(1)}%)`,
       },
       {
         label: t('translation|Memory'),
         value: metricsUnavailable
           ? t('translation|N/A')
-          : memPercent === null
+          : memUsedGB === null || memTotalGB === null
           ? loading
-          : `${memPercent}%`,
+          : `${memUsedGB.toFixed(2)} / ${memTotalGB.toFixed(2)} GB (${(
+              (memUsedGB / memTotalGB) *
+              100
+            ).toFixed(1)}%)`,
       },
     ];
-  }, [nodes, nodeMetrics, metricsError, t, loading]);
+  }, [nodes, pods, nodeMetrics, metricsError, t, loading]);
 
   return (
     <>
