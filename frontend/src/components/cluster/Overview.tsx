@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import Box from '@mui/material/Box';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Grid from '@mui/material/Grid';
 import { Theme } from '@mui/material/styles';
@@ -21,9 +22,11 @@ import Switch from '@mui/material/Switch';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
+import Deployment from '../../lib/k8s/deployment';
 import Event from '../../lib/k8s/event';
 import Node from '../../lib/k8s/node';
 import Pod from '../../lib/k8s/pod';
+import { PodMetrics } from '../../lib/k8s/PodMetrics';
 import { useFilterFunc } from '../../lib/util';
 import { useNamespaces } from '../../redux/filterSlice';
 import { useTypedSelector } from '../../redux/hooks';
@@ -32,34 +35,79 @@ import EventsLifetimeInfo from '../common/EventsLifetimeInfo';
 import { DateLabel } from '../common/Label';
 import { StatusLabel } from '../common/Label';
 import Link from '../common/Link';
+import { NamespacesAutocomplete } from '../common/NamespacesAutocomplete';
 import { PageGrid } from '../common/Resource';
 import ResourceListView from '../common/Resource/ResourceListView';
 import { SectionBox } from '../common/SectionBox';
+import SectionHeader from '../common/SectionHeader';
 import ShowHideLabel from '../common/ShowHideLabel';
+import TileChart from '../common/TileChart/TileChart';
 import { LightTooltip } from '../common/Tooltip';
 import {
   CpuCircularChart,
   MemoryCircularChart,
+  NamespaceCpuChart,
+  NamespaceMemoryChart,
   NodesStatusCircleChart,
   PodsStatusCircleChart,
+  WorkloadsStatusChart,
 } from './Charts';
 import { ClusterGroupErrorMessage } from './ClusterGroupErrorMessage';
 
-const OVERVIEW_REFETCH_INTERVAL_MS = 60_000;
+/** Cluster-wide polling: larger payloads (3000+ pods, 76 nodes) — keep moderate */
+const CLUSTER_REFETCH_INTERVAL_MS = 30_000;
+/** Namespace-scoped polling: small payloads — refresh fast for responsiveness */
+const NAMESPACE_REFETCH_INTERVAL_MS = 10_000;
 
 export default function Overview() {
   const { t } = useTranslation(['translation']);
-  // The overview only needs periodic snapshots for aggregate charts. Avoid long-lived
-  // watches here because large clusters can stream enough events to exhaust the tab.
-  const [pods] = Pod.useList({ refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS });
-  const [nodes] = Node.useList({ refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS });
-  const [nodeMetrics, metricsError] = Node.useMetrics();
+  const selectedNamespaces = useNamespaces();
   const chartProcessors = useTypedSelector(state => state.overviewCharts.processors);
+
+  const isNamespaceScoped = selectedNamespaces.length > 0;
+
+  return (
+    <PageGrid>
+      <SectionBox
+        title={
+          <SectionHeader
+            title={t('translation|Overview')}
+            actions={[
+              <Box key="namespace-filter" sx={{ minWidth: '25rem' }}>
+                <NamespacesAutocomplete width="100%" />
+              </Box>,
+            ]}
+          />
+        }
+        py={2}
+        mt={[4, 0, 0]}
+      >
+        {isNamespaceScoped ? (
+          <NamespaceChartsSection
+            namespaces={selectedNamespaces}
+            chartProcessors={chartProcessors}
+          />
+        ) : (
+          <ClusterChartsSection chartProcessors={chartProcessors} />
+        )}
+      </SectionBox>
+      <EventsSection />
+    </PageGrid>
+  );
+}
+
+function ClusterChartsSection({
+  chartProcessors,
+}: {
+  chartProcessors: Array<{ processor: (charts: OverviewChart[]) => OverviewChart[] }>;
+}) {
+  const [pods] = Pod.useList({ refetchInterval: CLUSTER_REFETCH_INTERVAL_MS });
+  const [nodes] = Node.useList({ refetchInterval: CLUSTER_REFETCH_INTERVAL_MS });
+  const [nodeMetrics, metricsError] = Node.useMetrics();
 
   const noMetrics = metricsError?.status === 404;
   const noPermissions = metricsError?.status === 403;
 
-  // Process the default charts through any registered processors
   const defaultCharts: OverviewChart[] = [
     {
       id: 'cpu',
@@ -87,23 +135,83 @@ export default function Overview() {
     defaultCharts
   );
 
+  if (noPermissions) {
+    return <ClusterGroupErrorMessage errors={[metricsError]} />;
+  }
+
   return (
-    <PageGrid>
-      <SectionBox title={t('translation|Overview')} py={2} mt={[4, 0, 0]}>
-        {noPermissions ? (
-          <ClusterGroupErrorMessage errors={[metricsError]} />
+    <Grid container justifyContent="flex-start" alignItems="stretch" spacing={4}>
+      {charts.map(chart => (
+        <Grid key={chart.id} item xs sx={{ maxWidth: '300px' }}>
+          <chart.component />
+        </Grid>
+      ))}
+    </Grid>
+  );
+}
+
+function NamespaceChartsSection({
+  namespaces,
+  chartProcessors,
+}: {
+  namespaces: string[];
+  chartProcessors: Array<{ processor: (charts: OverviewChart[]) => OverviewChart[] }>;
+}) {
+  const [pods] = Pod.useList({
+    namespace: namespaces,
+    refetchInterval: NAMESPACE_REFETCH_INTERVAL_MS,
+  });
+  const [podMetricsList] = PodMetrics.useList({
+    namespace: namespaces,
+    refetchInterval: NAMESPACE_REFETCH_INTERVAL_MS,
+  });
+  const [deployments] = Deployment.useList({
+    namespace: namespaces,
+    refetchInterval: NAMESPACE_REFETCH_INTERVAL_MS,
+  });
+
+  const defaultCharts: OverviewChart[] = [
+    {
+      id: 'cpu',
+      component: () => <NamespaceCpuChart pods={pods} podMetrics={podMetricsList} />,
+    },
+    {
+      id: 'memory',
+      component: () => <NamespaceMemoryChart pods={pods} podMetrics={podMetricsList} />,
+    },
+    {
+      id: 'pods',
+      component: () =>
+        pods !== null && pods.length === 0 ? (
+          <TileChart
+            data={null}
+            total={0}
+            label="N/A"
+            title="Pods"
+            legend="No pods in this namespace"
+          />
         ) : (
-          <Grid container justifyContent="flex-start" alignItems="stretch" spacing={4}>
-            {charts.map(chart => (
-              <Grid key={chart.id} item xs sx={{ maxWidth: '300px' }}>
-                <chart.component />
-              </Grid>
-            ))}
-          </Grid>
-        )}
-      </SectionBox>
-      <EventsSection />
-    </PageGrid>
+          <PodsStatusCircleChart items={pods} />
+        ),
+    },
+    {
+      id: 'workloads',
+      component: () => <WorkloadsStatusChart items={deployments} />,
+    },
+  ];
+  const charts = chartProcessors.reduce(
+    (currentCharts, p) => p.processor(currentCharts),
+    defaultCharts
+  );
+
+  return (
+    <Grid container justifyContent="flex-start" alignItems="stretch" spacing={4}>
+      {charts.map(chart => (
+        <Grid key={chart.id} item xs sx={{ maxWidth: '300px' }}>
+          <chart.component />
+        </Grid>
+      ))}
+    </Grid>
   );
 }
 
@@ -127,7 +235,8 @@ function EventsSection() {
   const { items: events, errors: eventsErrors } = Event.useList({
     limit: Event.maxLimit,
     namespace,
-    refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS,
+    refetchInterval:
+      namespace.length > 0 ? NAMESPACE_REFETCH_INTERVAL_MS : CLUSTER_REFETCH_INTERVAL_MS,
   });
 
   const warningActionFilterFunc = (event: Event, search?: string) => {
@@ -177,7 +286,7 @@ function EventsSection() {
     <ResourceListView
       title={t('glossary|Events')}
       headerProps={{
-        noNamespaceFilter: false,
+        noNamespaceFilter: true,
         titleSideActions: [
           <EventsLifetimeInfo key="event-lifetime-info" />,
           <FormControlLabel

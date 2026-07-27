@@ -20,17 +20,30 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import Overview from './Overview';
 
-const { chartMocks, eventUseList, nodeUseList, nodeUseMetrics, podUseList } = vi.hoisted(() => ({
+const {
+  chartMocks,
+  eventUseList,
+  nodeUseList,
+  nodeUseMetrics,
+  podUseList,
+  podMetricsUseList,
+  deploymentUseList,
+} = vi.hoisted(() => ({
   chartMocks: {
     CpuCircularChart: () => <div>cpu</div>,
     MemoryCircularChart: () => <div>memory</div>,
     NodesStatusCircleChart: () => <div>nodes</div>,
     PodsStatusCircleChart: () => <div>pods</div>,
+    NamespaceCpuChart: () => <div>ns-cpu</div>,
+    NamespaceMemoryChart: () => <div>ns-memory</div>,
+    WorkloadsStatusChart: () => <div>workloads</div>,
   },
   eventUseList: vi.fn(() => ({ items: [], errors: null })),
   nodeUseList: vi.fn(() => [[]]),
   nodeUseMetrics: vi.fn(() => [[], null]),
   podUseList: vi.fn(() => [[]]),
+  podMetricsUseList: vi.fn(() => [[]]),
+  deploymentUseList: vi.fn(() => [[]]),
 }));
 
 vi.mock('react-i18next', async importOriginal => ({
@@ -60,6 +73,18 @@ vi.mock('../../lib/k8s/pod', () => ({
   },
 }));
 
+vi.mock('../../lib/k8s/PodMetrics', () => ({
+  PodMetrics: {
+    useList: podMetricsUseList,
+  },
+}));
+
+vi.mock('../../lib/k8s/deployment', () => ({
+  default: {
+    useList: deploymentUseList,
+  },
+}));
+
 vi.mock('../../lib/util', () => ({
   useFilterFunc: () => () => true,
 }));
@@ -82,18 +107,38 @@ vi.mock('../common/Resource', () => ({
 }));
 
 vi.mock('../common/SectionBox', () => ({
-  default: ({ children, title }: { children: React.ReactNode; title: string }) => (
+  default: ({
+    children,
+    title,
+  }: {
+    children: React.ReactNode;
+    title: string | React.ReactNode;
+  }) => (
     <section>
-      <h2>{title}</h2>
+      <h2>{typeof title === 'string' ? title : 'Overview'}</h2>
       {children}
     </section>
   ),
-  SectionBox: ({ children, title }: { children: React.ReactNode; title: string }) => (
+  SectionBox: ({
+    children,
+    title,
+  }: {
+    children: React.ReactNode;
+    title: string | React.ReactNode;
+  }) => (
     <section>
-      <h2>{title}</h2>
+      <h2>{typeof title === 'string' ? title : 'Overview'}</h2>
       {children}
     </section>
   ),
+}));
+
+vi.mock('../common/SectionHeader', () => ({
+  default: ({ title }: { title: string }) => <h2>{title}</h2>,
+}));
+
+vi.mock('../common/NamespacesAutocomplete', () => ({
+  NamespacesAutocomplete: () => <div data-testid="namespace-filter" />,
 }));
 
 vi.mock('./Charts', () => chartMocks);
@@ -101,7 +146,7 @@ vi.mock('./Charts/index', () => chartMocks);
 
 describe('Overview', () => {
   it('polls overview resources instead of opening watch streams', () => {
-    const OVERVIEW_REFETCH_INTERVAL_MS = 60_000;
+    const CLUSTER_REFETCH_INTERVAL_MS = 30_000;
 
     render(
       <MemoryRouter>
@@ -109,12 +154,15 @@ describe('Overview', () => {
       </MemoryRouter>
     );
 
-    expect(podUseList).toHaveBeenCalledWith({ refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS });
-    expect(nodeUseList).toHaveBeenCalledWith({ refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS });
+    expect(podUseList).toHaveBeenCalledWith({
+      namespace: undefined,
+      refetchInterval: CLUSTER_REFETCH_INTERVAL_MS,
+    });
+    expect(nodeUseList).toHaveBeenCalledWith({ refetchInterval: CLUSTER_REFETCH_INTERVAL_MS });
     expect(eventUseList).toHaveBeenCalledWith({
       limit: 2000,
       namespace: [],
-      refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS,
+      refetchInterval: CLUSTER_REFETCH_INTERVAL_MS,
     });
   });
 });

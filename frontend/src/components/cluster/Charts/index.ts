@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { NamespaceCpuChart, NamespaceMemoryChart, WorkloadsStatusChart } from './NamespaceCharts';
 import {
   CpuCircularChart,
   EphemeralStorageCircularChart,
@@ -29,4 +30,7 @@ export {
   EphemeralStorageCircularChart,
   PodsStatusCircleChart,
   NodesStatusCircleChart,
+  NamespaceCpuChart,
+  NamespaceMemoryChart,
+  WorkloadsStatusChart,
 };

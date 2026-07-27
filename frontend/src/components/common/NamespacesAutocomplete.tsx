@@ -78,17 +78,20 @@ export interface PureNamespacesAutocompleteProps {
   namespaceNames: string[];
   onChange: (event: React.ChangeEvent<{}>, newValue: string[]) => void;
   filter: { namespaces: Set<string> };
+  /** Width of the autocomplete input. Defaults to '15rem'. */
+  width?: string;
 }
 
 export function PureNamespacesAutocomplete({
   namespaceNames,
   onChange: onChangeFromProps,
   filter,
+  width = '15rem',
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);
   const [namespaceInput, setNamespaceInput] = React.useState<string>('');
-  const maxNamespacesChars = 12;
+  const maxNamespacesChars = width === '100%' || parseInt(width) > 20 ? 40 : 12;
 
   const onInputChange = (event: object, value: string, reason: string) => {
     // For some reason, the AutoComplete component resets the text after a short
@@ -176,7 +179,7 @@ export function PureNamespacesAutocomplete({
         );
       }}
       renderInput={params => (
-        <Box width="15rem">
+        <Box width={width}>
           <TextField
             {...params}
             variant="outlined"
@@ -193,7 +196,12 @@ export function PureNamespacesAutocomplete({
   );
 }
 
-export function NamespacesAutocomplete() {
+export interface NamespacesAutocompleteProps {
+  /** Width of the autocomplete input. Passed through to PureNamespacesAutocomplete. */
+  width?: string;
+}
+
+export function NamespacesAutocomplete({ width }: NamespacesAutocompleteProps = {}) {
   const history = useHistory();
   const location = useLocation();
   const dispatch = useDispatch();
@@ -219,9 +227,10 @@ export function NamespacesAutocomplete() {
       namespaceNames={namespaceNames}
       onChange={onChange}
       filter={filter}
+      width={width}
     />
   ) : (
-    <NamespacesFromClusterAutocomplete onChange={onChange} filter={filter} />
+    <NamespacesFromClusterAutocomplete onChange={onChange} filter={filter} width={width} />
   );
 }
 
@@ -264,7 +273,7 @@ const useDefaultNamespaceFallback = (
 };
 
 function NamespacesFromClusterAutocomplete(
-  props: Omit<PureNamespacesAutocompleteProps, 'namespaceNames'>
+  props: Omit<PureNamespacesAutocompleteProps, 'namespaceNames'> & { width?: string }
 ) {
   const [namespacesList, error] = Namespace.useList();
   const namespaceNames = useMemo(
