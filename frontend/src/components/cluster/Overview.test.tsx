@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { render } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, waitFor } from '@testing-library/react';
 import type React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -27,6 +28,7 @@ const {
   nodeUseMetrics,
   podUseList,
   podMetricsUseList,
+  requestMock,
   deploymentUseList,
 } = vi.hoisted(() => ({
   chartMocks: {
@@ -43,6 +45,18 @@ const {
   nodeUseMetrics: vi.fn(() => [[], null]),
   podUseList: vi.fn(() => [[]]),
   podMetricsUseList: vi.fn(() => [[]]),
+  requestMock: vi.fn(() =>
+    Promise.resolve({
+      pods: { ready: 10, total: 12 },
+      nodes: { ready: 4, total: 5 },
+      deployments: { available: 8, desired: 8 },
+      cpu: { used: 0, capacity: 0 },
+      memory: { used: 0, capacity: 0 },
+      metricsAvailable: true,
+      synced: true,
+      lastUpdated: new Date().toISOString(),
+    })
+  ),
   deploymentUseList: vi.fn(() => [[]]),
 }));
 
@@ -71,6 +85,15 @@ vi.mock('../../lib/k8s/pod', () => ({
   default: {
     useList: podUseList,
   },
+}));
+
+vi.mock('../../lib/k8s/api/v1/hooks', () => ({
+  useCluster: () => 'test-cluster',
+}));
+
+vi.mock('../../lib/k8s/api/v1/clusterRequests', () => ({
+  request: requestMock,
+  clusterRequest: requestMock,
 }));
 
 vi.mock('../../lib/k8s/PodMetrics', () => ({
@@ -145,19 +168,25 @@ vi.mock('./Charts', () => chartMocks);
 vi.mock('./Charts/index', () => chartMocks);
 
 describe('Overview', () => {
-  it('polls overview resources instead of opening watch streams', () => {
+  it('polls overview resources instead of opening watch streams', async () => {
     const CLUSTER_REFETCH_INTERVAL_MS = 30_000;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
-      <MemoryRouter>
-        <Overview />
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <Overview />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
-    expect(podUseList).toHaveBeenCalledWith({
-      namespace: undefined,
-      refetchInterval: CLUSTER_REFETCH_INTERVAL_MS,
+    await waitFor(() => {
+      expect(requestMock).toHaveBeenCalledWith('/overview-stats', {
+        cluster: 'test-cluster',
+        autoLogoutOnAuthError: false,
+      });
     });
+
     expect(nodeUseList).toHaveBeenCalledWith({ refetchInterval: CLUSTER_REFETCH_INTERVAL_MS });
     expect(eventUseList).toHaveBeenCalledWith({
       limit: 2000,

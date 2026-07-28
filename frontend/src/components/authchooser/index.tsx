@@ -126,7 +126,17 @@ function AuthChooser({ children }: AuthChooserProps) {
               // Ideally we'd only not assign the error if it was 401 or 403 (so we let the logic
               // proceed to request a token), but let's first check whether this is all we get
               // from clusters that require a token.
-              if ([408, 504, 502].includes(err.status)) {
+              // Treat timeouts/rate-limits/server errors/network failures as a
+              // transient "cluster unreachable" condition rather than as a
+              // reason to demand a token (which fed the logout loop).
+              const status = err?.status;
+              const isTransient =
+                status === undefined ||
+                status === 0 ||
+                status === 408 ||
+                status === 429 ||
+                status >= 500;
+              if (isTransient) {
                 errorObj = err;
               }
 

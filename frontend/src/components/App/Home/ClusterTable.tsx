@@ -36,11 +36,10 @@ import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSet
 import { formatClusterPathParam } from '../../../lib/cluster';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
-import { Cluster, KubeMetrics } from '../../../lib/k8s/cluster';
-import Node from '../../../lib/k8s/node';
-import Pod from '../../../lib/k8s/pod';
+import { Cluster } from '../../../lib/k8s/cluster';
+import { useClusterOverviewStats } from '../../../lib/k8s/useClusterOverviewStats';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
-import { parseCpu, parseRam, TO_GB, TO_ONE_CPU } from '../../../lib/units';
+import { TO_GB, TO_ONE_CPU } from '../../../lib/units';
 import { getClusterPrefixedPath } from '../../../lib/util';
 import { useTypedSelector } from '../../../redux/hooks';
 import { Loader } from '../../common';
@@ -183,86 +182,44 @@ function ActiveClusterExtraFacts({
   clusterName: string;
   t: (key: string, opts?: any) => string;
 }) {
-  // One-shot fetch (refetchInterval disables the watch websocket): opening the
-  // popover should not open a long-lived socket per cluster.
-  const [nodes] = Node.useList({ cluster: clusterName, refetchInterval: 0 });
-  const [pods] = Pod.useList({ cluster: clusterName, refetchInterval: 0 });
-  const [nodeMetrics, metricsError] = Node.useMetrics(clusterName);
+  // Read the authoritative backend aggregate so these numbers always match the
+  // cluster Overview page (single source of truth). No per-cluster watch socket
+  // and no large paginated Pod/Node list fetch is opened by the popover.
+  const { data: stats } = useClusterOverviewStats(clusterName);
 
   const loading = <LoadingDots />;
+  const synced = stats?.synced === true;
 
   const rows = useMemo<{ label: string; value: React.ReactNode }[]>(() => {
-    const totalNodes = nodes !== null ? nodes.length : null;
-    const readyNodes =
-      nodes !== null
-        ? nodes.filter(n =>
-            n.status?.conditions?.some((c: any) => c.type === 'Ready' && c.status === 'True')
-          ).length
-        : null;
-
-    const metricsUnavailable = !!metricsError;
-
-    let cpuUsed: number | null = null;
-    let cpuTotal: number | null = null;
-    let memUsedGB: number | null = null;
-    let memTotalGB: number | null = null;
-
-    if (nodes && nodeMetrics && !metricsUnavailable) {
-      const totalCpuCapacity = nodes.reduce(
-        (sum, n) => sum + parseCpu((n.status?.capacity as any)?.cpu ?? '0'),
-        0
-      );
-      const usedCpu = (nodeMetrics as KubeMetrics[]).reduce(
-        (sum, m) => sum + parseCpu(m.usage.cpu),
-        0
-      );
-      if (totalCpuCapacity > 0) {
-        cpuUsed = usedCpu / TO_ONE_CPU;
-        cpuTotal = totalCpuCapacity / TO_ONE_CPU;
-      }
-
-      const totalMemCapacity = nodes.reduce(
-        (sum, n) => sum + parseRam((n.status?.capacity as any)?.memory ?? '0'),
-        0
-      );
-      const usedMem = (nodeMetrics as KubeMetrics[]).reduce(
-        (sum, m) => sum + parseRam(m.usage.memory),
-        0
-      );
-      if (totalMemCapacity > 0) {
-        memUsedGB = usedMem / TO_GB;
-        memTotalGB = totalMemCapacity / TO_GB;
-      }
+    if (!synced || !stats) {
+      return [
+        { label: t('translation|Nodes'), value: loading },
+        { label: t('translation|Pods'), value: loading },
+        { label: t('translation|CPU'), value: loading },
+        { label: t('translation|Memory'), value: loading },
+      ];
     }
 
-    // Pod stats — mirror Overview's PodsStatusCircleChart logic
-    const totalPods = pods !== null ? pods.length : null;
-    const readyPods =
-      pods !== null
-        ? pods.filter(p => {
-            if (p.status?.phase === 'Succeeded') return true;
-            return p.status?.conditions?.some(
-              (c: any) => c.type === 'Ready' && c.status === 'True'
-            );
-          }).length
-        : null;
+    const totalNodes = stats.nodes.total;
+    const readyNodes = stats.nodes.ready;
+    const totalPods = stats.pods.total;
+    const readyPods = stats.pods.ready;
+    const metricsUnavailable = stats.metricsAvailable === false || !stats.cpu || !stats.memory;
+
+    const cpuUsed = (stats.cpu?.used ?? 0) / TO_ONE_CPU;
+    const cpuTotal = (stats.cpu?.capacity ?? 0) / TO_ONE_CPU;
+    const memUsedGB = (stats.memory?.used ?? 0) / TO_GB;
+    const memTotalGB = (stats.memory?.capacity ?? 0) / TO_GB;
 
     return [
       {
         label: t('translation|Nodes'),
-        value:
-          totalNodes === null
-            ? loading
-            : readyNodes !== null
-            ? `${totalNodes} (${readyNodes} Ready)`
-            : `${totalNodes}`,
+        value: `${totalNodes} (${readyNodes} Ready)`,
       },
       {
         label: t('translation|Pods'),
         value:
-          totalPods === null
-            ? loading
-            : readyPods !== null && totalPods > 0
+          totalPods > 0
             ? `${readyPods} / ${totalPods} Requested (${((readyPods / totalPods) * 100).toFixed(
                 1
               )}%)`
@@ -272,7 +229,7 @@ function ActiveClusterExtraFacts({
         label: t('translation|CPU'),
         value: metricsUnavailable
           ? t('translation|N/A')
-          : cpuUsed === null || cpuTotal === null
+          : cpuTotal <= 0
           ? loading
           : `${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(0)} units (${(
               (cpuUsed / cpuTotal) *
@@ -283,7 +240,7 @@ function ActiveClusterExtraFacts({
         label: t('translation|Memory'),
         value: metricsUnavailable
           ? t('translation|N/A')
-          : memUsedGB === null || memTotalGB === null
+          : memTotalGB <= 0
           ? loading
           : `${memUsedGB.toFixed(2)} / ${memTotalGB.toFixed(2)} GB (${(
               (memUsedGB / memTotalGB) *
@@ -291,7 +248,7 @@ function ActiveClusterExtraFacts({
             ).toFixed(1)}%)`,
       },
     ];
-  }, [nodes, pods, nodeMetrics, metricsError, t, loading]);
+  }, [stats, synced, t, loading]);
 
   return (
     <>

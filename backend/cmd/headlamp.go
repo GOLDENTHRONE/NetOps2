@@ -50,6 +50,7 @@ import (
 	auth "github.com/kubernetes-sigs/headlamp/backend/pkg/auth"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/cache"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/clusterinventory"
+	"github.com/kubernetes-sigs/headlamp/backend/pkg/overviewstats"
 	cfg "github.com/kubernetes-sigs/headlamp/backend/pkg/config"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/headlampconfig"
 	"github.com/kubernetes-sigs/headlamp/backend/pkg/helm"
@@ -700,6 +701,15 @@ func createHeadlampHandler(ctx context.Context, config *HeadlampConfig) http.Han
 	}
 
 	addPluginRoutes(config, r)
+
+	// Overview stats endpoint (SharedInformer-based aggregation).
+	overviewStatsMgr := overviewstats.NewManager()
+	go func() {
+		<-ctx.Done()
+		overviewStatsMgr.StopAll()
+	}()
+	r.HandleFunc("/clusters/{clusterName}/overview-stats",
+		overviewstats.HandleOverviewStats(overviewStatsMgr, config.KubeConfigStore)).Methods("GET")
 
 	// Setup port forwarding handlers.
 	r.HandleFunc("/clusters/{clusterName}/portforward", func(w http.ResponseWriter, r *http.Request) {

@@ -37,7 +37,10 @@ export async function testAuth(cluster = '', namespace = 'default') {
   const clusterName = cluster || getCluster();
 
   return post('/apis/authorization.k8s.io/v1/selfsubjectrulesreviews', { spec }, false, {
-    timeout: 5 * 1000,
+    // Large/remote clusters can take well over 5s to answer the first auth
+    // probe; a too-short timeout produces a spurious 408 that gets misread as
+    // an auth failure and triggers a logout loop. Allow more headroom.
+    timeout: 30 * 1000,
     cluster: clusterName,
   });
 }

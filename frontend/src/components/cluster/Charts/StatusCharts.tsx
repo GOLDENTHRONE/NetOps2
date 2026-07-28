@@ -25,12 +25,21 @@ import Link from '../../common/Link';
 import TileChart from '../../common/TileChart';
 import { hasAKSManagedNodes, useIsUpgradeDetected } from '../../node/upgradeDetection';
 
-export function PodsStatusCircleChart(props: { items: Pod[] | null }) {
+export function PodsStatusCircleChart(props: {
+  items: Pod[] | null;
+  readyCount?: number | null;
+  totalCount?: number | null;
+  synced?: boolean;
+}) {
   const theme = useTheme();
-  const { items } = props;
+  const { items, readyCount, totalCount, synced = true } = props;
   const { t } = useTranslation(['translation', 'glossary']);
 
-  const podsReady = (items || []).filter((pod: Pod) => {
+  const isAggregated = readyCount !== undefined || totalCount !== undefined;
+  const isLoading = isAggregated && !synced;
+  const resolvedItems = items ?? [];
+
+  const podsReady = resolvedItems.filter((pod: Pod) => {
     if (pod.status!.phase === 'Succeeded') {
       return true;
     }
@@ -40,36 +49,47 @@ export function PodsStatusCircleChart(props: { items: Pod[] | null }) {
   });
 
   function getLegend() {
-    if (items === null) {
+    if (isLoading || (items === null && !isAggregated)) {
       return null;
     }
+
+    const resolvedReady = isAggregated ? readyCount ?? 0 : podsReady.length;
+    const resolvedTotal = isAggregated ? totalCount ?? 0 : resolvedItems.length;
+
     return t('translation|{{ numReady }} / {{ numItems }} Requested', {
-      numReady: podsReady.length,
-      numItems: items.length,
+      numReady: resolvedReady,
+      numItems: resolvedTotal,
     });
   }
 
   function getLabel() {
-    if (items === null) {
+    if (isLoading || (items === null && !isAggregated)) {
       return '…';
     }
-    const percentage = ((podsReady.length / items.length) * 100).toFixed(1);
-    return `${items.length === 0 ? 0 : percentage} %`;
+
+    const resolvedReady = isAggregated ? readyCount ?? 0 : podsReady.length;
+    const resolvedTotal = isAggregated ? totalCount ?? 0 : resolvedItems.length;
+    const percentage = ((resolvedReady / resolvedTotal) * 100).toFixed(1);
+
+    return `${resolvedTotal === 0 ? 0 : percentage} %`;
   }
 
   function getData() {
-    if (items === null) {
+    if (isLoading || (items === null && !isAggregated)) {
       return [];
     }
+
+    const resolvedReady = isAggregated ? readyCount ?? 0 : podsReady.length;
+    const resolvedTotal = isAggregated ? totalCount ?? 0 : resolvedItems.length;
 
     return [
       {
         name: 'ready',
-        value: podsReady.length,
+        value: resolvedReady,
       },
       {
         name: 'notReady',
-        value: items.length - podsReady.length,
+        value: resolvedTotal - resolvedReady,
         fill: theme.palette.error.main,
       },
     ];
@@ -78,7 +98,7 @@ export function PodsStatusCircleChart(props: { items: Pod[] | null }) {
   return (
     <TileChart
       data={getData()}
-      total={items !== null ? items.length : -1}
+      total={isAggregated ? totalCount ?? -1 : items !== null ? items.length : -1}
       label={getLabel()}
       title={t('glossary|Pods')}
       legend={getLegend()}
@@ -119,52 +139,72 @@ function NodesUpgradeLink() {
   );
 }
 
-export function NodesStatusCircleChart(props: { items: Node[] | null }) {
+export function NodesStatusCircleChart(props: {
+  items: Node[] | null;
+  readyCount?: number | null;
+  totalCount?: number | null;
+  synced?: boolean;
+}) {
   const theme = useTheme();
-  const { items } = props;
+  const { items, readyCount, totalCount, synced = true } = props;
   const { t } = useTranslation(['translation', 'glossary']);
+
+  const isAggregated = readyCount !== undefined || totalCount !== undefined;
+  const isLoading = isAggregated && !synced;
+  const resolvedItems = items ?? [];
 
   const isAKSCluster = useMemo(() => {
     if (!items) return false;
     return hasAKSManagedNodes(items);
   }, [items]);
 
-  const nodesReady = (items || []).filter((node: Node) => {
+  const nodesReady = resolvedItems.filter((node: Node) => {
     const readyCondition = node.status?.conditions?.find(condition => condition.type === 'Ready');
     return readyCondition?.status === 'True';
   });
 
   function getLegend() {
-    if (items === null) {
+    if (isLoading || (items === null && !isAggregated)) {
       return null;
     }
+
+    const resolvedReady = isAggregated ? readyCount ?? 0 : nodesReady.length;
+    const resolvedTotal = isAggregated ? totalCount ?? 0 : resolvedItems.length;
+
     return t('translation|{{ numReady }} / {{ numItems }} Ready', {
-      numReady: nodesReady.length,
-      numItems: items.length,
+      numReady: resolvedReady,
+      numItems: resolvedTotal,
     });
   }
 
   function getLabel() {
-    if (items === null) {
+    if (isLoading || (items === null && !isAggregated)) {
       return '…';
     }
-    const percentage = ((nodesReady.length / items.length) * 100).toFixed(1);
-    return `${items.length === 0 ? 0 : percentage} %`;
+
+    const resolvedReady = isAggregated ? readyCount ?? 0 : nodesReady.length;
+    const resolvedTotal = isAggregated ? totalCount ?? 0 : resolvedItems.length;
+    const percentage = ((resolvedReady / resolvedTotal) * 100).toFixed(1);
+
+    return `${resolvedTotal === 0 ? 0 : percentage} %`;
   }
 
   function getData() {
-    if (items === null) {
+    if (isLoading || (items === null && !isAggregated)) {
       return [];
     }
+
+    const resolvedReady = isAggregated ? readyCount ?? 0 : nodesReady.length;
+    const resolvedTotal = isAggregated ? totalCount ?? 0 : resolvedItems.length;
 
     return [
       {
         name: 'ready',
-        value: nodesReady.length,
+        value: resolvedReady,
       },
       {
         name: 'notReady',
-        value: items.length - nodesReady.length,
+        value: resolvedTotal - resolvedReady,
         fill: theme.palette.error.main,
       },
     ];
@@ -173,7 +213,7 @@ export function NodesStatusCircleChart(props: { items: Node[] | null }) {
   return (
     <TileChart
       data={getData()}
-      total={items !== null ? items.length : -1}
+      total={isAggregated ? totalCount ?? -1 : items !== null ? items.length : -1}
       label={getLabel()}
       title={t('glossary|Nodes')}
       legend={getLegend()}

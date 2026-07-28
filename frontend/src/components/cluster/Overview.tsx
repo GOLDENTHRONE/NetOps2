@@ -22,11 +22,14 @@ import Switch from '@mui/material/Switch';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
+import { useCluster } from '../../lib/k8s/api/v1/hooks';
 import Deployment from '../../lib/k8s/deployment';
 import Event from '../../lib/k8s/event';
 import Node from '../../lib/k8s/node';
 import Pod from '../../lib/k8s/pod';
 import { PodMetrics } from '../../lib/k8s/PodMetrics';
+import { useClusterOverviewStats } from '../../lib/k8s/useClusterOverviewStats';
+import { TO_GB, TO_ONE_CPU } from '../../lib/units';
 import { useFilterFunc } from '../../lib/util';
 import { useNamespaces } from '../../redux/filterSlice';
 import { useTypedSelector } from '../../redux/hooks';
@@ -104,30 +107,71 @@ function ClusterChartsSection({
   const [pods] = Pod.useList({ refetchInterval: CLUSTER_REFETCH_INTERVAL_MS });
   const [nodes] = Node.useList({ refetchInterval: CLUSTER_REFETCH_INTERVAL_MS });
   const [nodeMetrics, metricsError] = Node.useMetrics();
+  const cluster = useCluster();
+  const { data: overviewStats } = useClusterOverviewStats(cluster);
 
   const noMetrics = metricsError?.status === 404;
   const noPermissions = metricsError?.status === 403;
 
+  // Use aggregated backend stats when available and synced, otherwise fall back to full list.
+  const useAggregated = overviewStats?.synced === true;
+  // CPU/memory aggregates may be absent on older backends or during initial sync.
+  const hasCpuMem = useAggregated && !!overviewStats?.cpu && !!overviewStats?.memory;
+  // When aggregating, metrics availability comes from the backend snapshot.
+  const aggregateNoMetrics = hasCpuMem && overviewStats.metricsAvailable === false;
+
   const defaultCharts: OverviewChart[] = [
     {
       id: 'cpu',
-      component: () => (
-        <CpuCircularChart items={nodes} itemsMetrics={nodeMetrics} noMetrics={noMetrics} />
-      ),
+      component: () =>
+        hasCpuMem ? (
+          <CpuCircularChart
+            items={nodes}
+            itemsMetrics={nodeMetrics}
+            noMetrics={aggregateNoMetrics}
+            usedOverride={overviewStats!.cpu.used / TO_ONE_CPU}
+            availableOverride={overviewStats!.cpu.capacity / TO_ONE_CPU}
+            synced
+          />
+        ) : (
+          <CpuCircularChart items={nodes} itemsMetrics={nodeMetrics} noMetrics={noMetrics} />
+        ),
     },
     {
       id: 'memory',
-      component: () => (
-        <MemoryCircularChart items={nodes} itemsMetrics={nodeMetrics} noMetrics={noMetrics} />
-      ),
+      component: () =>
+        hasCpuMem ? (
+          <MemoryCircularChart
+            items={nodes}
+            itemsMetrics={nodeMetrics}
+            noMetrics={aggregateNoMetrics}
+            usedOverride={overviewStats!.memory.used / TO_GB}
+            availableOverride={overviewStats!.memory.capacity / TO_GB}
+            synced
+          />
+        ) : (
+          <MemoryCircularChart items={nodes} itemsMetrics={nodeMetrics} noMetrics={noMetrics} />
+        ),
     },
     {
       id: 'pods',
-      component: () => <PodsStatusCircleChart items={pods} />,
+      component: () => (
+        <PodsStatusCircleChart
+          items={pods}
+          readyCount={useAggregated ? overviewStats.pods.ready : undefined}
+          totalCount={useAggregated ? overviewStats.pods.total : undefined}
+        />
+      ),
     },
     {
       id: 'nodes',
-      component: () => <NodesStatusCircleChart items={nodes} />,
+      component: () => (
+        <NodesStatusCircleChart
+          items={nodes}
+          readyCount={useAggregated ? overviewStats.nodes.ready : undefined}
+          totalCount={useAggregated ? overviewStats.nodes.total : undefined}
+        />
+      ),
     },
   ];
   const charts = chartProcessors.reduce(
