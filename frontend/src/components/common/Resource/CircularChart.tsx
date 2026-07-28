@@ -39,20 +39,6 @@ export interface CircularChartProps extends Omit<PercentageCircleProps, 'data'> 
   getLegend?: (used: number, available: number) => string;
   /** Tooltip to display when hovering over the chart */
   tooltip?: string | null;
-  /**
-   * Pre-computed "used" value (in the chart's display units). When provided
-   * together with @param availableOverride, the chart uses these authoritative
-   * values instead of summing from @param items / @param itemsMetrics.
-   */
-  usedOverride?: number | null;
-  /** Pre-computed "available" value (in the chart's display units). See @param usedOverride. */
-  availableOverride?: number | null;
-  /**
-   * When aggregate overrides are used, indicates whether the backing snapshot
-   * has synced. While false the chart renders a loading placeholder instead of
-   * a misleading partial value.
-   */
-  synced?: boolean;
 }
 
 export function CircularChart(props: CircularChartProps) {
@@ -64,21 +50,11 @@ export function CircularChart(props: CircularChartProps) {
     resourceAvailableGetter,
     title,
     getLegend,
-    usedOverride,
-    availableOverride,
-    synced = true,
     ...others
   } = props;
   const { t } = useTranslation();
 
-  const isAggregated = usedOverride !== undefined || availableOverride !== undefined;
-  const isLoading = isAggregated && synced === false;
-
-  const [used, available] = isLoading
-    ? [-1, -1]
-    : isAggregated
-    ? [usedOverride ?? -1, availableOverride ?? -1]
-    : getResourceUsage();
+  const [used, available] = getResourceUsage();
 
   function filterMetrics(items: KubeObject[], metrics: KubeMetrics[] | null) {
     if (!items || !metrics) return [];
