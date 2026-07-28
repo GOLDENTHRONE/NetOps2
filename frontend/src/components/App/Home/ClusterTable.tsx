@@ -18,7 +18,6 @@ import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import Popover from '@mui/material/Popover';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import {
@@ -26,7 +25,7 @@ import {
   MRT_SortingState,
   MRT_VisibilityState,
 } from 'material-react-table';
-import React, { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generatePath, useHistory } from 'react-router-dom';
 import { getClusterAppearanceFromMeta } from '../../../helpers/clusterAppearance';
@@ -37,9 +36,7 @@ import { formatClusterPathParam } from '../../../lib/cluster';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster } from '../../../lib/k8s/cluster';
-import { useClusterOverviewStats } from '../../../lib/k8s/useClusterOverviewStats';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
-import { TO_GB, TO_ONE_CPU } from '../../../lib/units';
 import { getClusterPrefixedPath } from '../../../lib/util';
 import { useTypedSelector } from '../../../redux/hooks';
 import { Loader } from '../../common';
@@ -52,8 +49,8 @@ import ClusterContextMenu from './ClusterContextMenu';
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
-  // isClusterInventoryCluster is only used by the commented-out getOrigin below.
-  // isClusterInventoryCluster,
+  getConditionTooltip,
+  isClusterInventoryCluster,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 import { canSelectCluster } from './clusterStatus';
@@ -68,220 +65,11 @@ import { getCustomClusterNames } from './customClusterNames';
  * @param {Object} props - The component props.
  * @param {ApiError|null} [props.error] - The error object if there is an error with the cluster.
  */
-/**
- * The key health indicators behind a cluster status, as compact
- * label → value facts (the way kubectl would show them), not prose. Only
- * facts that were actually probed are listed.
- */
-function clusterStatusFacts(
-  t: (key: string, options?: any) => string,
-  error: ApiError | null | undefined,
-  condition: ReturnType<typeof getClusterStatusInfo>['condition'],
-  version?: string
-): { label: string; value: string; bad?: boolean }[] {
-  const facts: { label: string; value: string; bad?: boolean }[] = [];
-
-  // API reachability + authn/authz, from the real /version health probe.
-  if (error === null || error === undefined) {
-    facts.push({
-      label: t('translation|API server'),
-      value: t('translation|Reachable (HTTP 200)'),
-    });
-  } else if (error.status === 401) {
-    facts.push({
-      label: t('translation|API server'),
-      value: t('translation|Responding (HTTP 401)'),
-    });
-    facts.push({
-      label: t('translation|Authentication'),
-      value: t('translation|Failed — credentials rejected'),
-      bad: true,
-    });
-  } else if (error.status === 403) {
-    facts.push({
-      label: t('translation|API server'),
-      value: t('translation|Responding (HTTP 403)'),
-    });
-    facts.push({
-      label: t('translation|Authorization'),
-      value: t('translation|Denied — RBAC forbids access'),
-      bad: true,
-    });
-  } else {
-    facts.push({
-      label: t('translation|API server'),
-      value: error.status
-        ? t('translation|Unreachable (HTTP {{ status }})', { status: error.status })
-        : t('translation|Unreachable — no response'),
-      bad: true,
-    });
-  }
-
-  if (version) {
-    facts.push({ label: t('translation|Kubernetes version'), value: version });
-  }
-
-  // Control plane health, when the fleet inventory reports it.
-  if (condition) {
-    facts.push({
-      label: t('translation|Control plane'),
-      value:
-        condition.status === 'True'
-          ? t('translation|Healthy')
-          : condition.reason || condition.status || t('translation|Unknown'),
-      bad: condition.status === 'False',
-    });
-    if (condition.status === 'False' && condition.message) {
-      facts.push({ label: t('translation|Reason'), value: condition.message, bad: true });
-    }
-  }
-
-  return facts;
-}
-
-/**
- * Fetched lazily when the active-cluster popover is open.
- * Shows node count, ready nodes, CPU %, and Memory %.
- */
-
-/** Pulsing dots that signal "data incoming" instead of a static ellipsis. */
-const loadingDotsKeyframes = `
-@keyframes hlPulseDots {
-  0%, 80%, 100% { opacity: 0.2; }
-  40% { opacity: 1; }
-}`;
-
-function LoadingDots() {
-  return (
-    <>
-      <style>{loadingDotsKeyframes}</style>
-      <Box component="span" sx={{ display: 'inline-flex', gap: '2px', alignItems: 'center' }}>
-        {[0, 1, 2].map(i => (
-          <Box
-            key={i}
-            component="span"
-            sx={{
-              width: 4,
-              height: 4,
-              borderRadius: '50%',
-              bgcolor: 'text.secondary',
-              animation: 'hlPulseDots 1.2s infinite',
-              animationDelay: `${i * 0.2}s`,
-            }}
-          />
-        ))}
-      </Box>
-    </>
-  );
-}
-
-function ActiveClusterExtraFacts({
-  clusterName,
-  t,
-}: {
-  clusterName: string;
-  t: (key: string, opts?: any) => string;
-}) {
-  // Read the authoritative backend aggregate so these numbers always match the
-  // cluster Overview page (single source of truth). No per-cluster watch socket
-  // and no large paginated Pod/Node list fetch is opened by the popover.
-  const { data: stats } = useClusterOverviewStats(clusterName);
-
-  const loading = <LoadingDots />;
-  const synced = stats?.synced === true;
-
-  const rows = useMemo<{ label: string; value: React.ReactNode }[]>(() => {
-    if (!synced || !stats) {
-      return [
-        { label: t('translation|Nodes'), value: loading },
-        { label: t('translation|Pods'), value: loading },
-        { label: t('translation|CPU'), value: loading },
-        { label: t('translation|Memory'), value: loading },
-      ];
-    }
-
-    const totalNodes = stats.nodes.total;
-    const readyNodes = stats.nodes.ready;
-    const totalPods = stats.pods.total;
-    const readyPods = stats.pods.ready;
-
-    const cpuUsed = (stats.cpu?.used ?? 0) / TO_ONE_CPU;
-    const cpuTotal = (stats.cpu?.capacity ?? 0) / TO_ONE_CPU;
-    const memUsedGB = (stats.memory?.used ?? 0) / TO_GB;
-    const memTotalGB = (stats.memory?.capacity ?? 0) / TO_GB;
-
-    // Metrics-server may genuinely be absent, or the backend may not have
-    // completed its first poll yet (race during lazy watcher startup). When
-    // capacity is known but usage is not, show capacity with a "—" for used
-    // so the user sees partial data rather than a flat "N/A".
-    const metricsUnavailable = stats.metricsAvailable === false || !stats.cpu || !stats.memory;
-
-    const cpuValue = (() => {
-      if (!stats.cpu || cpuTotal <= 0) return metricsUnavailable ? t('translation|N/A') : loading;
-      if (metricsUnavailable) return `— / ${cpuTotal.toFixed(0)} units`;
-      return `${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(0)} units (${(
-        (cpuUsed / cpuTotal) *
-        100
-      ).toFixed(1)}%)`;
-    })();
-
-    const memValue = (() => {
-      if (!stats.memory || memTotalGB <= 0)
-        return metricsUnavailable ? t('translation|N/A') : loading;
-      if (metricsUnavailable) return `— / ${memTotalGB.toFixed(2)} GB`;
-      return `${memUsedGB.toFixed(2)} / ${memTotalGB.toFixed(2)} GB (${(
-        (memUsedGB / memTotalGB) *
-        100
-      ).toFixed(1)}%)`;
-    })();
-
-    return [
-      {
-        label: t('translation|Nodes'),
-        value: `${totalNodes} (${readyNodes} Ready)`,
-      },
-      {
-        label: t('translation|Pods'),
-        value:
-          totalPods > 0
-            ? `${readyPods} / ${totalPods} Requested (${((readyPods / totalPods) * 100).toFixed(
-                1
-              )}%)`
-            : `${totalPods}`,
-      },
-      {
-        label: t('translation|CPU'),
-        value: cpuValue,
-      },
-      {
-        label: t('translation|Memory'),
-        value: memValue,
-      },
-    ];
-  }, [stats, synced, t, loading]);
-
-  return (
-    <>
-      {rows.map(row => (
-        <React.Fragment key={row.label}>
-          <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-            {row.label}
-          </Typography>
-          <Typography variant="caption" sx={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>
-            {row.value}
-          </Typography>
-        </React.Fragment>
-      ))}
-    </>
-  );
-}
-
 function ClusterStatus({
   error,
   cluster,
   isConnected,
   onConnect,
-  version,
 }: {
   error?: ApiError | null;
   cluster: Cluster;
@@ -289,12 +77,9 @@ function ClusterStatus({
   isConnected: boolean;
   /** Connect to the cluster on demand so its status is loaded. */
   onConnect: (clusterName: string) => void;
-  /** The cluster's Kubernetes gitVersion, when known (evidence for Active). */
-  version?: string;
 }) {
   const { t } = useTranslation(['translation']);
   const theme = useTheme();
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const customStatuses = useTypedSelector(state => state.clusterProvider.clusterStatuses);
   const renderedCustomStatus = useMemo(() => {
     for (const Status of customStatuses) {
@@ -333,101 +118,40 @@ function ClusterStatus({
   // ambiguous "⋯".
   if (isConnected && error === undefined) {
     return (
-      <LightTooltip title={t('translation|Waiting for the first health probe to answer.')}>
-        <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
-          <CircularProgress size={14} />
-          <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
-            {t('translation|Connecting…')}
-          </Typography>
-        </Box>
-      </LightTooltip>
+      <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
+        <CircularProgress size={14} />
+        <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
+          {t('translation|Connecting…')}
+        </Typography>
+      </Box>
     );
   }
 
   const { kind, text, condition } = getClusterStatusInfo(cluster, error, t);
   const variant = STATUS_VARIANTS[kind];
   const color = theme.palette.home.status[variant.colorKey];
-  const facts = clusterStatusFacts(t, error, condition, version);
-
-  return (
-    <>
-      <LightTooltip title={t('translation|Click to see')}>
-        <Box
-          component="button"
-          type="button"
-          onClick={e => setAnchorEl(e.currentTarget)}
-          aria-label={t('translation|Show status details')}
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            width: 'fit-content',
-            border: 'none',
-            background: 'none',
-            padding: 0,
-            cursor: 'pointer',
-            fontFamily: 'inherit',
-          }}
-        >
-          <Icon icon={variant.icon} width={16} color={color} />
-          <Typography
-            variant="body2"
-            style={{
-              marginLeft: theme.spacing(1),
-              color: variant.coloredText ? color : undefined,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {text}
-          </Typography>
-        </Box>
-      </LightTooltip>
-      <Popover
-        open={!!anchorEl}
-        anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { p: 1.5, maxWidth: 360, minWidth: 240 } } }}
+  const tooltip = condition ? getConditionTooltip(condition) : '';
+  const statusContent = (
+    <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
+      <Icon icon={variant.icon} width={16} color={color} />
+      <Typography
+        variant="body2"
+        style={{
+          marginLeft: theme.spacing(1),
+          color: variant.coloredText ? color : undefined,
+        }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Icon icon={variant.icon} width={18} color={color} />
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
-            {text}
-          </Typography>
-        </Box>
-        {/* Compact label → value facts, the indicators behind the verdict. */}
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: 'max-content 1fr',
-            columnGap: 1.5,
-            rowGap: 0.25,
-          }}
-        >
-          {facts.map(fact => (
-            <React.Fragment key={fact.label + fact.value}>
-              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-                {fact.label}
-              </Typography>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontFamily: 'monospace',
-                  overflowWrap: 'anywhere',
-                  color: fact.bad ? theme.palette.error.main : undefined,
-                  fontWeight: fact.bad ? 600 : undefined,
-                }}
-              >
-                {fact.value}
-              </Typography>
-            </React.Fragment>
-          ))}
-          {kind === 'active' && !!anchorEl && (
-            <ActiveClusterExtraFacts clusterName={cluster.name} t={t} />
-          )}
-        </Box>
-      </Popover>
-    </>
+        {text}
+      </Typography>
+    </Box>
+  );
+
+  return tooltip ? (
+    <LightTooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tooltip}</span>}>
+      {statusContent}
+    </LightTooltip>
+  ) : (
+    statusContent
   );
 }
 
@@ -519,12 +243,12 @@ export default function ClusterTable({
     [setColumnFilters]
   );
 
-  /*
-   * Gets the origin of a cluster. Kept for when the Origin column is restored
-   * (the column is commented out above).
+  /**
+   * Gets the origin of a cluster.
    *
    * @param cluster
    * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
+   */
   function getOrigin(cluster: Cluster): string {
     if (cluster?.meta_data?.source === 'kubeconfig') {
       const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
@@ -538,7 +262,6 @@ export default function ClusterTable({
     }
     return t('translation|Unknown');
   }
-  */
 
   const viewClusters = t('View Clusters');
 
@@ -619,15 +342,14 @@ export default function ClusterTable({
             );
           },
         },
-        // Origin column intentionally hidden for now (kept for easy restore).
-        // {
-        //   id: 'origin',
-        //   header: t('Origin'),
-        //   accessorFn: cluster => getOrigin(cluster),
-        //   Cell: ({ row: { original } }) => (
-        //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
-        //   ),
-        // },
+        {
+          id: 'origin',
+          header: t('Origin'),
+          accessorFn: cluster => getOrigin(cluster),
+          Cell: ({ row: { original } }) => (
+            <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
+          ),
+        },
         {
           id: 'status',
           header: t('Status'),
@@ -643,64 +365,22 @@ export default function ClusterTable({
               cluster={original}
               isConnected={isClusterConnected(original.name)}
               onConnect={onConnectCluster ?? (() => {})}
-              version={versions[original.name]?.gitVersion}
             />
           ),
         },
         {
           id: 'warnings',
           header: t('Warnings'),
-          // Warnings track connection status: list them for connected clusters,
-          // blank for clusters that aren't connected. '⋯' = still loading,
-          // 'n/a' = the events query failed (see renderWarningsText).
+          // Warnings track connection status: list them for connected clusters
+          // (⋯ while loading), blank for clusters that aren't connected.
           accessorFn: cluster =>
             isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '⋯' : '',
-          Cell: ({ cell }) => {
-            const value = cell.getValue<string>();
-            if (value === '⋯') {
-              return <LoadingDots />;
-            }
-            if (value === 'n/a') {
-              return (
-                <LightTooltip
-                  title={t('translation|Warning events could not be read from this cluster.')}
-                >
-                  <Typography component="span" variant="caption" color="text.secondary">
-                    {value}
-                  </Typography>
-                </LightTooltip>
-              );
-            }
-            return value;
-          },
         },
         {
           id: 'version',
           header: t('glossary|Kubernetes Version'),
-          accessorFn: ({ name }) => {
-            if (!isClusterConnected(name)) return '';
-            if (versions[name]?.gitVersion) return versions[name].gitVersion;
-            if (errors[name]) return 'n/a';
-            return '⋯';
-          },
-          Cell: ({ cell }) => {
-            const value = cell.getValue<string>();
-            if (value === '⋯') {
-              return <LoadingDots />;
-            }
-            if (value === 'n/a') {
-              return (
-                <LightTooltip
-                  title={t('translation|Version unavailable — cluster is not reachable.')}
-                >
-                  <Typography component="span" variant="caption" color="text.secondary">
-                    n/a
-                  </Typography>
-                </LightTooltip>
-              );
-            }
-            return value;
-          },
+          accessorFn: ({ name }) =>
+            isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
         },
         {
           id: 'actions',
