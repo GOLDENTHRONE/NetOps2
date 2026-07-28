@@ -244,19 +244,25 @@ func (m *Manager) runWatcher(ctx context.Context, clusterName string, client dyn
 		logger.Log(logger.LevelError, nil, nil, fmt.Sprintf("overviewstats: not all informers synced for cluster %s", clusterName))
 	}
 
-	w.mu.Lock()
-	w.synced = allSynced
-	w.mu.Unlock()
-
-	// Do initial computation after sync.
+	// Do initial computation after informers sync but BEFORE marking as
+	// synced, so the very first synced response already contains pod/node
+	// counts AND CPU/memory data (no N/A flash).
 	m.recomputePods(w, podInformer)
 	m.recomputeNodes(w, nodeInformer)
 	m.recomputeDeployments(w, deployInformer)
 
-	// Metrics (CPU/Memory usage) come from the metrics.k8s.io aggregated API,
-	// which is not watchable, so poll it periodically. Capacity is summed from
-	// the node informer store. Both views (Overview + Home popover) read the
-	// resulting single snapshot so their numbers never diverge.
+	// Run the first metrics poll synchronously. This ensures that when
+	// synced is set to true below, the CPU/memory fields are populated.
+	// Without this, the first response would have metricsAvailable=false
+	// even if metrics-server is present, causing the Home popover to show
+	// "N/A" until the next frontend refetch (30 s).
+	m.recomputeMetrics(ctx, clusterName, client, nodeInformer, w)
+
+	w.mu.Lock()
+	w.synced = allSynced
+	w.mu.Unlock()
+
+	// Continue polling metrics in the background (every 15 s).
 	go m.pollMetrics(ctx, clusterName, client, nodeInformer, w)
 
 	logger.Log(logger.LevelInfo, nil, nil, fmt.Sprintf("overviewstats: watcher synced for cluster %s", clusterName))

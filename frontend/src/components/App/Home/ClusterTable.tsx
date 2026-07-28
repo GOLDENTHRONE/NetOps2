@@ -204,12 +204,36 @@ function ActiveClusterExtraFacts({
     const readyNodes = stats.nodes.ready;
     const totalPods = stats.pods.total;
     const readyPods = stats.pods.ready;
-    const metricsUnavailable = stats.metricsAvailable === false || !stats.cpu || !stats.memory;
 
     const cpuUsed = (stats.cpu?.used ?? 0) / TO_ONE_CPU;
     const cpuTotal = (stats.cpu?.capacity ?? 0) / TO_ONE_CPU;
     const memUsedGB = (stats.memory?.used ?? 0) / TO_GB;
     const memTotalGB = (stats.memory?.capacity ?? 0) / TO_GB;
+
+    // Metrics-server may genuinely be absent, or the backend may not have
+    // completed its first poll yet (race during lazy watcher startup). When
+    // capacity is known but usage is not, show capacity with a "—" for used
+    // so the user sees partial data rather than a flat "N/A".
+    const metricsUnavailable = stats.metricsAvailable === false || !stats.cpu || !stats.memory;
+
+    const cpuValue = (() => {
+      if (!stats.cpu || cpuTotal <= 0) return metricsUnavailable ? t('translation|N/A') : loading;
+      if (metricsUnavailable) return `— / ${cpuTotal.toFixed(0)} units`;
+      return `${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(0)} units (${(
+        (cpuUsed / cpuTotal) *
+        100
+      ).toFixed(1)}%)`;
+    })();
+
+    const memValue = (() => {
+      if (!stats.memory || memTotalGB <= 0)
+        return metricsUnavailable ? t('translation|N/A') : loading;
+      if (metricsUnavailable) return `— / ${memTotalGB.toFixed(2)} GB`;
+      return `${memUsedGB.toFixed(2)} / ${memTotalGB.toFixed(2)} GB (${(
+        (memUsedGB / memTotalGB) *
+        100
+      ).toFixed(1)}%)`;
+    })();
 
     return [
       {
@@ -227,25 +251,11 @@ function ActiveClusterExtraFacts({
       },
       {
         label: t('translation|CPU'),
-        value: metricsUnavailable
-          ? t('translation|N/A')
-          : cpuTotal <= 0
-          ? loading
-          : `${cpuUsed.toFixed(2)} / ${cpuTotal.toFixed(0)} units (${(
-              (cpuUsed / cpuTotal) *
-              100
-            ).toFixed(1)}%)`,
+        value: cpuValue,
       },
       {
         label: t('translation|Memory'),
-        value: metricsUnavailable
-          ? t('translation|N/A')
-          : memTotalGB <= 0
-          ? loading
-          : `${memUsedGB.toFixed(2)} / ${memTotalGB.toFixed(2)} GB (${(
-              (memUsedGB / memTotalGB) *
-              100
-            ).toFixed(1)}%)`,
+        value: memValue,
       },
     ];
   }, [stats, synced, t, loading]);

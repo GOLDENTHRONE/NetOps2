@@ -57,6 +57,10 @@ export const OVERVIEW_STATS_REFETCH_INTERVAL_MS = 30_000;
  *
  * @param clusterName Cluster to fetch stats for. When falsy the query is disabled.
  */
+/** Faster polling interval used while the backend watcher is still syncing
+ *  or has not yet completed its first metrics poll. */
+const OVERVIEW_STATS_FAST_REFETCH_MS = 3_000;
+
 export function useClusterOverviewStats(
   clusterName?: string | null
 ): UseQueryResult<ClusterOverviewStats, Error> {
@@ -65,7 +69,16 @@ export function useClusterOverviewStats(
     queryKey: ['cluster-overview-stats', clusterName],
     retry: false,
     staleTime: 5_000,
-    refetchInterval: OVERVIEW_STATS_REFETCH_INTERVAL_MS,
+    // Poll aggressively while the backend is still warming up (syncing or
+    // first metrics poll incomplete). Once data is fully available, fall back
+    // to the normal 30 s interval to avoid unnecessary traffic.
+    refetchInterval: query => {
+      const data = query.state.data;
+      if (!data?.synced || data?.metricsAvailable === false) {
+        return OVERVIEW_STATS_FAST_REFETCH_MS;
+      }
+      return OVERVIEW_STATS_REFETCH_INTERVAL_MS;
+    },
     queryFn: () =>
       clusterRequest('/overview-stats', {
         cluster: clusterName || undefined,
