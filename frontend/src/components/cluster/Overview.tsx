@@ -130,6 +130,18 @@ function EventsSection() {
     refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS,
   });
 
+  // Dedicated warning-only fetch. Without this the mixed fetch above hits the
+  // limit=Event.maxLimit cap and warnings get truncated in busy clusters (see
+  // response.metadata.continue / remainingItemCount). Using a server-side
+  // fieldSelector guarantees the count and the "Only warnings" table reflect
+  // every Warning event the server holds up to Event.maxLimit warnings.
+  const { items: warningEvents } = Event.useList({
+    limit: Event.maxLimit,
+    namespace,
+    fieldSelector: 'type!=Normal',
+    refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS,
+  });
+
   const warningActionFilterFunc = (event: Event, search?: string) => {
     if (!filterFunc(event, search)) {
       return false;
@@ -144,10 +156,11 @@ function EventsSection() {
     return true;
   };
 
-  const numWarnings = React.useMemo(
-    () => events?.filter(e => e.type === 'Warning').length ?? '?',
-    [events]
-  );
+  const numWarnings = React.useMemo(() => warningEvents?.length ?? '?', [warningEvents]);
+
+  // When the "Only warnings" toggle is on, feed the dedicated warning list
+  // into the table so the visible rows aren't limited by CSR/Normal churn.
+  const displayedEvents = isWarningEventSwitchChecked ? warningEvents : events;
 
   function makeStatusLabel(event: Event) {
     return (
@@ -193,7 +206,7 @@ function EventsSection() {
         ],
       }}
       defaultGlobalFilter={eventsFilter ?? undefined}
-      data={events}
+      data={displayedEvents}
       errors={eventsErrors}
       columns={[
         {
