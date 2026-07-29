@@ -516,6 +516,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
               id: 'cluster',
               header: t('glossary|Cluster'),
               gridTemplate: 'min-content',
+              filterVariant: 'multi-select',
               Cell: ({ row }: { row: MRT_Row<RowItem> }) => (
                 <Box sx={{ whiteSpace: 'nowrap' }}>{row.original.cluster}</Box>
               ),

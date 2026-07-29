@@ -35,24 +35,28 @@ export default function ReplicaSetList() {
         {
           id: 'generation',
           label: t('Generation'),
+          disableFiltering: true,
           getValue: replicaSet => replicaSet?.status?.observedGeneration,
           show: false,
         },
         {
           id: 'currentReplicas',
           label: t('translation|Current', { context: 'replicas' }),
+          disableFiltering: true,
           getValue: replicaSet => replicaSet?.status?.replicas || 0,
           gridTemplate: 0.6,
         },
         {
           id: 'desiredReplicas',
           label: t('translation|Desired', { context: 'replicas' }),
+          disableFiltering: true,
           getValue: replicaSet => replicaSet?.spec?.replicas || 0,
           gridTemplate: 0.6,
         },
         {
           id: 'readyReplicas',
           label: t('translation|Ready'),
+          disableFiltering: true,
           getValue: replicaSet => replicaSet?.status?.readyReplicas || 0,
           gridTemplate: 0.6,
         },

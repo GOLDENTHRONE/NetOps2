@@ -178,6 +178,7 @@ export default function Overview() {
             gridTemplate: 'min-content',
             getValue: item => item && getPods(item),
             sort: sortByReplicas,
+            disableFiltering: true,
           },
           'age',
         ]}

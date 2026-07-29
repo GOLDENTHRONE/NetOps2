@@ -59,16 +59,19 @@ export default function VpaList() {
             {
               id: 'cpu',
               label: t('glossary|CPU'),
+              disableFiltering: true,
               getValue: item => item?.targetRecommendations?.cpu ?? null,
             },
             {
               id: 'memory',
               label: t('glossary|Memory'),
+              disableFiltering: true,
               getValue: item => item?.targetRecommendations?.memory ?? null,
             },
             {
               id: 'provided',
               label: t('translation|Provided'),
+              filterVariant: 'multi-select',
               getValue: item => item?.status?.conditions?.[0]?.status ?? null,
             },
             'labels',

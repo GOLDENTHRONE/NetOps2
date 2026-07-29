@@ -34,6 +34,7 @@ export function NetworkPolicyList() {
           id: 'type',
           gridTemplate: 'auto',
           label: t('translation|Type'),
+          filterVariant: 'multi-select',
           getValue: networkpolicy => {
             const isIngressAvailable =
               networkpolicy.jsonData.spec.ingress && networkpolicy.jsonData.spec.ingress.length > 0;

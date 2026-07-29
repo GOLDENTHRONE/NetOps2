@@ -94,6 +94,7 @@ export default function RoleBindingList() {
         {
           id: 'namespace',
           label: t('glossary|Namespace'),
+          filterVariant: 'multi-select',
           getValue: item => item.getNamespace() ?? t('translation|All namespaces'),
           render: item =>
             item.getNamespace() ? (

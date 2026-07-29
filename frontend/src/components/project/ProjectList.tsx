@@ -173,13 +173,14 @@ export default function ProjectList() {
         id: 'resources',
         header: t('Resources'),
         accessorFn: it => it.resourceCount,
+        enableColumnFilter: false,
         gridTemplate: 'min-content',
       },
       {
         id: 'health',
         header: t('Health'),
         accessorFn: it => it.healthLabel,
-        filterVariant: 'select',
+        filterVariant: 'multi-select',
         sortingFn: (rowA, rowB) =>
           (HEALTH_RANK[rowA.original.healthLabel] ?? 4) -
           (HEALTH_RANK[rowB.original.healthLabel] ?? 4),

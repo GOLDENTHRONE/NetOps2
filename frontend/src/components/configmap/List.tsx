@@ -32,6 +32,7 @@ export default function ConfigMapList() {
         {
           id: 'data',
           label: t('translation|Data'),
+          disableFiltering: true,
           getValue: (configMap: ConfigMap) => {
             const dataKeys = Object.keys(configMap.data ?? {});
             const binaryDataKeys = Object.keys(configMap.binaryData ?? {});

@@ -113,6 +113,22 @@ export function getResourceRowHealth(resource: KubeObject): ResourceRowHealth {
   const kind = resource.kind;
 
   if (WORKLOAD_HEALTH_KINDS.has(kind)) {
+    // A ReplicaSet owned by a controller (Deployment) has no independent
+    // health signal: its readiness is a consequence of the parent's rollout
+    // and is already reported on the parent's row. Counting it again would
+    // disagree with the Applications table's chip (which follows
+    // {@link evaluateApplicationHealth}, not counting ReplicaSets) — e.g.
+    // one stuck Deployment would surface as "1 unhealthy" on the table but
+    // "1 Deployment + N ReplicaSets" here. Standalone ReplicaSets (no
+    // owner) keep their own verdict.
+    const owner = resource.metadata?.ownerReferences?.[0];
+    if (kind === 'ReplicaSet' && owner) {
+      return {
+        state: 'none',
+        label: '',
+        reason: `Managed by ${owner.kind} ${owner.name} — see its row for health.`,
+      };
+    }
     const w = evaluateWorkload(resource.jsonData);
     switch (w.state) {
       case 'down':
@@ -220,10 +236,13 @@ function ResourceHealthChip({
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   if (health.state === 'none') {
-    // No health signal for this kind (a CronJob between runs, config, …):
-    // say so, with the reason a hover away — never an unexplained blank.
+    // No health signal for this row (a CronJob between runs, config, an
+    // owned ReplicaSet whose parent already reports health, …): say so,
+    // with the reason a hover away — never an unexplained blank.
+    const tooltip =
+      health.reason ?? t('This kind does not report a readiness status in Kubernetes.');
     return (
-      <LightTooltip title={t('This kind does not report a readiness status in Kubernetes.')}>
+      <LightTooltip title={tooltip}>
         <Typography component="span" variant="caption" color="text.secondary">
           {t('No status')}
         </Typography>
@@ -466,6 +485,7 @@ export function ProjectResourcesTab({
         accessorFn: item => item.kind,
         header: t('Kind'),
         gridTemplate: 'min-content',
+        filterVariant: 'multi-select',
       },
       {
         id: 'name',
@@ -492,7 +512,7 @@ export function ProjectResourcesTab({
           const health = getResourceRowHealth(resource);
           return health.state === 'none' ? t('No status') : health.label;
         },
-        filterVariant: 'select',
+        filterVariant: 'multi-select',
         sortingFn: (rowA, rowB) =>
           ROW_HEALTH_RANK[getResourceRowHealth(rowA.original).state] -
           ROW_HEALTH_RANK[getResourceRowHealth(rowB.original).state],
@@ -518,12 +538,14 @@ export function ProjectResourcesTab({
         accessorFn: item => item.metadata.namespace || 'default',
         header: t('Namespace'),
         gridTemplate: 'min-content',
+        filterVariant: 'multi-select',
       },
       {
         id: 'cluster',
         accessorFn: item => item.cluster,
         header: t('Cluster'),
         gridTemplate: 'min-content',
+        filterVariant: 'multi-select',
         // The cluster is an object of its own: link it to the cluster view.
         Cell: ({ row }) => (
           <Link routeName="cluster" params={{ cluster: row.original.cluster }}>

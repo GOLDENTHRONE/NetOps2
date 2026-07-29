@@ -59,6 +59,7 @@ export default function JobSetList() {
           id: 'conditions',
           label: t('translation|Conditions'),
           gridTemplate: 'min-content',
+          filterVariant: 'multi-select',
           getValue: (jobSet: JobSet) => getJobSetCondition(jobSet),
         },
         'age',

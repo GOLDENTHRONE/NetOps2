@@ -59,6 +59,7 @@ export default function VolumeList() {
         {
           id: 'capacity',
           label: t('Capacity'),
+          disableFiltering: true,
           getValue: volume => volume.spec.capacity.storage,
         },
         {

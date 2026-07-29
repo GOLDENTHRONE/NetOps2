@@ -50,6 +50,7 @@ export default function GatewayList() {
         {
           id: 'conditions',
           label: t('translation|Conditions'),
+          filterVariant: 'multi-select',
           getValue: (gateway: Gateway) =>
             gateway.status?.conditions?.find(({ status }: { status: string }) => status === 'True')
               ?.type || null,
@@ -58,6 +59,7 @@ export default function GatewayList() {
         {
           id: 'listeners',
           label: t('translation|Listeners'),
+          disableFiltering: true,
           getValue: (gateway: Gateway) => gateway.spec?.listeners?.length ?? 0,
         },
         'labels',

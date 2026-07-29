@@ -450,6 +450,7 @@ export function PodListRenderer(props: PodListProps) {
         {
           id: 'readinessGates',
           label: t('glossary|Readiness Gates'),
+          disableFiltering: true,
           getValue: pod => {
             const readinessGatesStatus = getReadinessGatesStatus(pod);
             const total = Object.keys(readinessGatesStatus).length;

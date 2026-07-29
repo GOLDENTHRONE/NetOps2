@@ -32,6 +32,7 @@ export default function ServiceAccountList() {
         {
           id: 'secrets',
           label: t('Secrets'),
+          disableFiltering: true,
           getValue: (serviceaccount: ServiceAccount) => serviceaccount?.secrets?.length || 0,
           gridTemplate: 'min-content',
         },

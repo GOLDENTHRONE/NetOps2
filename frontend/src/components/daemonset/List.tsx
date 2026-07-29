@@ -35,24 +35,28 @@ export default function DaemonSetList() {
         {
           id: 'pods',
           label: t('Pods'),
+          disableFiltering: true,
           getValue: daemonSet => daemonSet.status?.currentNumberScheduled || 0,
           gridTemplate: 0.6,
         },
         {
           id: 'currentPods',
           label: t('translation|Current'),
+          disableFiltering: true,
           getValue: daemonSet => daemonSet.status?.currentNumberScheduled || 0,
           gridTemplate: 0.6,
         },
         {
           id: 'desiredPods',
           label: t('translation|Desired', { context: 'pods' }),
+          disableFiltering: true,
           getValue: daemonSet => daemonSet.status?.desiredNumberScheduled || 0,
           gridTemplate: 0.6,
         },
         {
           id: 'readyPods',
           label: t('translation|Ready'),
+          disableFiltering: true,
           getValue: daemonSet => daemonSet.status?.numberReady || 0,
           gridTemplate: 0.6,
         },

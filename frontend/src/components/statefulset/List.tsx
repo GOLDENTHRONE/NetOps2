@@ -47,6 +47,7 @@ export default function StatefulSetList() {
         {
           id: 'replicas',
           label: t('Replicas'),
+          disableFiltering: true,
           getValue: statefulSet => statefulSet.spec.replicas,
           gridTemplate: 'min-content',
         },

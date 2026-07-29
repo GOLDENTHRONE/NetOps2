@@ -168,6 +168,7 @@ export function JobsListRenderer(props: JobsListRendererProps) {
           id: 'duration',
           label: t('translation|Duration'),
           gridTemplate: 'min-content',
+          disableFiltering: true,
           getValue: job => {
             const duration = job.getDuration();
             if (duration > 0) {

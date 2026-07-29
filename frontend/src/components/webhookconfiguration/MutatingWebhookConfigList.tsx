@@ -31,6 +31,7 @@ export default function MutatingWebhookConfigurationList() {
           id: 'webhooks',
           label: t('Webhooks'),
           gridTemplate: 'min-content',
+          disableFiltering: true,
           getValue: mutatingWebhookConfig => mutatingWebhookConfig.webhooks?.length || 0,
         },
         'labels',

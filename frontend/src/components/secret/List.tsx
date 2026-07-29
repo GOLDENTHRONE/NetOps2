@@ -86,6 +86,7 @@ export default function SecretList() {
           id: 'data',
           label: t('translation|Data'),
           gridTemplate: 'min-content',
+          disableFiltering: true,
           getValue: (secret: Secret) => Object.keys(secret.data || {}).length || 0,
         },
         'labels',

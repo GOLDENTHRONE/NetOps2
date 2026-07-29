@@ -56,6 +56,7 @@ export default function VolumeClaimList() {
         {
           id: 'capacity',
           label: t('Capacity'),
+          disableFiltering: true,
           getValue: volumeClaim => volumeClaim.status?.capacity?.storage,
           gridTemplate: 0.8,
         },

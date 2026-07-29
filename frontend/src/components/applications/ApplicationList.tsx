@@ -365,6 +365,7 @@ export default function ApplicationList() {
         id: 'resources',
         header: t('translation|Resources'),
         gridTemplate: 'min-content',
+        enableColumnFilter: false,
         // -1 while this app has no resources yet and lists are still arriving;
         // the value carried by the row (see AppRow) changes as data lands, so
         // the memoized cell re-renders and the count is never stuck.
@@ -392,7 +393,7 @@ export default function ApplicationList() {
         // The verdict text, so the column filter matches what the user reads
         // in the cell; severity ordering is preserved by the sortingFn below.
         accessorFn: app => app.summary?.health.label ?? '',
-        filterVariant: 'select',
+        filterVariant: 'multi-select',
         sortingFn: (rowA, rowB) =>
           healthSortRank(rowA.original.summary?.health, rowA.original.resourcesLoading) -
           healthSortRank(rowB.original.summary?.health, rowB.original.resourcesLoading),

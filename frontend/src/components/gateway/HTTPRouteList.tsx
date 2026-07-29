@@ -41,6 +41,7 @@ export default function HTTPRouteList() {
         {
           id: 'rules',
           label: t('translation|rules'),
+          disableFiltering: true,
           getValue: (httpRoute: HTTPRoute) => httpRoute.spec.rules?.length,
         },
         'labels',

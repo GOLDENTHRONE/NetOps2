@@ -102,6 +102,7 @@ export default function DeploymentsList() {
         {
           id: 'replicas',
           label: t('Replicas'),
+          disableFiltering: true,
           getValue: deployment => deployment.spec.replicas || 0,
           gridTemplate: 'min-content',
         },

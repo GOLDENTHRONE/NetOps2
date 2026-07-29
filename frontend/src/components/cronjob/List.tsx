@@ -66,18 +66,21 @@ export default function CronJobList() {
         {
           id: 'suspend',
           label: t('translation|Suspend'),
+          filterVariant: 'checkbox',
           getValue: cronJob => (cronJob.spec?.suspend ?? false).toString(),
           gridTemplate: 0.6,
         },
         {
           id: 'active',
           label: t('translation|Active'),
+          disableFiltering: true,
           getValue: cronJob => cronJob.status?.active?.length || 0,
           gridTemplate: 0.6,
         },
         {
           id: 'lastScheduleTime',
           label: t('Last Schedule'),
+          disableFiltering: true,
           getValue: cronJob => cronJob.status.lastScheduleTime ?? '',
           render: cronJob => getLastScheduleTime(cronJob),
         },

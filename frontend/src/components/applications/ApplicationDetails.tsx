@@ -488,6 +488,7 @@ function ApplicationAccess({
         header: t('glossary|Cluster'),
         gridTemplate: 'min-content',
         accessorFn: item => item.cluster,
+        filterVariant: 'multi-select',
         // The cluster is an object of its own: link it to the cluster view.
         Cell: ({ row: { original } }) => (
           <Link routeName="cluster" params={{ cluster: original.cluster }}>
@@ -500,6 +501,7 @@ function ApplicationAccess({
         header: t('translation|Age'),
         gridTemplate: 'min-content',
         accessorFn: item => item.metadata.creationTimestamp,
+        enableColumnFilter: false,
         Cell: ({ row: { original } }) => <DateLabel date={original.metadata.creationTimestamp} />,
       },
     ],
