@@ -78,7 +78,7 @@ export interface PureNamespacesAutocompleteProps {
   namespaceNames: string[];
   onChange: (event: React.ChangeEvent<{}>, newValue: string[]) => void;
   filter: { namespaces: Set<string> };
-  /** Width of the autocomplete input. Defaults to '15rem'. */
+  /** Width of the autocomplete input. Defaults to '24rem'. */
   width?: string;
 }
 
@@ -86,12 +86,12 @@ export function PureNamespacesAutocomplete({
   namespaceNames,
   onChange: onChangeFromProps,
   filter,
-  width = '15rem',
+  width = '24rem',
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);
   const [namespaceInput, setNamespaceInput] = React.useState<string>('');
-  const maxNamespacesChars = width === '100%' || parseInt(width) > 20 ? 40 : 12;
+  const maxNamespacesChars = 40;
 
   const onInputChange = (event: object, value: string, reason: string) => {
     // For some reason, the AutoComplete component resets the text after a short
