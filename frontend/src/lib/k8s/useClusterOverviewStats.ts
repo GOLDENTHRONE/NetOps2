@@ -69,12 +69,14 @@ export function useClusterOverviewStats(
     queryKey: ['cluster-overview-stats', clusterName],
     retry: false,
     staleTime: 5_000,
-    // Poll aggressively while the backend is still warming up (syncing or
-    // first metrics poll incomplete). Once data is fully available, fall back
-    // to the normal 30 s interval to avoid unnecessary traffic.
+    // Poll aggressively only while the backend watcher is still warming up
+    // (initial sync not complete). Once `synced=true`, back off to the normal
+    // 30 s interval regardless of `metricsAvailable`: a persistently missing
+    // metrics-server is a stable state, not a transient one, and hammering the
+    // endpoint every 3 s wastes bandwidth without changing the outcome.
     refetchInterval: query => {
       const data = query.state.data;
-      if (!data?.synced || data?.metricsAvailable === false) {
+      if (!data?.synced) {
         return OVERVIEW_STATS_FAST_REFETCH_MS;
       }
       return OVERVIEW_STATS_REFETCH_INTERVAL_MS;

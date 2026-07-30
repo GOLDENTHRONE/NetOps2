@@ -25,9 +25,14 @@ import Link from '../../common/Link';
 import TileChart from '../../common/TileChart';
 import { hasAKSManagedNodes, useIsUpgradeDetected } from '../../node/upgradeDetection';
 
-export function PodsStatusCircleChart(props: { items: Pod[] | null }) {
+export function PodsStatusCircleChart(props: {
+  items?: Pod[] | null;
+  /** Pre-aggregated counts from the backend `overviewstats` endpoint. When provided,
+   *  the chart skips the client-side filter over @param items. */
+  aggregate?: { ready: number; total: number };
+}) {
   const theme = useTheme();
-  const { items } = props;
+  const { items, aggregate } = props;
   const { t } = useTranslation(['translation', 'glossary']);
 
   const podsReady = (items || []).filter((pod: Pod) => {
@@ -39,37 +44,41 @@ export function PodsStatusCircleChart(props: { items: Pod[] | null }) {
     return readyCondition?.status === 'True';
   });
 
+  const readyCount = aggregate ? aggregate.ready : podsReady.length;
+  const totalCount = aggregate ? aggregate.total : items?.length ?? 0;
+  const isLoading = !aggregate && items === null;
+
   function getLegend() {
-    if (items === null) {
+    if (isLoading) {
       return null;
     }
     return t('translation|{{ numReady }} / {{ numItems }} Requested', {
-      numReady: podsReady.length,
-      numItems: items.length,
+      numReady: readyCount,
+      numItems: totalCount,
     });
   }
 
   function getLabel() {
-    if (items === null) {
+    if (isLoading) {
       return '…';
     }
-    const percentage = ((podsReady.length / items.length) * 100).toFixed(1);
-    return `${items.length === 0 ? 0 : percentage} %`;
+    const percentage = ((readyCount / totalCount) * 100).toFixed(1);
+    return `${totalCount === 0 ? 0 : percentage} %`;
   }
 
   function getData() {
-    if (items === null) {
+    if (isLoading) {
       return [];
     }
 
     return [
       {
         name: 'ready',
-        value: podsReady.length,
+        value: readyCount,
       },
       {
         name: 'notReady',
-        value: items.length - podsReady.length,
+        value: totalCount - readyCount,
         fill: theme.palette.error.main,
       },
     ];
@@ -78,7 +87,7 @@ export function PodsStatusCircleChart(props: { items: Pod[] | null }) {
   return (
     <TileChart
       data={getData()}
-      total={items !== null ? items.length : -1}
+      total={isLoading ? -1 : totalCount}
       label={getLabel()}
       title={t('glossary|Pods')}
       legend={getLegend()}
@@ -119,52 +128,65 @@ function NodesUpgradeLink() {
   );
 }
 
-export function NodesStatusCircleChart(props: { items: Node[] | null }) {
+export function NodesStatusCircleChart(props: {
+  items?: Node[] | null;
+  /** Pre-aggregated counts from the backend `overviewstats` endpoint. When provided,
+   *  the chart skips the client-side filter over @param items. */
+  aggregate?: { ready: number; total: number };
+  /** Override for AKS detection when @param items is not available (aggregate mode).
+   *  When undefined, falls back to @param items scan. */
+  isAKS?: boolean;
+}) {
   const theme = useTheme();
-  const { items } = props;
+  const { items, aggregate, isAKS: isAKSProp } = props;
   const { t } = useTranslation(['translation', 'glossary']);
 
   const isAKSCluster = useMemo(() => {
+    if (isAKSProp !== undefined) return isAKSProp;
     if (!items) return false;
     return hasAKSManagedNodes(items);
-  }, [items]);
+  }, [items, isAKSProp]);
 
   const nodesReady = (items || []).filter((node: Node) => {
     const readyCondition = node.status?.conditions?.find(condition => condition.type === 'Ready');
     return readyCondition?.status === 'True';
   });
 
+  const readyCount = aggregate ? aggregate.ready : nodesReady.length;
+  const totalCount = aggregate ? aggregate.total : items?.length ?? 0;
+  const isLoading = !aggregate && items === null;
+
   function getLegend() {
-    if (items === null) {
+    if (isLoading) {
       return null;
     }
     return t('translation|{{ numReady }} / {{ numItems }} Ready', {
-      numReady: nodesReady.length,
-      numItems: items.length,
+      numReady: readyCount,
+      numItems: totalCount,
     });
   }
 
   function getLabel() {
-    if (items === null) {
+    if (isLoading) {
       return '…';
     }
-    const percentage = ((nodesReady.length / items.length) * 100).toFixed(1);
-    return `${items.length === 0 ? 0 : percentage} %`;
+    const percentage = ((readyCount / totalCount) * 100).toFixed(1);
+    return `${totalCount === 0 ? 0 : percentage} %`;
   }
 
   function getData() {
-    if (items === null) {
+    if (isLoading) {
       return [];
     }
 
     return [
       {
         name: 'ready',
-        value: nodesReady.length,
+        value: readyCount,
       },
       {
         name: 'notReady',
-        value: items.length - nodesReady.length,
+        value: totalCount - readyCount,
         fill: theme.palette.error.main,
       },
     ];
@@ -173,7 +195,7 @@ export function NodesStatusCircleChart(props: { items: Node[] | null }) {
   return (
     <TileChart
       data={getData()}
-      total={items !== null ? items.length : -1}
+      total={isLoading ? -1 : totalCount}
       label={getLabel()}
       title={t('glossary|Nodes')}
       legend={getLegend()}

@@ -20,7 +20,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import Overview from './Overview';
 
-const { chartMocks, eventUseList, nodeUseList, nodeUseMetrics, podUseList } = vi.hoisted(() => ({
+const {
+  chartMocks,
+  eventUseList,
+  nodeUseList,
+  nodeUseMetrics,
+  podUseList,
+  useClusterOverviewStatsMock,
+} = vi.hoisted(() => ({
   chartMocks: {
     CpuCircularChart: () => <div>cpu</div>,
     MemoryCircularChart: () => <div>memory</div>,
@@ -31,6 +38,12 @@ const { chartMocks, eventUseList, nodeUseList, nodeUseMetrics, podUseList } = vi
   nodeUseList: vi.fn(() => [[]]),
   nodeUseMetrics: vi.fn(() => [[], null]),
   podUseList: vi.fn(() => [[]]),
+  // Default: force legacy path so existing assertions on Pod/Node/Event.useList still hold.
+  useClusterOverviewStatsMock: vi.fn(() => ({
+    data: undefined,
+    isError: true,
+    isPending: false,
+  })),
 }));
 
 vi.mock('react-i18next', async importOriginal => ({
@@ -58,6 +71,14 @@ vi.mock('../../lib/k8s/pod', () => ({
   default: {
     useList: podUseList,
   },
+}));
+
+vi.mock('../../lib/k8s/useClusterOverviewStats', () => ({
+  useClusterOverviewStats: useClusterOverviewStatsMock,
+}));
+
+vi.mock('../../lib/k8s', () => ({
+  useCluster: () => 'test-cluster',
 }));
 
 vi.mock('../../lib/util', () => ({
