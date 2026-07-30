@@ -355,8 +355,11 @@ func (m *Manager) recomputeMetrics(
 		w.stats.LastUpdated = time.Now()
 		w.mu.Unlock()
 
-		logger.Log(logger.LevelInfo, nil, err,
-			fmt.Sprintf("overviewstats: node metrics unavailable for cluster %s", clusterName))
+		// Error-level so failures aren't hidden in high-volume Info logs, and
+		// include %+v of the error so we can distinguish RBAC / TLS / not-found
+		// / timeout without having to attach a debugger.
+		logger.Log(logger.LevelError, nil, err,
+			fmt.Sprintf("overviewstats: node metrics unavailable for cluster %s: %+v", clusterName, err))
 
 		return
 	}
