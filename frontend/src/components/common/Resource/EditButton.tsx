@@ -50,7 +50,10 @@ export default function EditButton(props: EditButtonProps) {
   const [isReadOnly, setIsReadOnly] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState<string>('');
   const location = useLocation();
-  const { t } = useTranslation(['translation', 'resource']);
+  // Only 'translation' is a real namespace. Requesting the non-existent
+  // 'resource' namespace caused i18next to log "Unknown variable dynamic
+  // import: ./locales/en/resource.json".
+  const { t } = useTranslation();
   const { enqueueSnackbar } = useSnackbar();
   const dispatchHeadlampEditEvent = useEventCallback(HeadlampEventType.EDIT_RESOURCE);
   const activityId = 'edit-' + item.metadata.uid;

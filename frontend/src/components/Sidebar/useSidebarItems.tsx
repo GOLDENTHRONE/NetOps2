@@ -66,6 +66,10 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
   if (error !== null) {
     if (error.status === 404) {
       console.debug('CRD endpoint not available for selected cluster(s); skipping CRD sidebar.');
+    } else if (error.status === 401 || error.status === 403) {
+      // Not authenticated / not authorised to list CRDs — expected before the
+      // user provides a token. Log at debug so it does not flood the console.
+      console.debug('Skipping CRD sidebar (unauthorised):', error.message);
     } else {
       console.error('Failed to fetch CRDs:', error);
     }

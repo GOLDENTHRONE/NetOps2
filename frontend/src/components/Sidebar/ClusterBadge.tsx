@@ -40,8 +40,9 @@ export default function ClusterBadge({ name, accentColor, icon }: ClusterBadgePr
 
   return (
     <Box
+      component="span"
       sx={{
-        display: 'flex',
+        display: 'inline-flex',
         alignItems: 'center',
         gap: 0.75,
       }}
@@ -49,8 +50,9 @@ export default function ClusterBadge({ name, accentColor, icon }: ClusterBadgePr
       {/* Colored circle with icon, only if icon is provided */}
       {icon && (
         <Box
+          component="span"
           sx={{
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
             width: 28,
@@ -73,8 +75,10 @@ export default function ClusterBadge({ name, accentColor, icon }: ClusterBadgePr
 
       {/* Cluster name */}
       <Typography
+        component="span"
         variant="caption"
         sx={{
+          display: 'inline-block',
           fontSize: '0.875rem',
           fontWeight: 500,
           overflow: 'hidden',

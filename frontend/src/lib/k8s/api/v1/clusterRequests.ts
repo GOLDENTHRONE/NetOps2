@@ -198,8 +198,25 @@ export async function clusterRequest(
     let message = statusText;
     try {
       if (isJSON) {
-        const json = await response.json();
-        message += ` - ${json.message}`;
+        // Some upstreams (e.g. an unauthenticated /version endpoint) return
+        // an empty body with a non-2xx status. Read as text first so we can
+        // skip JSON parsing when there is nothing to parse — this used to
+        // spam the console with "Unable to parse error json" errors.
+        const text = await response.text();
+        if (text) {
+          try {
+            const json = JSON.parse(text);
+            message += ` - ${json.message || text}`;
+          } catch (parseErr) {
+            // Body was not valid JSON. Log at debug level only; a non-JSON
+            // error body is not itself a bug.
+            console.debug('Non-JSON error body at url:', url, {
+              parseErr,
+              body: text.slice(0, 200),
+            });
+            message += ` - ${text}`;
+          }
+        }
       } else {
         // When not expecting JSON, still try to get error details from body
         const text = await response.text();
@@ -215,8 +232,11 @@ export async function clusterRequest(
         }
       }
     } catch (err) {
-      console.error(
-        'Unable to parse error json at url:',
+      // Reaching this catch means reading the body itself failed (network
+      // abort, etc.). Downgrade to debug — the caller already receives the
+      // rejected ApiError below, so this is diagnostic only.
+      console.debug(
+        'Unable to read error body at url:',
         url,
         { err },
         'with request data:',

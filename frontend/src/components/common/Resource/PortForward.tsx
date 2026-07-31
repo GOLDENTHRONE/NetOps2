@@ -116,7 +116,10 @@ function PortForwardContent(props: PortForwardProps) {
   const [loading, setLoading] = React.useState(false);
   const [startDialogOpen, setStartDialogOpen] = React.useState(false);
 
-  const { t } = useTranslation(['translation', 'resource']);
+  // Only 'translation' is a real namespace. Requesting the non-existent
+  // 'resource' namespace caused i18next to log "Unknown variable dynamic
+  // import: ./locales/en/resource.json".
+  const { t } = useTranslation();
 
   const [pods, podsFetchError] = Pod.useList({
     namespace,

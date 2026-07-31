@@ -78,6 +78,11 @@ type clusterWatcher struct {
 	stats    Stats
 	synced   bool
 	startErr error
+	// kContext is retained so the metrics poller can rebuild the dynamic
+	// client if a List call fails (e.g. exec-plugin token expired). Without
+	// this, a long-running backend keeps re-using a stale cached client and
+	// never recovers — the popover / Overview show "—" indefinitely.
+	kContext *kubeconfig.Context
 }
 
 // Manager manages overview stats watchers for all clusters.
@@ -116,7 +121,8 @@ func (m *Manager) StartWatcher(clusterName string, kContext *kubeconfig.Context)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &clusterWatcher{
-		cancel: cancel,
+		cancel:   cancel,
+		kContext: kContext,
 	}
 	m.watchers[clusterName] = w
 
@@ -256,7 +262,10 @@ func (m *Manager) runWatcher(ctx context.Context, clusterName string, client dyn
 	// Without this, the first response would have metricsAvailable=false
 	// even if metrics-server is present, causing the Home popover to show
 	// "N/A" until the next frontend refetch (30 s).
-	m.recomputeMetrics(ctx, clusterName, client, nodeInformer, w)
+	//
+	// `client` is passed by pointer so a rebuilt fresh-auth client survives
+	// beyond this call and gets adopted by the background poller below.
+	m.recomputeMetrics(ctx, clusterName, &client, nodeInformer, w)
 
 	w.mu.Lock()
 	w.synced = allSynced
@@ -283,6 +292,12 @@ var nodeMetricsGVR = schema.GroupVersionResource{
 
 // pollMetrics periodically aggregates node CPU/memory usage from metrics.k8s.io
 // and node capacity from the node informer store, updating w.stats.
+//
+// The dynamic client is held locally so we can transparently rebuild it (which
+// re-invokes any kubeconfig exec-plugin and issues a fresh bearer token) if a
+// List call fails — see `recomputeMetrics` for the retry logic. Without this,
+// a long-running backend would keep re-using a stale cached client after the
+// original token expired and never recover.
 func (m *Manager) pollMetrics(
 	ctx context.Context,
 	clusterName string,
@@ -298,8 +313,9 @@ func (m *Manager) pollMetrics(
 		}
 	}()
 
-	// Run once immediately, then on a ticker.
-	m.recomputeMetrics(ctx, clusterName, client, nodeInformer, w)
+	// Run once immediately, then on a ticker. `client` is passed by pointer so
+	// `recomputeMetrics` can swap in a rebuilt one on transport failure.
+	m.recomputeMetrics(ctx, clusterName, &client, nodeInformer, w)
 
 	ticker := time.NewTicker(metricsPollInterval)
 	defer ticker.Stop()
@@ -309,16 +325,21 @@ func (m *Manager) pollMetrics(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.recomputeMetrics(ctx, clusterName, client, nodeInformer, w)
+			m.recomputeMetrics(ctx, clusterName, &client, nodeInformer, w)
 		}
 	}
 }
 
 // recomputeMetrics sums node usage (metrics.k8s.io) and capacity (informer store).
+//
+// On List failure it rebuilds `*client` from the watcher's kubeconfig context —
+// which re-invokes any exec-plugin (e.g. `oidc-login`, `oc`) so a fresh bearer
+// token is minted — and retries once. This makes the poller self-heal across
+// exec-plugin token expiry without requiring a backend restart.
 func (m *Manager) recomputeMetrics(
 	ctx context.Context,
 	clusterName string,
-	client dynamic.Interface,
+	client *dynamic.Interface,
 	nodeInformer cache.SharedIndexInformer,
 	w *clusterWatcher,
 ) {
@@ -344,10 +365,38 @@ func (m *Manager) recomputeMetrics(
 	}
 
 	// Sum usage from metrics.k8s.io/v1beta1 nodes.
-	list, err := client.Resource(nodeMetricsGVR).List(ctx, metav1.ListOptions{})
+	list, err := (*client).Resource(nodeMetricsGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		// No metrics-server (or transient error): mark unavailable but keep
-		// capacity so the UI can still show totals consistently.
+		// First failure: try to rebuild the client from the cached kubeconfig
+		// context. This re-invokes any exec-plugin so we pick up a fresh bearer
+		// token. Only rebuild if we still have the context — legacy watchers
+		// created before this field existed will skip the retry.
+		if w.kContext != nil {
+			if newClient, rebuildErr := rebuildMetricsClient(w.kContext); rebuildErr == nil {
+				retryList, retryErr := newClient.Resource(nodeMetricsGVR).List(ctx, metav1.ListOptions{})
+				if retryErr == nil {
+					// Fresh client works; adopt it for subsequent polls.
+					*client = newClient
+					list = retryList
+					err = nil
+
+					logger.Log(logger.LevelInfo, nil, nil,
+						fmt.Sprintf("overviewstats: rebuilt metrics client for cluster %s (recovered from stale auth)", clusterName))
+				} else {
+					// Retry still failed; keep original error for the log.
+					err = retryErr
+				}
+			} else {
+				logger.Log(logger.LevelError, nil, rebuildErr,
+					fmt.Sprintf("overviewstats: failed to rebuild metrics client for cluster %s: %+v", clusterName, rebuildErr))
+			}
+		}
+	}
+
+	if err != nil {
+		// No metrics-server (or persistent error even after client rebuild):
+		// mark unavailable but keep capacity so the UI can still show totals
+		// consistently.
 		w.mu.Lock()
 		w.stats.MetricsAvailable = false
 		w.stats.CPU = ResourceUsage{Used: 0, Capacity: cpuCapacity}
@@ -387,6 +436,20 @@ func (m *Manager) recomputeMetrics(
 	w.stats.Memory = ResourceUsage{Used: memUsed, Capacity: memCapacity}
 	w.stats.LastUpdated = time.Now()
 	w.mu.Unlock()
+}
+
+// rebuildMetricsClient builds a fresh dynamic client from the given kubeconfig
+// context. Re-invoking `kContext.RESTConfig()` runs any exec-plugin declared in
+// the kubeconfig (e.g. `oidc-login`, `oc`), which mints a new bearer token —
+// so a client returned here has fresh auth even if the original one had a
+// stale token.
+func rebuildMetricsClient(kContext *kubeconfig.Context) (dynamic.Interface, error) {
+	config, err := kContext.RESTConfig()
+	if err != nil {
+		return nil, fmt.Errorf("getting REST config: %w", err)
+	}
+
+	return dynamic.NewForConfig(config)
 }
 
 // recomputePods recalculates pod counts from the informer store.

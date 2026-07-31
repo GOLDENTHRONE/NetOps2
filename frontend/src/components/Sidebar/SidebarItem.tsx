@@ -89,6 +89,15 @@ const SidebarItemBase = memo((props: SidebarItemProps & { clusters?: string[] })
     entryType = 'link',
     sx,
     clusters = [],
+    // The following SidebarEntry-only props must be destructured out so they
+    // do NOT leak through {...other} onto DOM elements (e.g. the anchor
+    // rendered by ListItemButton). React logs warnings like
+    // "React does not recognize the `insertBefore` prop on a DOM element"
+    // when they slip through.
+    // eslint-disable-next-line no-unused-vars
+    parent: _parent,
+    // eslint-disable-next-line no-unused-vars
+    insertBefore: _insertBefore,
     ...other
   } = props;
 

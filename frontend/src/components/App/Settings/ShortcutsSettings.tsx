@@ -278,10 +278,10 @@ export function ShortcutsList() {
       name: (
         <Box>
           <Typography variant="body2" sx={{ fontWeight: 500, color: 'text.primary' }}>
-            {shortcut.name}
+            {t(shortcut.name)}
           </Typography>
           <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
-            {shortcut.description}
+            {t(shortcut.description)}
           </Typography>
         </Box>
       ),

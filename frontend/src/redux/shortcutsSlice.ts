@@ -35,40 +35,44 @@ export interface ShortcutConfig {
   category: 'navigation' | 'search' | 'general';
 }
 
-import i18next from 'i18next';
-
 /**
- * All available shortcuts with their default configurations
+ * All available shortcuts with their default configurations.
+ *
+ * The `name` and `description` fields hold raw English strings which double as
+ * i18next translation keys. Do not call `i18next.t()` at module scope here —
+ * i18next has not been initialised yet when this module loads, which triggered
+ * "i18next was not initialized" and "missingKey" console errors. Translate at
+ * render time instead (e.g. `t(shortcut.name)`).
  */
 export const DEFAULT_SHORTCUTS: Record<string, ShortcutConfig> = {
   GLOBAL_SEARCH: {
     id: 'GLOBAL_SEARCH',
-    name: i18next.t('Global Search'),
-    description: i18next.t('Open the global search dialog'),
+    name: 'Global Search',
+    description: 'Open the global search dialog',
     key: '/',
     defaultKey: '/',
     category: 'search',
   },
   CLUSTER_CHOOSER: {
     id: 'CLUSTER_CHOOSER',
-    name: i18next.t('Cluster Chooser'),
-    description: i18next.t('Open the cluster chooser popup'),
+    name: 'Cluster Chooser',
+    description: 'Open the cluster chooser popup',
     key: 'ctrl+shift+l',
     defaultKey: 'ctrl+shift+l',
     category: 'navigation',
   },
   TABLE_COLUMN_FILTERS: {
     id: 'TABLE_COLUMN_FILTERS',
-    name: i18next.t('Toggle Table Filters'),
-    description: i18next.t('Toggle column filters in tables'),
+    name: 'Toggle Table Filters',
+    description: 'Toggle column filters in tables',
     key: 'alt+shift+t',
     defaultKey: 'alt+shift+t',
     category: 'general',
   },
   LOG_VIEWER_SEARCH: {
     id: 'LOG_VIEWER_SEARCH',
-    name: i18next.t('Log Viewer Search'),
-    description: i18next.t('Toggle search in log viewer'),
+    name: 'Log Viewer Search',
+    description: 'Toggle search in log viewer',
     key: 'ctrl+shift+f',
     defaultKey: 'ctrl+shift+f',
     category: 'search',

@@ -88,6 +88,11 @@ export default function AuthVisible(props: AuthVisibleProps) {
         return res;
       } catch (e: any) {
         onError?.(e);
+        // React Query treats `undefined` as an invalid result and logs
+        // "Query data cannot be undefined". Return null so the query
+        // resolves cleanly; the `data?.status?.allowed` check below still
+        // evaluates to `false`.
+        return null;
       }
     },
   });

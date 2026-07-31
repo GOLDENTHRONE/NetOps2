@@ -111,8 +111,15 @@ export default function VersionButton() {
 
           return results;
         })
-        .catch((error: Error) => {
-          console.error('Getting the cluster version:', error);
+        .catch((error: any) => {
+          // 401/403 are expected before the user authenticates against a
+          // cluster — demote to debug so they don't spam the console.
+          const status = error?.status ?? error?.response?.status;
+          if (status === 401 || status === 403) {
+            console.debug('Cluster version unavailable (unauthorised):', error?.message);
+          } else {
+            console.error('Getting the cluster version:', error);
+          }
           return null;
         });
     },

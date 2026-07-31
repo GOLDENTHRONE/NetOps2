@@ -44,6 +44,7 @@ import { Cluster, KubeMetrics, StringDict } from '../../../lib/k8s/cluster';
 import { KubeObject } from '../../../lib/k8s/KubeObject';
 import Node from '../../../lib/k8s/node';
 import Pod from '../../../lib/k8s/pod';
+import { useClusterOverviewStats } from '../../../lib/k8s/useClusterOverviewStats';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { parseCpu, parseRam, TO_GB, TO_ONE_CPU } from '../../../lib/units';
 import { getClusterPrefixedPath } from '../../../lib/util';
@@ -467,15 +468,193 @@ function ClusterStatusErrorDetails({
 /**
  * ClusterStatusDetails renders the popover body for an Active cluster. It shows
  * the API-server reachability, Kubernetes version, CPU %, Memory %, node and pod
- * counts. All numeric fields are computed from the same hooks and formulas that
- * the Cluster Overview page (`components/cluster/Overview.tsx`) and its charts
- * use, so the numbers agree with what the user sees on that page.
+ * counts.
  *
- * The component is only mounted while the popover is open, so the underlying
- * Pod/Node lists and metrics are only fetched during that window and torn down
- * on close.
+ * Fast path: reads the backend `/overview-stats` aggregate (see
+ * `useClusterOverviewStats`) so opening the popover on a large cluster costs a
+ * single ~300 byte request instead of full Pod/Node/Metrics list fetches.
+ *
+ * Legacy fallback (`ClusterStatusDetailsLegacy`) is used only when the backend
+ * endpoint is unavailable or errors, mirroring `components/cluster/Overview.tsx`.
+ *
+ * The component is only mounted while the popover is open, so subscriptions are
+ * torn down on close.
  */
-function ClusterStatusDetails({
+function ClusterStatusDetails(props: {
+  cluster: Cluster;
+  version?: StringDict | null;
+  error?: ApiError | null;
+  statusText: string;
+  statusIcon: string;
+  statusColor: string;
+  onClose?: () => void;
+}) {
+  const stats = useClusterOverviewStats(props.cluster.name);
+
+  // Same fallback semantics as `Overview.tsx`: a single failed request (404 /
+  // 5xx) drops back to the legacy client-side aggregation path so older backends
+  // and misconfigured clusters keep working.
+  if (stats.isError) {
+    return <ClusterStatusDetailsLegacy {...props} />;
+  }
+
+  return <ClusterStatusDetailsAggregate stats={stats.data} {...props} />;
+}
+
+/**
+ * Fast path popover body: renders values from the backend aggregate snapshot.
+ * Deliberately does not call `Pod.useList` / `Node.useList` / `Node.useMetrics`
+ * so opening the popover on a large cluster is ~300 bytes instead of megabytes.
+ */
+function ClusterStatusDetailsAggregate({
+  stats,
+  version,
+  error,
+  statusText,
+  statusIcon,
+  statusColor,
+  onClose,
+}: {
+  stats: ReturnType<typeof useClusterOverviewStats>['data'];
+  cluster: Cluster;
+  version?: StringDict | null;
+  error?: ApiError | null;
+  statusText: string;
+  statusIcon: string;
+  statusColor: string;
+  onClose?: () => void;
+}) {
+  const { t } = useTranslation(['translation', 'glossary']);
+  const theme = useTheme();
+
+  const apiServerLabel =
+    error === null || error === undefined
+      ? t('translation|Reachable (HTTP 200)')
+      : error?.status
+      ? t('translation|Unreachable (HTTP {{ code }})', { code: error.status })
+      : t('translation|Unreachable');
+
+  const versionLabel = version?.gitVersion ?? '—';
+
+  const synced = stats?.synced === true;
+  const noMetrics = synced && stats?.metricsAvailable === false;
+
+  function pctStr(used: number, available: number): string {
+    if (available <= 0) return '0.0';
+    return ((used / available) * 100).toFixed(1);
+  }
+
+  let podsLabel: string | null;
+  let nodesLabel: string | null;
+  let cpuValue: string | null;
+  let memoryValue: string | null;
+
+  if (!synced) {
+    podsLabel = null;
+    nodesLabel = null;
+    cpuValue = null;
+    memoryValue = null;
+  } else {
+    const { pods, nodes } = stats!;
+
+    podsLabel =
+      pods.total === 0
+        ? `${t('translation|{{ numReady }} / {{ numItems }} Requested', {
+            numReady: 0,
+            numItems: 0,
+          })} (0.0%)`
+        : `${t('translation|{{ numReady }} / {{ numItems }} Requested', {
+            numReady: pods.ready,
+            numItems: pods.total,
+          })} (${pctStr(pods.ready, pods.total)}%)`;
+
+    nodesLabel =
+      nodes.total === 0
+        ? `0 / 0 Ready (0.0%)`
+        : `${t('translation|{{ numReady }} / {{ numItems }} Ready', {
+            numReady: nodes.ready,
+            numItems: nodes.total,
+          })} (${pctStr(nodes.ready, nodes.total)}%)`;
+
+    if (noMetrics) {
+      cpuValue = '—';
+      memoryValue = '—';
+    } else {
+      // Backend serves CPU in nanocores, memory in bytes. Convert to the same
+      // "CPU units" and GB scales the Overview page uses so numbers match.
+      const cpuUsed = stats!.cpu.used / TO_ONE_CPU;
+      const cpuCap = stats!.cpu.capacity / TO_ONE_CPU;
+      const memUsed = stats!.memory.used / TO_GB;
+      const memCap = stats!.memory.capacity / TO_GB;
+      cpuValue = `${cpuUsed.toFixed(2)} / ${cpuCap} units (${pctStr(cpuUsed, cpuCap)}%)`;
+      memoryValue = `${memUsed.toFixed(2)} / ${memCap.toFixed(2)} GB (${pctStr(memUsed, memCap)}%)`;
+    }
+  }
+
+  function Row({ label, value }: { label: string; value: string | null }) {
+    return (
+      <Stack direction="row" spacing={1.5} alignItems="baseline">
+        <Typography
+          variant="caption"
+          sx={{
+            color: theme.palette.text.secondary,
+            minWidth: 130,
+            flexShrink: 0,
+          }}
+        >
+          {label}
+        </Typography>
+        {value === null ? (
+          <CircularProgress size={12} />
+        ) : (
+          <Typography variant="body2" sx={{ color: theme.palette.text.primary }}>
+            {value}
+          </Typography>
+        )}
+      </Stack>
+    );
+  }
+
+  return (
+    <Box sx={{ minWidth: 260 }}>
+      <Box display="flex" alignItems="center" mb={1}>
+        <Icon icon={statusIcon} width={16} color={statusColor} />
+        <Typography
+          variant="subtitle2"
+          sx={{ ml: 0.75, color: statusColor, fontWeight: 600, flexGrow: 1 }}
+        >
+          {statusText}
+        </Typography>
+        {onClose && (
+          <IconButton
+            size="small"
+            onClick={onClose}
+            aria-label={t('translation|Close')}
+            sx={{ ml: 1, p: 0.25 }}
+          >
+            <Icon icon="mdi:close" width={16} />
+          </IconButton>
+        )}
+      </Box>
+      <Divider sx={{ mb: 1 }} />
+      <Stack spacing={0.75}>
+        <Row label={t('translation|API server')} value={apiServerLabel} />
+        <Row label={t('translation|Kubernetes version')} value={versionLabel} />
+        <Row label={t('glossary|CPU')} value={cpuValue} />
+        <Row label={t('glossary|Memory')} value={memoryValue} />
+        <Row label={t('glossary|Nodes')} value={nodesLabel} />
+        <Row label={t('glossary|Pods')} value={podsLabel} />
+      </Stack>
+    </Box>
+  );
+}
+
+/**
+ * Legacy path: fetches full Pod / Node / Node.metrics lists and aggregates on
+ * the client. Preserved as a fallback for backends without the
+ * `/overview-stats` endpoint. See `ClusterStatusDetails` above.
+ */
+function ClusterStatusDetailsLegacy({
   cluster,
   version,
   error,
