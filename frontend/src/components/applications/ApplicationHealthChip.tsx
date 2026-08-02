@@ -15,11 +15,21 @@
  */
 
 import { Icon } from '@iconify/react';
-import { alpha, Box, Divider, Popover, Theme, Tooltip, Typography, useTheme } from '@mui/material';
+import {
+  alpha,
+  Box,
+  Divider,
+  IconButton,
+  Popover,
+  Theme,
+  Typography,
+  useTheme,
+} from '@mui/material';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import Link from '../common/Link';
+import { LightTooltip } from '../common/Tooltip';
 import { AppHealth, AppHealthStatus, WorkloadHealth, WorkloadState } from './applicationHealth';
 
 /**
@@ -123,9 +133,12 @@ export function WorkloadRow({ w, kubeObject }: { w: WorkloadHealth; kubeObject?:
 export function HealthBreakdown({
   health,
   workloadObjects,
+  onClose,
 }: {
   health: AppHealth;
   workloadObjects?: Map<string, KubeObject>;
+  /** When provided, renders a close (X) button in the popover header. */
+  onClose?: () => void;
 }) {
   const theme = useTheme();
   const { t } = useTranslation(['translation']);
@@ -137,12 +150,36 @@ export function HealthBreakdown({
     <>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
         <Icon icon={p.icon} width={20} height={20} color={color} />
-        <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, color, flexGrow: 1 }}>
           {health.label}
         </Typography>
+        {onClose && (
+          <IconButton
+            size="small"
+            onClick={onClose}
+            aria-label={t('translation|Close')}
+            sx={{ p: 0.25 }}
+          >
+            <Icon icon="mdi:close" width={16} />
+          </IconButton>
+        )}
       </Box>
       <Typography variant="body2" color="text.secondary">
-        {health.summary}
+        {health.status === 'healthy'
+          ? t('translation|Every workload has all of its desired replicas ready.')
+          : health.status === 'progressing'
+          ? t('translation|This application is still rolling out.')
+          : health.status === 'degraded'
+          ? t('translation|This application is partially available.')
+          : health.status === 'unhealthy'
+          ? t('translation|This application is not ready — see the details below.')
+          : health.status === 'idle'
+          ? t('translation|This application is intentionally scaled to zero.')
+          : health.status === 'noWorkloads'
+          ? t('translation|This application has no workloads that run pods.')
+          : health.status === 'empty'
+          ? t('translation|This application has no resources.')
+          : health.summary}
       </Typography>
 
       {health.totalWorkloads > 0 && (
@@ -255,7 +292,7 @@ export function ApplicationHealthChip({
 
   return (
     <>
-      <Tooltip title={t('translation|Click to see')}>
+      <LightTooltip title={anchorEl ? '' : t('translation|Click to see')}>
         <Box
           component="button"
           type="button"
@@ -284,14 +321,26 @@ export function ApplicationHealthChip({
           <Icon icon={p.icon} width={medium ? 18 : 16} height={medium ? 18 : 16} />
           {health.label}
         </Box>
-      </Tooltip>
+      </LightTooltip>
       <Popover
         open={!!anchorEl}
         anchorEl={anchorEl}
         onClose={() => setAnchorEl(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { p: 1.5, maxWidth: 380, minWidth: 260 } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              p: 1.5,
+              maxWidth: 560,
+              minWidth: 300,
+              border: '1px solid',
+              borderColor: theme => (theme.palette.mode === 'dark' ? 'grey.700' : 'grey.500'),
+              borderRadius: 1,
+              boxShadow: 4,
+            },
+          },
+        }}
       >
         {/* Close on any link click: in drawer mode a link opens the details
             side panel WITHOUT a route change, and a still-open modal popover
@@ -304,7 +353,11 @@ export function ApplicationHealthChip({
             }
           }}
         >
-          <HealthBreakdown health={health} workloadObjects={workloadObjects} />
+          <HealthBreakdown
+            health={health}
+            workloadObjects={workloadObjects}
+            onClose={() => setAnchorEl(null)}
+          />
         </Box>
       </Popover>
     </>

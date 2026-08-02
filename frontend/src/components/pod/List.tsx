@@ -17,11 +17,16 @@
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Fade from '@mui/material/Fade';
+import IconButton from '@mui/material/IconButton';
+import Popover from '@mui/material/Popover';
+import { alpha, Theme, useTheme } from '@mui/material/styles';
+import Typography from '@mui/material/Typography';
 import { TFunction } from 'i18next';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../lib/k8s/api/v2/ApiError';
 import { KubeContainerStatus } from '../../lib/k8s/cluster';
+import Event, { KubeEvent } from '../../lib/k8s/event';
 import Pod from '../../lib/k8s/pod';
 import { METRIC_REFETCH_INTERVAL_MS, PodMetrics } from '../../lib/k8s/PodMetrics';
 import { parseCpu, parseRam, unparseCpu, unparseRam } from '../../lib/units';
@@ -190,6 +195,442 @@ function getContainerDisplayStatus(container: KubeContainerStatus, t: TFunction)
   };
 }
 
+type PodStatusCategory = 'success' | 'warning' | 'error' | 'neutral';
+
+const POD_STATUS_PRESENTATION: Record<
+  PodStatusCategory,
+  { icon: string; color: (theme: Theme) => string }
+> = {
+  success: { icon: 'mdi:check-circle', color: theme => theme.palette.success.main },
+  warning: { icon: 'mdi:alert', color: theme => theme.palette.warning.main },
+  error: { icon: 'mdi:alert-circle', color: theme => theme.palette.error.main },
+  neutral: { icon: 'mdi:help-circle-outline', color: theme => theme.palette.text.secondary },
+};
+
+/**
+ * The user-facing pod status: a single label whose wording matches its color.
+ * A Running-but-not-Ready pod keeps a warning color, so the bare "Running"
+ * reason is relabeled "Not Ready" — otherwise the word contradicts the color.
+ */
+export function getPodStatusDisplay(
+  pod: Pod,
+  t: TFunction
+): {
+  category: PodStatusCategory;
+  label: string;
+  description: string;
+  message: string;
+  phase: string;
+  ready: boolean;
+} {
+  const { reason, message } = pod.getDetailedStatus();
+  const phase = pod.status?.phase || '';
+  const readyCondition = (pod.status?.conditions || []).find(c => c.type === 'Ready');
+  const ready = readyCondition?.status === 'True';
+  const base = getPodStatus(pod);
+  const category: PodStatusCategory = base === '' ? 'neutral' : (base as PodStatusCategory);
+
+  let label = reason;
+  if (
+    category === 'warning' &&
+    phase === 'Running' &&
+    !ready &&
+    (reason === 'Running' || reason === 'NotReady' || reason === phase)
+  ) {
+    label = t('translation|Not Ready');
+  }
+
+  // Short one-line description derived from real phase/ready/reason — not fabricated.
+  let description = '';
+  if (phase === 'Succeeded') {
+    description = t('translation|Pod completed successfully.');
+  } else if (phase === 'Pending') {
+    description = t('translation|Pod is waiting to start.');
+  } else if (category === 'success') {
+    description = t('translation|All containers are running and ready to receive traffic.');
+  } else if (category === 'warning' && phase === 'Running' && !ready) {
+    description = t(
+      'translation|Containers are running, but the pod is not ready to receive traffic.'
+    );
+  } else if (category === 'error' && phase === 'Failed') {
+    description = t('translation|Pod has failed.');
+  } else if (category === 'error') {
+    description = t('translation|Pod is in an error state.');
+  }
+
+  return { category, label, description, message: message || '', phase, ready };
+}
+
+/**
+ * Real, per-container reason derived from `containerStatuses[].state` (and
+ * `lastState` / pod Ready condition as fallback for the running-but-not-ready
+ * case). Never fabricated — returns empty string if no reason exists.
+ */
+export function getContainerReason(cs: KubeContainerStatus, pod: Pod): string {
+  const state = cs.state || {};
+  if (state.waiting?.reason) {
+    return state.waiting.message
+      ? `${state.waiting.reason} — ${state.waiting.message}`
+      : state.waiting.reason;
+  }
+  if (state.terminated?.reason) {
+    const parts = [state.terminated.reason];
+    if (state.terminated.exitCode !== undefined) {
+      parts.push(`exit ${state.terminated.exitCode}`);
+    }
+    return state.terminated.message
+      ? `${parts.join(' · ')} — ${state.terminated.message}`
+      : parts.join(' · ');
+  }
+  // Running: no per-state reason. If not ready, fall back to pod Ready condition
+  // (real K8s data), then to last terminated state if present.
+  if (state.running && !cs.ready) {
+    const readyCond = (pod.status?.conditions || []).find(c => c.type === 'Ready');
+    if (readyCond?.status === 'False') {
+      return readyCond.message || readyCond.reason || '';
+    }
+    if (cs.lastState?.terminated?.reason) {
+      return `Last exit: ${cs.lastState.terminated.reason}`;
+    }
+  }
+  return '';
+}
+
+/**
+ * Latest Warning event tied to `containerName` via `involvedObject.fieldPath`
+ * (K8s emits e.g. `spec.containers{cbur}` for probe/pull failures). Real event
+ * data — this is where the exact "Readiness probe failed: ..." text lives.
+ */
+export function getContainerEventReason(events: KubeEvent[], containerName: string): string {
+  if (!events.length) return '';
+  const suffix = `{${containerName}}`;
+  const matches = events.filter(
+    e => e.type === 'Warning' && (e.involvedObject?.fieldPath || '').endsWith(suffix)
+  );
+  if (!matches.length) return '';
+  const latest = matches.reduce((a, b) => (getEventTime(a) >= getEventTime(b) ? a : b));
+  const reason = latest.reason || '';
+  const msg = (latest.message || '').trim();
+  if (reason && msg) return `${reason}: ${msg}`;
+  return reason || msg;
+}
+
+/**
+ * Latest Warning event on the pod itself (fieldPath empty) — surfaces reasons
+ * like `FailedScheduling`, `FailedMount`, `NetworkNotReady`.
+ */
+export function getPodEventReason(events: KubeEvent[]): string {
+  if (!events.length) return '';
+  const matches = events.filter(
+    e => e.type === 'Warning' && !(e.involvedObject?.fieldPath || '').includes('{')
+  );
+  if (!matches.length) return '';
+  const latest = matches.reduce((a, b) => (getEventTime(a) >= getEventTime(b) ? a : b));
+  const reason = latest.reason || '';
+  const msg = (latest.message || '').trim();
+  if (reason && msg) return `${reason}: ${msg}`;
+  return reason || msg;
+}
+
+function getEventTime(e: KubeEvent): number {
+  const ts =
+    e.series?.lastObservedTime ||
+    e.lastTimestamp ||
+    e.eventTime ||
+    e.firstTimestamp ||
+    e.metadata?.creationTimestamp;
+  return ts ? new Date(ts).getTime() : 0;
+}
+
+/**
+ * Status pill for the Pods list: color matches wording, and a click opens a
+ * popover that names each container's own state — so the per-container status
+ * (previously bare colored dots) is labeled instead of a mystery indicator.
+ */
+function PodStatusChip({ pod, t }: { pod: Pod; t: TFunction }) {
+  const theme = useTheme();
+  const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
+  const [events, setEvents] = React.useState<KubeEvent[]>([]);
+  const { category, label, description, message } = getPodStatusDisplay(pod, t);
+  const p = POD_STATUS_PRESENTATION[category];
+  const color = p.color(theme);
+  const containerStatuses = pod.status?.containerStatuses || [];
+
+  // Fetch pod events lazily on popover open so we can surface the exact reason
+  // (e.g. "Readiness probe failed: HTTP 503") which only exists in Events,
+  // never in containerStatus.state.
+  React.useEffect(() => {
+    if (!anchorEl) return;
+    let cancelled = false;
+    Event.objectEvents(pod)
+      .then((items: KubeEvent[]) => {
+        if (!cancelled) setEvents(items || []);
+      })
+      .catch(() => {
+        // Silent: events are optional enrichment; popover still works without them.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [anchorEl, pod]);
+
+  return (
+    <>
+      <LightTooltip title={anchorEl ? '' : t('translation|Click to see')}>
+        <Box
+          component="button"
+          type="button"
+          onClick={e => setAnchorEl(e.currentTarget)}
+          aria-label={t('translation|Show pod status details')}
+          sx={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 0.5,
+            px: 1,
+            py: '3px',
+            border: 'none',
+            borderRadius: '999px',
+            cursor: 'pointer',
+            fontSize: '0.8125rem',
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            whiteSpace: 'nowrap',
+            color,
+            backgroundColor: alpha(color, 0.12),
+            '&:hover': { backgroundColor: alpha(color, 0.22) },
+          }}
+        >
+          <Icon icon={p.icon} width={16} height={16} />
+          {label}
+        </Box>
+      </LightTooltip>
+      <Popover
+        open={!!anchorEl}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{
+          paper: {
+            sx: {
+              p: 1.75,
+              maxWidth: 420,
+              minWidth: 300,
+              border: '1.5px solid',
+              borderColor: alpha(color, 0.5),
+              borderRadius: 1.5,
+              boxShadow: 6,
+              backgroundImage: 'none',
+            },
+          },
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+          <Icon icon={p.icon} width={20} height={20} color={color} />
+          <Typography
+            variant="subtitle1"
+            sx={{ fontWeight: 700, color, flexGrow: 1, lineHeight: 1.2 }}
+          >
+            {label}
+          </Typography>
+          <IconButton
+            size="small"
+            onClick={() => setAnchorEl(null)}
+            aria-label={t('translation|Close')}
+            sx={{ p: 0.25 }}
+          >
+            <Icon icon="mdi:close" width={16} />
+          </IconButton>
+        </Box>
+        {description && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: message ? 0.5 : 1 }}>
+            {description}
+          </Typography>
+        )}
+        {message && message !== description && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: 'block', fontStyle: 'italic', mb: 1 }}
+          >
+            {message}
+          </Typography>
+        )}
+        {(() => {
+          const podEvent = getPodEventReason(events);
+          return podEvent ? (
+            <Box
+              sx={{
+                display: 'flex',
+                gap: 0.75,
+                alignItems: 'flex-start',
+                p: 0.75,
+                mb: 1,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: alpha(theme.palette.warning.main, 0.4),
+                backgroundColor: alpha(theme.palette.warning.main, 0.08),
+              }}
+            >
+              <Icon
+                icon="mdi:alert-outline"
+                width={16}
+                height={16}
+                color={theme.palette.warning.main}
+                style={{ marginTop: 2 }}
+              />
+              <Typography variant="caption" sx={{ color: 'text.primary', lineHeight: 1.4 }}>
+                {podEvent}
+              </Typography>
+            </Box>
+          ) : null;
+        })()}
+        {containerStatuses.length > 0 && (
+          <>
+            <Box
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                pt: 1,
+                mt: 0.5,
+              }}
+            >
+              <Typography
+                variant="caption"
+                sx={{ fontWeight: 700, color: 'text.secondary', letterSpacing: 0.3 }}
+              >
+                {t('translation|Containers ({{ count }})', { count: containerStatuses.length })}
+              </Typography>
+            </Box>
+            <Box
+              component="ul"
+              sx={{
+                listStyle: 'none',
+                m: 0,
+                mt: 1,
+                p: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 1.25,
+              }}
+            >
+              {containerStatuses.map((cs, i) => {
+                const { color: dotColorName, label: cLabel } = getContainerDisplayStatus(cs, t);
+                // Map named color from getContainerDisplayStatus to a real hex/rgb
+                // so MUI's `alpha()` doesn't throw "Unsupported color".
+                const dotColor =
+                  dotColorName === 'green'
+                    ? theme.palette.success.main
+                    : dotColorName === 'orange'
+                    ? theme.palette.warning.main
+                    : dotColorName === 'red'
+                    ? theme.palette.error.main
+                    : theme.palette.text.secondary;
+                const stateReason = getContainerReason(cs, pod);
+                const eventReason = getContainerEventReason(events, cs.name);
+                // Prefer the more specific event reason (e.g. "Unhealthy:
+                // Readiness probe failed: HTTP 503") over pod-level condition
+                // fallback ("containers with unready status: [x]").
+                const reason = eventReason || stateReason;
+                return (
+                  <Box
+                    component="li"
+                    key={i}
+                    sx={{
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      p: 1,
+                      backgroundColor: alpha(dotColor, 0.06),
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.5 }}>
+                      <Icon icon="mdi:circle" style={{ color: dotColor }} width={10} height={10} />
+                      <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                        {cs.name}
+                      </Typography>
+                    </Box>
+                    <Box
+                      component="ul"
+                      sx={{
+                        listStyle: 'none',
+                        m: 0,
+                        p: 0,
+                        pl: 1.75,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 0.25,
+                      }}
+                    >
+                      <ContainerDetailRow
+                        label={t('translation|Status')}
+                        value={cLabel || t('translation|Unknown')}
+                        valueColor={dotColor}
+                      />
+                      <ContainerDetailRow
+                        label={t('translation|Ready')}
+                        value={cs.ready ? t('translation|Yes') : t('translation|No')}
+                        valueColor={
+                          cs.ready ? theme.palette.success.main : theme.palette.warning.main
+                        }
+                      />
+                      {reason && (
+                        <ContainerDetailRow label={t('translation|Reason')} value={reason} />
+                      )}
+                      {cs.restartCount > 0 && (
+                        <ContainerDetailRow
+                          label={t('translation|Restarts')}
+                          value={String(cs.restartCount)}
+                        />
+                      )}
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          </>
+        )}
+      </Popover>
+    </>
+  );
+}
+
+function ContainerDetailRow({
+  label,
+  value,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  valueColor?: string;
+}) {
+  return (
+    <Box
+      component="li"
+      sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, fontSize: '0.8125rem' }}
+    >
+      <Box component="span" sx={{ color: 'text.secondary', mr: 0.25 }}>
+        •
+      </Box>
+      <Typography
+        component="span"
+        variant="body2"
+        sx={{ color: 'text.secondary', fontWeight: 600, minWidth: 62 }}
+      >
+        {label}:
+      </Typography>
+      <Typography
+        component="span"
+        variant="body2"
+        sx={{ color: valueColor || 'text.primary', wordBreak: 'break-word', flex: 1 }}
+      >
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
 export interface PodListProps {
   pods: Pod[] | null;
   metrics: PodMetrics[] | null;
@@ -288,14 +729,10 @@ export function PodListRenderer(props: PodListProps) {
           gridTemplate: 'min-content',
           filterVariant: 'multi-select',
           label: t('translation|Status'),
-          // include ready condition status so the cell re-renders when icon state changes
-          getValue: pod => {
-            const status = pod.getDetailedStatus();
-            const readyCondition = (pod.status?.conditions || []).find(c => c.type === 'Ready');
-            const phase = pod.status?.phase || '';
-            return `${phase}:${status.reason}:${readyCondition?.status ?? ''}`;
-          },
-          render: pod => makePodStatusLabel(pod, true, t),
+          // Human-readable label (e.g. "Not Ready") so the filter dropdown and
+          // sort key match what the pill shows, not an internal joined string.
+          getValue: pod => getPodStatusDisplay(pod, t).label,
+          render: pod => <PodStatusChip pod={pod} t={t} />,
         },
         ...(metrics?.length
           ? [

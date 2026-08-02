@@ -17,6 +17,7 @@
 import { Icon } from '@iconify/react';
 import {
   Box,
+  IconButton,
   List,
   ListItem,
   ListItemButton,
@@ -150,10 +151,12 @@ function pvcSummary(items: KubeObject[]): { total: number; bound: number } {
 function CategoryPopoverContent({
   category,
   items,
+  onClose,
 }: {
   category: ResourceCategory;
   items: KubeObject[];
   health: Record<KubeObjectStatus, number>;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   const hasWorkloads = items.some(it => WORKLOAD_KINDS.has(it.kind));
@@ -170,8 +173,8 @@ function CategoryPopoverContent({
 
   if (hasWorkloads && appHealth) {
     return (
-      <Box sx={{ p: 2, minWidth: 260, maxWidth: 380, maxHeight: 400, overflowY: 'auto' }}>
-        <HealthBreakdown health={appHealth} workloadObjects={workloadObjects} />
+      <Box sx={{ p: 2, minWidth: 300, maxWidth: 560, maxHeight: 400, overflowY: 'auto' }}>
+        <HealthBreakdown health={appHealth} workloadObjects={workloadObjects} onClose={onClose} />
       </Box>
     );
   }
@@ -183,10 +186,22 @@ function CategoryPopoverContent({
     const problems = getPvcProblems(items);
 
     return (
-      <Box sx={{ p: 2, minWidth: 260, maxWidth: 380, maxHeight: 400, overflowY: 'auto' }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-          {category.label} - {pvcBound}/{pvcTotal} PVCs bound
-        </Typography>
+      <Box sx={{ p: 2, minWidth: 300, maxWidth: 560, maxHeight: 400, overflowY: 'auto' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, flexGrow: 1 }}>
+            {category.label} - {pvcBound}/{pvcTotal} PVCs bound
+          </Typography>
+          {onClose && (
+            <IconButton
+              size="small"
+              onClick={onClose}
+              aria-label={t('translation|Close')}
+              sx={{ p: 0.25 }}
+            >
+              <Icon icon="mdi:close" width={16} />
+            </IconButton>
+          )}
+        </Box>
         <Box sx={{ borderTop: '1px solid', borderColor: 'divider', pt: 1 }}>
           {problems.length > 0 ? (
             problems.map(({ item, phase, size }) => (
@@ -238,10 +253,22 @@ function CategoryPopoverContent({
   const explanation = CATEGORY_EXPLANATIONS[category.label] ?? '';
 
   return (
-    <Box sx={{ p: 2, minWidth: 240, maxWidth: 340 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-        {category.label}
-      </Typography>
+    <Box sx={{ p: 2, minWidth: 260, maxWidth: 420 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, flexGrow: 1 }}>
+          {category.label}
+        </Typography>
+        {onClose && (
+          <IconButton
+            size="small"
+            onClick={onClose}
+            aria-label={t('translation|Close')}
+            sx={{ p: 0.25 }}
+          >
+            <Icon icon="mdi:close" width={16} />
+          </IconButton>
+        )}
+      </Box>
       {items.length > 0 ? (
         <Box>
           {Object.entries(kindCounts(items)).map(([kind, count]) => (
@@ -342,8 +369,23 @@ function CategoryRow({
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
         disableRestoreFocus
+        slotProps={{
+          paper: {
+            sx: {
+              border: '1px solid',
+              borderColor: theme => (theme.palette.mode === 'dark' ? 'grey.700' : 'grey.500'),
+              borderRadius: 1,
+              boxShadow: 4,
+            },
+          },
+        }}
       >
-        <CategoryPopoverContent category={category} items={items} health={health} />
+        <CategoryPopoverContent
+          category={category}
+          items={items}
+          health={health}
+          onClose={() => setAnchorEl(null)}
+        />
       </Popover>
     </ListItem>
   );

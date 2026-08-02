@@ -30,7 +30,7 @@ import {
   MRT_SortingState,
   MRT_VisibilityState,
 } from 'material-react-table';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { generatePath, useHistory } from 'react-router-dom';
 import { getClusterAppearanceFromMeta } from '../../../helpers/clusterAppearance';
@@ -39,6 +39,7 @@ import { setRecentCluster } from '../../../helpers/recentClusters';
 import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSettings';
 import { formatClusterPathParam } from '../../../lib/cluster';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
+import { clusterRequest } from '../../../lib/k8s/api/v1/clusterRequests';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster, KubeMetrics, StringDict } from '../../../lib/k8s/cluster';
 import { KubeObject } from '../../../lib/k8s/KubeObject';
@@ -55,13 +56,11 @@ import Table from '../../common/Table';
 import { LightTooltip } from '../../common/Tooltip';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterBadge from '../../Sidebar/ClusterBadge';
-import ClusterContextMenu from './ClusterContextMenu';
 import {
   ClusterInventoryCondition,
   getClusterStatusAccessor,
   getClusterStatusInfo,
   getConditionTooltip,
-  isClusterInventoryCluster,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 import { canSelectCluster } from './clusterStatus';
@@ -312,7 +311,6 @@ function StatusPopoverTrigger({
  * pod/node/metrics fetches are made because the API cannot answer.
  */
 function ClusterStatusErrorDetails({
-  version,
   error,
   condition,
   statusText,
@@ -371,29 +369,11 @@ function ClusterStatusErrorDetails({
     apiServerLabel = t('translation|Unreachable — network error');
   }
 
-  const versionLabel = version?.gitVersion || '—';
-
-  // Condition details from Cluster Inventory (reason / message / last transition).
+  // Condition details from Cluster Inventory (reason / last transition).
   const conditionReason = condition?.reason || null;
-  const conditionMessage = condition?.message || null;
   const conditionTime = condition?.lastTransitionTime
     ? new Date(condition.lastTransitionTime).toLocaleString()
     : null;
-
-  // Only show a Message row when it adds something beyond the API-server line.
-  // If the HTTP code already carries the text (e.g. "Bad Gateway"), skip the
-  // duplicate. Prefer Cluster Inventory condition.message when present since it
-  // usually explains the failure at the cluster level.
-  const httpCodeDesc =
-    error && typeof error.status === 'number' && error.status > 0 ? httpCodeText(error.status) : '';
-  const rawMessage = conditionMessage || error?.message || '';
-  const normalize = (s: string) => s.trim().toLowerCase();
-  const messageValue =
-    rawMessage &&
-    normalize(rawMessage) !== normalize(httpCodeDesc) &&
-    normalize(rawMessage) !== normalize(apiServerLabel)
-      ? rawMessage
-      : null;
 
   function Row({
     label,
@@ -456,9 +436,7 @@ function ClusterStatusErrorDetails({
       <Divider sx={{ mb: 1 }} />
       <Stack spacing={0.75}>
         <Row label={t('translation|API server')} value={apiServerLabel} />
-        <Row label={t('translation|Kubernetes version')} value={versionLabel} />
         <Row label={t('translation|Reason')} value={conditionReason} multiline />
-        <Row label={t('translation|Message')} value={messageValue} multiline />
         <Row label={t('translation|Last transition')} value={conditionTime} />
       </Stack>
     </Box>
@@ -508,7 +486,6 @@ function ClusterStatusDetails(props: {
  */
 function ClusterStatusDetailsAggregate({
   stats,
-  version,
   error,
   statusText,
   statusIcon,
@@ -533,8 +510,6 @@ function ClusterStatusDetailsAggregate({
       : error?.status
       ? t('translation|Unreachable (HTTP {{ code }})', { code: error.status })
       : t('translation|Unreachable');
-
-  const versionLabel = version?.gitVersion ?? '—';
 
   const synced = stats?.synced === true;
   const noMetrics = synced && stats?.metricsAvailable === false;
@@ -639,7 +614,6 @@ function ClusterStatusDetailsAggregate({
       <Divider sx={{ mb: 1 }} />
       <Stack spacing={0.75}>
         <Row label={t('translation|API server')} value={apiServerLabel} />
-        <Row label={t('translation|Kubernetes version')} value={versionLabel} />
         <Row label={t('glossary|CPU')} value={cpuValue} />
         <Row label={t('glossary|Memory')} value={memoryValue} />
         <Row label={t('glossary|Nodes')} value={nodesLabel} />
@@ -656,7 +630,6 @@ function ClusterStatusDetailsAggregate({
  */
 function ClusterStatusDetailsLegacy({
   cluster,
-  version,
   error,
   statusText,
   statusIcon,
@@ -698,8 +671,6 @@ function ClusterStatusDetailsLegacy({
       : error?.status
       ? t('translation|Unreachable (HTTP {{ code }})', { code: error.status })
       : t('translation|Unreachable');
-
-  const versionLabel = version?.gitVersion ?? '—';
 
   // Copied from `PodsStatusCircleChart` in
   // `components/cluster/Charts/StatusCharts.tsx` — a pod counts as "ready" if
@@ -832,7 +803,6 @@ function ClusterStatusDetailsLegacy({
       <Divider sx={{ mb: 1 }} />
       <Stack spacing={0.75}>
         <Row label={t('translation|API server')} value={apiServerLabel} />
-        <Row label={t('translation|Kubernetes version')} value={versionLabel} />
         <Row label={t('glossary|CPU')} value={cpuValue} />
         <Row label={t('glossary|Memory')} value={memoryValue} />
         <Row label={t('glossary|Nodes')} value={nodesLabel} />
@@ -867,6 +837,91 @@ export interface ClusterTableProps {
  */
 const CLUSTER_TABLE_ID = 'home-clusters';
 
+/**
+ * Renders a table cell value, falling back to a small, muted "n/a" when the
+ * value is empty, whitespace, or the historical "⋯" loading placeholder.
+ * Scoped to this page only — blank/⋯ cells were confusing for users.
+ */
+function renderNaFallback(value: string | null | undefined) {
+  const trimmed = (value ?? '').trim();
+  if (trimmed === '' || trimmed === '⋯') {
+    return (
+      <Typography variant="caption" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
+        n/a
+      </Typography>
+    );
+  }
+  return <Typography variant="body2">{trimmed}</Typography>;
+}
+
+/**
+ * Polls the OpenShift ClusterVersion custom resource for each connected cluster
+ * and returns a map of cluster name -> OCP version string (e.g. "4.16.43").
+ *
+ * Reads `.items[0].status.desired.version` — the same field returned by
+ * `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
+ *
+ * Non-OpenShift clusters (endpoint returns 404) are simply omitted from the
+ * map, so their cell renders empty. No values are ever fabricated.
+ */
+function useClustersOcpVersion(connectedClusterNames: string[]): {
+  [clusterName: string]: string;
+} {
+  const [ocpVersions, setOcpVersions] = useState<{ [clusterName: string]: string }>({});
+  const cancelledRef = useRef(false);
+
+  // Stable key so the effect only re-runs when the connected set actually changes.
+  const namesKey = useMemo(
+    () => [...connectedClusterNames].sort().join(','),
+    [connectedClusterNames]
+  );
+
+  useEffect(() => {
+    cancelledRef.current = false;
+
+    const fetchAll = () => {
+      connectedClusterNames.forEach(name => {
+        clusterRequest('/apis/config.openshift.io/v1/clusterversions', { cluster: name })
+          .then((res: any) => {
+            const version: string | undefined = res?.items?.[0]?.status?.desired?.version;
+            if (cancelledRef.current) return;
+            setOcpVersions(prev => {
+              if (!version) {
+                if (!(name in prev)) return prev;
+                const next = { ...prev };
+                delete next[name];
+                return next;
+              }
+              if (prev[name] === version) return prev;
+              return { ...prev, [name]: version };
+            });
+          })
+          .catch(() => {
+            // Non-OpenShift clusters or transient errors: leave the entry
+            // absent so the UI shows nothing rather than a placeholder.
+            if (cancelledRef.current) return;
+            setOcpVersions(prev => {
+              if (!(name in prev)) return prev;
+              const next = { ...prev };
+              delete next[name];
+              return next;
+            });
+          });
+      });
+    };
+
+    fetchAll();
+    const interval = setInterval(fetchAll, 60000);
+    return () => {
+      cancelledRef.current = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namesKey]);
+
+  return ocpVersions;
+}
+
 export default function ClusterTable({
   customNameClusters,
   versions,
@@ -881,6 +936,18 @@ export default function ClusterTable({
 
   const isClusterConnected = (clusterName: string) =>
     connectedClusterNames ? connectedClusterNames.has(clusterName) : true;
+
+  // Poll the OpenShift ClusterVersion CR for connected clusters so the
+  // "OCP Version" column reflects live cluster state (never fabricated).
+  const connectedNamesList = useMemo(
+    () =>
+      Object.values(customNameClusters)
+        .map(c => c.name)
+        .filter(isClusterConnected),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [customNameClusters, connectedClusterNames]
+  );
+  const ocpVersions = useClustersOcpVersion(connectedNamesList);
 
   const [columnVisibility, setColumnVisibility] = useState<MRT_VisibilityState>(() => {
     const visibility: Record<string, boolean> = {};
@@ -930,25 +997,8 @@ export default function ClusterTable({
     [setColumnFilters]
   );
 
-  /**
-   * Gets the origin of a cluster.
-   *
-   * @param cluster
-   * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
-   */
-  function getOrigin(cluster: Cluster): string {
-    if (cluster?.meta_data?.source === 'kubeconfig') {
-      const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
-      return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
-    } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
-      return t('translation|Plugin');
-    } else if (cluster?.meta_data?.source === 'incluster') {
-      return t('translation|In-cluster');
-    } else if (isClusterInventoryCluster(cluster)) {
-      return t('translation|Cluster Inventory');
-    }
-    return t('translation|Unknown');
-  }
+  // getOrigin() intentionally removed with the Origin column (see below).
+  // Reinstate together with the commented Origin column if that requirement returns.
 
   const viewClusters = t('View Clusters');
 
@@ -1029,23 +1079,35 @@ export default function ClusterTable({
             );
           },
         },
-        {
-          id: 'origin',
-          header: t('Origin'),
-          accessorFn: cluster => getOrigin(cluster),
-          Cell: ({ row: { original } }) => (
-            <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
-          ),
-        },
+        // Origin column intentionally hidden per product requirement.
+        // Kept commented out for easy reinstatement if the info is ever
+        // needed again — do not delete without confirming the requirement
+        // has changed.
+        // {
+        //   id: 'origin',
+        //   header: t('Origin'),
+        //   accessorFn: cluster => getOrigin(cluster),
+        //   Cell: ({ row: { original } }) => (
+        //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
+        //   ),
+        // },
         {
           id: 'status',
           header: t('Status'),
-          accessorFn: cluster =>
-            // When the cluster is not yet connected (no polling), the cell shows
-            // "Not connected". Match the accessor so sorting/filtering is consistent.
-            !isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined
-              ? t('translation|Not connected')
-              : getClusterStatusAccessor(cluster, errors[cluster?.name], t),
+          // Mirror the visible cell text so the filter dropdown and sort order
+          // read as "Not connected" / "Connecting…" / "Active" / "Unavailable"
+          // instead of the cryptic "⋯".
+          accessorFn: cluster => {
+            const name = cluster?.name;
+            if (!isClusterConnected(name) && errors[name] === undefined) {
+              return t('translation|Not connected');
+            }
+            if (isClusterConnected(name) && errors[name] === undefined) {
+              return t('translation|Connecting…');
+            }
+            return getClusterStatusAccessor(cluster, errors[name], t);
+          },
+          filterVariant: 'multi-select',
           Cell: ({ row: { original } }) => (
             <ClusterStatus
               error={errors[original.name]}
@@ -1059,31 +1121,47 @@ export default function ClusterTable({
         {
           id: 'warnings',
           header: t('Warnings'),
-          // Warnings track connection status: list them for connected clusters
-          // (⋯ while loading), blank for clusters that aren't connected.
+          // Warnings track connection status: list them for connected clusters,
+          // "n/a" when the cluster isn't connected or the count hasn't loaded
+          // yet — blank/⋯ cells were confusing for users.
           accessorFn: cluster =>
-            isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '⋯' : '',
+            isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '' : '',
+          enableColumnFilter: false,
+          Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
+        },
+        {
+          id: 'ocpVersion',
+          header: t('OCP Version'),
+          // OCP version comes from the live OpenShift ClusterVersion CR — same
+          // value as `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
+          // "n/a" for non-OpenShift clusters or while the fetch is pending.
+          accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] ?? '' : ''),
+          Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
         },
         {
           id: 'version',
           header: t('glossary|Kubernetes Version'),
           accessorFn: ({ name }) =>
-            isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
+            isClusterConnected(name) ? versions[name]?.gitVersion ?? '' : '',
+          Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
         },
-        {
-          id: 'actions',
-          header: t('Actions'),
-          gridTemplate: 'min-content',
-          muiTableBodyCellProps: {
-            align: 'right',
-          },
-          accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
-          Cell: ({ row: { original: cluster } }) => {
-            return <ClusterContextMenu cluster={cluster} />;
-          },
-          enableSorting: false,
-          enableColumnFilter: false,
-        },
+        // Actions column intentionally hidden per product requirement.
+        // Kept commented out for easy reinstatement — do not delete without
+        // confirming the requirement has changed.
+        // {
+        //   id: 'actions',
+        //   header: t('Actions'),
+        //   gridTemplate: 'min-content',
+        //   muiTableBodyCellProps: {
+        //     align: 'right',
+        //   },
+        //   accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
+        //   Cell: ({ row: { original: cluster } }) => {
+        //     return <ClusterContextMenu cluster={cluster} />;
+        //   },
+        //   enableSorting: false,
+        //   enableColumnFilter: false,
+        // },
       ]}
       data={clustersList}
       enableRowSelection={

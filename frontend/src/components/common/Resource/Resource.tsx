@@ -65,6 +65,11 @@ import { JobsListRenderer } from '../../job/List';
 import { PodListProps, PodListRenderer } from '../../pod/List';
 import { LightTooltip, Loader, ObjectEventList } from '..';
 import BackLink from '../BackLink';
+import {
+  getConditionStatusIcon,
+  getConditionStatusKind,
+  getFriendlyConditionText,
+} from '../conditionMeta';
 import Empty from '../EmptyContent';
 import ErrorBoundary from '../ErrorBoundary';
 import InnerTable from '../InnerTable';
@@ -609,13 +614,34 @@ export function ConditionsTable(props: ConditionsTableProps) {
   const { resource, showLastUpdate = true } = props;
   const { t } = useTranslation(['glossary', 'translation']);
 
-  function makeStatusLabel(condition: KubeCondition) {
-    let status: StatusLabelProps['status'] = '';
-    if (condition.type === 'Available') {
-      status = condition.status === 'True' ? 'success' : 'error';
-    }
+  function renderStatusCell(condition: KubeCondition) {
+    const statusText = condition.status ?? '';
+    const kind = getConditionStatusKind(condition.type, statusText);
+    const iconName = getConditionStatusIcon(kind);
+    const friendly = getFriendlyConditionText(condition.type, statusText, condition.reason);
+    const rawReason = condition.reason ? ` (reason: ${condition.reason})` : '';
+    const tooltip = friendly ? `${friendly}${rawReason}` : condition.message || condition.reason;
 
-    return <StatusLabel status={status}>{condition.type}</StatusLabel>;
+    return (
+      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+        <StatusLabel status={kind}>
+          <Icon icon={iconName} width="1rem" height="1rem" style={{ alignSelf: 'center' }} />
+          {statusText || '-'}
+        </StatusLabel>
+        {tooltip ? (
+          <LightTooltip title={tooltip}>
+            <Box
+              component="span"
+              tabIndex={0}
+              aria-label={typeof tooltip === 'string' ? tooltip : undefined}
+              sx={{ display: 'inline-flex', color: 'text.secondary', cursor: 'help' }}
+            >
+              <Icon icon="mdi:information-outline" width="1rem" height="1rem" />
+            </Box>
+          </LightTooltip>
+        ) : null}
+      </Box>
+    );
   }
 
   function getColumns() {
@@ -626,11 +652,11 @@ export function ConditionsTable(props: ConditionsTableProps) {
     }[] = [
       {
         label: t('Condition'),
-        getter: makeStatusLabel,
+        getter: condition => <StatusLabel status="">{condition.type}</StatusLabel>,
       },
       {
         label: t('translation|Status'),
-        getter: condition => condition.status,
+        getter: renderStatusCell,
       },
       {
         label: t('Last Transition'),

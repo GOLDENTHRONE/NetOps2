@@ -258,7 +258,7 @@ export default function ListItemLink(props: ListItemLinkProps) {
             primary={primary}
             secondary={subtitle}
             secondaryTypographyProps={
-              typeof subtitle === 'string' ? { sx: { whiteSpace: 'pre' } } : undefined
+              typeof subtitle === 'string' ? { sx: { whiteSpace: 'pre' } } : { component: 'div' }
             }
           />
         )}

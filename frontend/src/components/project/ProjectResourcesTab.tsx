@@ -18,10 +18,11 @@ import { Icon } from '@iconify/react';
 import {
   alpha,
   Box,
+  Divider,
+  IconButton,
   Link as MuiLink,
   Popover,
   Theme,
-  Tooltip,
   Typography,
   useTheme,
 } from '@mui/material';
@@ -255,7 +256,7 @@ function ResourceHealthChip({
 
   return (
     <>
-      <Tooltip title={t('Click to see')}>
+      <LightTooltip title={anchorEl ? '' : t('Click to see')}>
         <Box
           component="button"
           type="button"
@@ -285,14 +286,26 @@ function ResourceHealthChip({
           <Icon icon={p.icon} width={16} height={16} />
           {health.label}
         </Box>
-      </Tooltip>
+      </LightTooltip>
       <Popover
         open={!!anchorEl}
         anchorEl={anchorEl}
         onClose={() => setAnchorEl(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { p: 1.5, maxWidth: 360, minWidth: 240 } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              p: 1.5,
+              maxWidth: 560,
+              minWidth: 300,
+              border: '1px solid',
+              borderColor: theme => (theme.palette.mode === 'dark' ? 'grey.700' : 'grey.500'),
+              borderRadius: 1,
+              boxShadow: 4,
+            },
+          },
+        }}
       >
         {/* Close on link click: in drawer mode the link opens a side panel
             without a route change, and a still-open modal popover would keep
@@ -306,33 +319,71 @@ function ResourceHealthChip({
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-            <Icon icon={p.icon} width={18} height={18} color={color} />
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, color }}>
+            <Icon icon={p.icon} width={20} height={20} color={color} />
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, color, flexGrow: 1 }}>
               {health.label}
             </Typography>
+            <IconButton
+              size="small"
+              onClick={() => setAnchorEl(null)}
+              aria-label={t('Close')}
+              sx={{ p: 0.25 }}
+            >
+              <Icon icon="mdi:close" width={16} />
+            </IconButton>
           </Box>
-          {health.reason && (
-            <Typography variant="body2" color="text.secondary">
-              {health.reason}
-            </Typography>
-          )}
-          <Typography variant="caption" component="div" sx={{ mt: 1 }}>
-            {directObjectLinks ? (
-              <MuiLink component={RouterLink} to={resource.getDetailsLink()}>
-                {t('Open {{ kind }} {{ name }}', {
-                  kind: resource.kind,
-                  name: resource.metadata?.name,
-                })}
-              </MuiLink>
-            ) : (
-              <Link kubeObject={resource}>
-                {t('Open {{ kind }} {{ name }}', {
-                  kind: resource.kind,
-                  name: resource.metadata?.name,
-                })}
-              </Link>
-            )}
+          <Typography variant="body2" color="text.secondary">
+            {health.state === 'ready'
+              ? t('This {{ kind }} is healthy: all replicas report ready.', { kind: resource.kind })
+              : health.state === 'progressing'
+              ? t('This {{ kind }} is still rolling out.', { kind: resource.kind })
+              : health.state === 'degraded'
+              ? t('This {{ kind }} is partially available.', { kind: resource.kind })
+              : health.state === 'scaledZero'
+              ? t('This {{ kind }} is intentionally scaled to zero.', { kind: resource.kind })
+              : t('This {{ kind }} is not ready — see the details below.', { kind: resource.kind })}
           </Typography>
+          <Divider sx={{ my: 1 }} />
+          {health.state === 'ready' ? (
+            <Typography variant="caption" sx={{ fontWeight: 700 }}>
+              {health.reason ?? t('Ready')}
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}>
+              <Box
+                component="span"
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  backgroundColor: color,
+                  flexShrink: 0,
+                }}
+              />
+              <Typography variant="caption" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                {resource.kind}
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{ flex: 1, minWidth: 0 }}
+                noWrap
+                title={resource.metadata?.name}
+              >
+                {directObjectLinks ? (
+                  <MuiLink component={RouterLink} to={resource.getDetailsLink()}>
+                    {resource.metadata?.name}
+                  </MuiLink>
+                ) : (
+                  <Link kubeObject={resource}>{resource.metadata?.name}</Link>
+                )}
+              </Typography>
+              {health.reason && (
+                <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {health.reason}
+                </Typography>
+              )}
+            </Box>
+          )}
         </Box>
       </Popover>
     </>
