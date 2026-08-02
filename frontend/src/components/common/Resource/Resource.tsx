@@ -687,7 +687,7 @@ function ConditionStatusPopover({ condition }: { condition: KubeCondition }) {
 
   return (
     <>
-      <LightTooltip title={open ? '' : t('translation|Click to see details')}>
+      <LightTooltip title={open ? '' : t('translation|Click to see')}>
         <Box
           component="button"
           type="button"
@@ -695,7 +695,7 @@ function ConditionStatusPopover({ condition }: { condition: KubeCondition }) {
             hasDetails ? setAnchorEl(e.currentTarget) : undefined
           }
           disabled={!hasDetails}
-          aria-label={hasDetails ? t('translation|Click to see details') : statusText || '-'}
+          aria-label={hasDetails ? t('translation|Click to see') : statusText || '-'}
           aria-haspopup={hasDetails ? 'dialog' : undefined}
           aria-expanded={hasDetails ? open : undefined}
           sx={{
