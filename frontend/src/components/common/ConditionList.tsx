@@ -121,7 +121,7 @@ export function ConditionList({ conditions, showLastUpdate = false }: ConditionL
       label: t('translation|Reason'),
       getter: condition =>
         condition.reason ? (
-          <HoverInfoLabel label={condition.reason} hoverInfo={condition.message} />
+          <HoverInfoLabel label={condition.reason} hoverInfo={condition.message} noWrap={false} />
         ) : (
           '-'
         ),

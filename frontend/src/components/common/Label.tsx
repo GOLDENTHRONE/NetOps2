@@ -209,19 +209,38 @@ export interface HoverInfoLabelProps {
   icon?: IconProps['icon'];
   iconProps?: Omit<IconProps, 'icon'>;
   iconPosition?: 'start' | 'end';
+  /** When false, allow the label text to wrap and long tokens to break. Default true. */
+  noWrap?: boolean;
 }
 
 export function HoverInfoLabel(props: HoverInfoLabelProps) {
-  const { label, hoverInfo, icon = null, iconProps = {}, labelProps, iconPosition = 'end' } = props;
+  const {
+    label,
+    hoverInfo,
+    icon = null,
+    iconProps = {},
+    labelProps,
+    iconPosition = 'end',
+    noWrap = true,
+  } = props;
   const labelFirst = iconPosition === 'end';
 
   return (
     <LightTooltip title={hoverInfo || ''}>
       <Typography
-        sx={{
-          display: 'inline-flex',
-          whiteSpace: 'nowrap',
-        }}
+        sx={
+          noWrap
+            ? {
+                display: 'inline-flex',
+                whiteSpace: 'nowrap',
+              }
+            : {
+                display: 'inline',
+                whiteSpace: 'normal',
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
+              }
+        }
         {...labelProps}
       >
         {labelFirst && label}

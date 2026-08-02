@@ -646,7 +646,7 @@ export function ConditionsTable(props: ConditionsTableProps) {
         label: t('translation|Reason'),
         getter: condition =>
           condition.reason ? (
-            <HoverInfoLabel label={condition.reason} hoverInfo={condition.message} />
+            <HoverInfoLabel label={condition.reason} hoverInfo={condition.message} noWrap={false} />
           ) : (
             '-'
           ),
