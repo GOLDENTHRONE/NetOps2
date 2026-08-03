@@ -245,7 +245,7 @@ function ResourceHealthChip({
     return (
       <LightTooltip title={tooltip}>
         <Typography component="span" variant="caption" color="text.secondary">
-          {t('No status')}
+          {t('n/a')}
         </Typography>
       </LightTooltip>
     );
@@ -463,11 +463,6 @@ export function getResourceDetails(resource: KubeObject): string {
     case 'Role':
     case 'ClusterRole':
       return `${(json.rules ?? []).length} rule(s)`;
-    case 'RoleBinding':
-    case 'ClusterRoleBinding':
-      return `${(json.subjects ?? []).length} subject(s) → ${json.roleRef?.kind ?? ''} ${
-        json.roleRef?.name ?? ''
-      }`;
     case 'ServiceAccount':
       return `${(json.secrets ?? []).length} secret(s)`;
     case 'ResourceQuota':
@@ -561,7 +556,7 @@ export function ProjectResourcesTab({
         // in the cell; severity ordering comes from the sortingFn below.
         accessorFn: resource => {
           const health = getResourceRowHealth(resource);
-          return health.state === 'none' ? t('No status') : health.label;
+          return health.state === 'none' ? t('n/a') : health.label;
         },
         filterVariant: 'multi-select',
         sortingFn: (rowA, rowB) =>
@@ -796,14 +791,20 @@ export function ProjectResourcesTab({
                 </Typography>
               ) : (
                 <Table
+                  // Reset column visibility defaults when category (and thus
+                  // showHealthColumn) changes; user toggles persist within a
+                  // category.
+                  key={selectedCategory.label}
                   columns={columns}
                   data={selectedResources}
                   // Worst health first by default, so a broken workload is
                   // on page one instead of behind a search or a next-arrow.
+                  // columnVisibility is initialState (not state) so the
+                  // column-visibility toggle menu actually works — controlled
+                  // state without an onChange handler was overriding every
+                  // user toggle.
                   initialState={{
                     sorting: [{ id: 'health', desc: false }],
-                  }}
-                  state={{
                     columnVisibility: {
                       cluster: !!showClusterColumn,
                       health: showHealthColumn,

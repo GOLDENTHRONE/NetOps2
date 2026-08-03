@@ -845,8 +845,10 @@ const CLUSTER_TABLE_ID = 'home-clusters';
 function renderNaFallback(value: string | null | undefined) {
   const trimmed = (value ?? '').trim();
   if (trimmed === '' || trimmed === '⋯') {
+    // Match the muted `n/a` style used across the app (ApplicationList,
+    // ProjectResourcesTab): small caption in text.secondary, no italic.
     return (
-      <Typography variant="caption" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
+      <Typography component="span" variant="caption" color="text.secondary">
         n/a
       </Typography>
     );
