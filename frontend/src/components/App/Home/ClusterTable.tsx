@@ -29,7 +29,15 @@ import {
   MRT_SortingState,
   MRT_VisibilityState,
 } from 'material-react-table';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { generatePath, useHistory } from 'react-router-dom';
 import { getClusterAppearanceFromMeta } from '../../../helpers/clusterAppearance';
@@ -60,6 +68,15 @@ import {
 import { canSelectCluster } from './clusterStatus';
 import { CONNECT_ON_CLUSTER_LINK, MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
+
+/**
+ * Context providing a per-cluster map of epoch-ms of the most recent /version
+ * response (success or error). Consumed by `ClusterStatusDetails` directly to
+ * avoid stale closures from TanStack Table cell rendering.
+ */
+export const LastPollTsContext = createContext<Record<string, number>>({});
+
+const OcpVersionsContext = createContext<OcpVersionMap>({});
 
 /**
  * ClusterStatus component displays the status of a cluster.
@@ -169,6 +186,7 @@ function ClusterStatus({
         statusText={text}
         statusIcon={variant.icon}
         statusColor={color}
+        statusLoading={error === undefined}
       >
         {statusContent}
       </StatusPopoverTrigger>
@@ -201,6 +219,7 @@ function StatusPopoverTrigger({
   statusText,
   statusIcon,
   statusColor,
+  statusLoading,
   children,
 }: {
   kind: 'active' | 'error';
@@ -211,6 +230,7 @@ function StatusPopoverTrigger({
   statusText: string;
   statusIcon: string;
   statusColor: string;
+  statusLoading?: boolean;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation(['translation']);
@@ -279,6 +299,7 @@ function StatusPopoverTrigger({
               statusText={statusText}
               statusIcon={statusIcon}
               statusColor={statusColor}
+              statusLoading={statusLoading}
               onClose={handleClose}
             />
           ) : (
@@ -445,11 +466,13 @@ function ClusterStatusErrorDetails({
  * `Pod.useList` / `Node.useList` / `Node.useMetrics` path, same as headlamp).
  */
 function ClusterStatusDetails({
+  cluster,
   version,
   error,
   statusText,
   statusIcon,
   statusColor,
+  statusLoading,
   onClose,
 }: {
   cluster: Cluster;
@@ -458,10 +481,14 @@ function ClusterStatusDetails({
   statusText: string;
   statusIcon: string;
   statusColor: string;
+  statusLoading?: boolean;
   onClose?: () => void;
 }) {
   const { t } = useTranslation(['translation', 'glossary']);
   const theme = useTheme();
+  // Per-cluster stamp: reflects when THIS cluster last responded, not some global tick.
+  const lastPollByCluster = useContext(LastPollTsContext);
+  const lastStatusUpdate = lastPollByCluster[cluster.name];
 
   const apiServerLabel =
     error === null || error === undefined
@@ -471,6 +498,25 @@ function ClusterStatusDetails({
       : t('translation|Unreachable');
 
   const versionLabel = version?.gitVersion ?? null;
+
+  // Live "Last updated Xs ago" — ticks every 1s while popover is open.
+  const [agoText, setAgoText] = useState<string>('');
+  useEffect(() => {
+    if (statusLoading || !lastStatusUpdate) {
+      setAgoText('');
+      return;
+    }
+    function compute() {
+      const secs = Math.max(0, Math.round((Date.now() - lastStatusUpdate!) / 1000));
+      if (secs < 1) return t('translation|Just now');
+      if (secs < 60) return t('translation|{{ count }}s ago', { count: secs });
+      const mins = Math.floor(secs / 60);
+      return t('translation|{{ count }}m ago', { count: mins });
+    }
+    setAgoText(compute());
+    const id = setInterval(() => setAgoText(compute()), 1000);
+    return () => clearInterval(id);
+  }, [lastStatusUpdate, statusLoading, t]);
 
   function Row({ label, value }: { label: string; value: string | null }) {
     return (
@@ -521,6 +567,10 @@ function ClusterStatusDetails({
       <Stack spacing={0.75}>
         <Row label={t('translation|API server')} value={apiServerLabel} />
         <Row label={t('glossary|Version')} value={versionLabel} />
+        <Row
+          label={t('translation|Last updated')}
+          value={statusLoading ? t('translation|Checking…') : agoText}
+        />
       </Stack>
     </Box>
   );
@@ -573,23 +623,132 @@ function renderNaFallback(value: string | null | undefined) {
   return <Typography variant="body2">{trimmed}</Typography>;
 }
 
+function OcpVersionCell({ name, isConnected }: { name: string; isConnected: boolean }) {
+  const { t } = useTranslation(['translation']);
+  // Read from Context so TanStack Table cell memoization can't serve a stale closure.
+  const ocpVersions = useContext(OcpVersionsContext);
+  if (!isConnected) return renderNaFallback('');
+  const entry = ocpVersions[name];
+  if (!entry || entry.state === 'loading') {
+    return (
+      <Typography
+        component="span"
+        variant="body2"
+        sx={{ color: '#9CA3AF', fontStyle: 'italic', fontWeight: 400 }}
+      >
+        {t('translation|Loading…')}
+      </Typography>
+    );
+  }
+  if (entry.state === 'ok' && entry.version) {
+    return <Typography variant="body2">{entry.version}</Typography>;
+  }
+  const tooltip = entry.errorText ?? '';
+  const body = (
+    <Typography
+      component="span"
+      variant="body2"
+      sx={{ color: '#9CA3AF', fontStyle: 'italic', fontWeight: 400 }}
+    >
+      N/A
+    </Typography>
+  );
+  return tooltip ? <LightTooltip title={tooltip}>{body}</LightTooltip> : body;
+}
+
 /**
- * Polls the OpenShift ClusterVersion custom resource for each connected cluster
- * and returns a map of cluster name -> OCP version string (e.g. "4.16.43").
+ * Reads OpenShift ClusterVersion for each connected cluster and returns a map
+ * of cluster name -> {state, version, errorText}.
  *
- * Reads `.items[0].status.desired.version` — the same field returned by
+ * Fetches `.items[0].status.desired.version` from
+ * `/apis/config.openshift.io/v1/clusterversions` — same value as
  * `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
  *
- * Non-OpenShift clusters (endpoint returns 404) are simply omitted from the
- * map, so their cell renders empty. No values are ever fabricated.
+ * Design notes (do not change without reading the perf notes):
+ * - Per-cluster localStorage cache with 1h TTL — OCP version doesn't change
+ *   minute-to-minute, and repeated Home mounts must not re-hit the API.
+ * - No setInterval poll — refresh only on mount if cache is stale, or when a
+ *   new cluster joins the connected set.
+ * - 5s request timeout via clusterRequest's `timeout` param so a slow cluster
+ *   cannot hold an HTTP slot for the default 2 minutes.
+ * - Concurrency cap of 3 so many clusters cannot saturate the browser's
+ *   per-origin HTTP pool and delay `/version`/status calls.
+ * - Dispatch is deferred by 250ms so the Status column's `/version` calls
+ *   grab the first free HTTP slots.
+ * - 404 = non-OpenShift cluster, 403 = forbidden, 408 = timeout, other =
+ *   unavailable. Errors are cached too so we don't re-probe every mount.
  */
-function useClustersOcpVersion(connectedClusterNames: string[]): {
-  [clusterName: string]: string;
-} {
-  const [ocpVersions, setOcpVersions] = useState<{ [clusterName: string]: string }>({});
+type OcpVersionState = 'loading' | 'ok' | 'unavailable' | 'not-openshift';
+interface OcpVersionEntry {
+  state: OcpVersionState;
+  version: string | null;
+  errorText?: string;
+}
+type OcpVersionMap = { [clusterName: string]: OcpVersionEntry };
+
+const OCP_CACHE_KEY_PREFIX = 'ocp_version_cache.v1.';
+const OCP_CACHE_TTL_MS = 60 * 60 * 1000;
+const OCP_REQUEST_TIMEOUT_MS = 5000;
+const OCP_CONCURRENCY = 3;
+const OCP_DISPATCH_DELAY_MS = 250;
+
+interface CachedOcpEntry extends OcpVersionEntry {
+  ts: number;
+}
+
+function readOcpCache(name: string): CachedOcpEntry | null {
+  try {
+    const raw = localStorage.getItem(OCP_CACHE_KEY_PREFIX + name);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.ts !== 'number' || typeof parsed?.state !== 'string') return null;
+    // Never serve a failed entry from cache: pre-fix versions persisted 502s,
+    // and stale 'unavailable' entries would block re-fetch for the TTL window.
+    if (parsed.state === 'unavailable') {
+      try {
+        localStorage.removeItem(OCP_CACHE_KEY_PREFIX + name);
+      } catch {
+        // ignore
+      }
+      return null;
+    }
+    return parsed as CachedOcpEntry;
+  } catch {
+    return null;
+  }
+}
+
+function writeOcpCache(name: string, entry: CachedOcpEntry) {
+  try {
+    localStorage.setItem(OCP_CACHE_KEY_PREFIX + name, JSON.stringify(entry));
+  } catch {
+    // localStorage unavailable (private mode / quota): in-memory state stays.
+  }
+}
+
+function isCacheFresh(entry: CachedOcpEntry | null): boolean {
+  return !!entry && Date.now() - entry.ts < OCP_CACHE_TTL_MS;
+}
+
+function useClustersOcpVersion(connectedClusterNames: string[]): OcpVersionMap {
+  const [ocpVersions, setOcpVersions] = useState<OcpVersionMap>(() => {
+    const initial: OcpVersionMap = {};
+    for (const name of connectedClusterNames) {
+      const cached = readOcpCache(name);
+      if (isCacheFresh(cached)) {
+        initial[name] = {
+          state: cached!.state,
+          version: cached!.version,
+          errorText: cached!.errorText,
+        };
+      } else {
+        initial[name] = { state: 'loading', version: null };
+      }
+    }
+    return initial;
+  });
   const cancelledRef = useRef(false);
 
-  // Stable key so the effect only re-runs when the connected set actually changes.
   const namesKey = useMemo(
     () => [...connectedClusterNames].sort().join(','),
     [connectedClusterNames]
@@ -598,42 +757,139 @@ function useClustersOcpVersion(connectedClusterNames: string[]): {
   useEffect(() => {
     cancelledRef.current = false;
 
-    const fetchAll = () => {
-      connectedClusterNames.forEach(name => {
-        clusterRequest('/apis/config.openshift.io/v1/clusterversions', { cluster: name })
-          .then((res: any) => {
-            const version: string | undefined = res?.items?.[0]?.status?.desired?.version;
-            if (cancelledRef.current) return;
-            setOcpVersions(prev => {
-              if (!version) {
-                if (!(name in prev)) return prev;
-                const next = { ...prev };
-                delete next[name];
-                return next;
-              }
-              if (prev[name] === version) return prev;
-              return { ...prev, [name]: version };
-            });
-          })
-          .catch(() => {
-            // Non-OpenShift clusters or transient errors: leave the entry
-            // absent so the UI shows nothing rather than a placeholder.
-            if (cancelledRef.current) return;
-            setOcpVersions(prev => {
-              if (!(name in prev)) return prev;
-              const next = { ...prev };
-              delete next[name];
-              return next;
-            });
-          });
+    // Reconcile in-memory state with current connected set + cache.
+    setOcpVersions(prev => {
+      const next: OcpVersionMap = {};
+      for (const name of connectedClusterNames) {
+        const cached = readOcpCache(name);
+        if (isCacheFresh(cached)) {
+          next[name] = {
+            state: cached!.state,
+            version: cached!.version,
+            errorText: cached!.errorText,
+          };
+        } else {
+          // Keep in-memory result (incl. non-persisted 'unavailable' from 502)
+          // rather than flashing back to 'loading' on every effect re-run.
+          next[name] = prev[name] ?? { state: 'loading', version: null };
+        }
+      }
+      return next;
+    });
+
+    const toFetch = connectedClusterNames.filter(name => !isCacheFresh(readOcpCache(name)));
+    if (toFetch.length === 0) {
+      return () => {
+        cancelledRef.current = true;
+      };
+    }
+
+    const applyEntry = (name: string, entry: CachedOcpEntry) => {
+      setOcpVersions(prev => {
+        const cur = prev[name];
+        if (
+          cur &&
+          cur.state === entry.state &&
+          cur.version === entry.version &&
+          cur.errorText === entry.errorText
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [name]: { state: entry.state, version: entry.version, errorText: entry.errorText },
+        };
       });
     };
 
-    fetchAll();
-    const interval = setInterval(fetchAll, 60000);
+    const fetchOne = async (name: string) => {
+      try {
+        const res: any = await clusterRequest('/apis/config.openshift.io/v1/clusterversions', {
+          cluster: name,
+          timeout: OCP_REQUEST_TIMEOUT_MS,
+        });
+        const version: string | undefined = res?.items?.[0]?.status?.desired?.version;
+        const entry: CachedOcpEntry = version
+          ? { state: 'ok', version, ts: Date.now() }
+          : {
+              state: 'not-openshift',
+              version: null,
+              errorText: 'No ClusterVersion resource on this cluster',
+              ts: Date.now(),
+            };
+        writeOcpCache(name, entry);
+        if (cancelledRef.current) return;
+        applyEntry(name, entry);
+      } catch (err: any) {
+        const status: number | undefined = err?.status;
+        let entry: CachedOcpEntry;
+        // Only 404 (definitely not OCP) and 403 (definite perm denial) are cached.
+        // Transient failures (502/408/5xx/no-status) apply in-memory only so a
+        // reload or remount retries instead of showing N/A for the full TTL.
+        let persist = false;
+        if (status === 404) {
+          entry = {
+            state: 'not-openshift',
+            version: null,
+            errorText: 'Not an OpenShift cluster',
+            ts: Date.now(),
+          };
+          persist = true;
+        } else if (status === 403) {
+          entry = {
+            state: 'unavailable',
+            version: null,
+            errorText: 'Permission denied reading ClusterVersion',
+            ts: Date.now(),
+          };
+          persist = true;
+        } else if (status === 408) {
+          entry = {
+            state: 'unavailable',
+            version: null,
+            errorText: 'Request timed out',
+            ts: Date.now(),
+          };
+        } else if (typeof status === 'number') {
+          entry = {
+            state: 'unavailable',
+            version: null,
+            errorText: `Request failed (HTTP ${status})`,
+            ts: Date.now(),
+          };
+        } else {
+          entry = {
+            state: 'unavailable',
+            version: null,
+            errorText: 'Cluster not reachable',
+            ts: Date.now(),
+          };
+        }
+        if (persist) writeOcpCache(name, entry);
+        if (cancelledRef.current) return;
+        applyEntry(name, entry);
+      }
+    };
+
+    // Yield to /version dispatch so status/K8s-version calls get the first HTTP slots.
+    const dispatchTimer = setTimeout(() => {
+      const queue = [...toFetch];
+      const worker = async (): Promise<void> => {
+        while (queue.length > 0 && !cancelledRef.current) {
+          const name = queue.shift()!;
+          await fetchOne(name);
+        }
+      };
+      const workerCount = Math.min(OCP_CONCURRENCY, queue.length);
+      const workers = Array.from({ length: workerCount }, () => worker());
+      Promise.all(workers).catch(() => {
+        // Per-request errors are already handled in fetchOne.
+      });
+    }, OCP_DISPATCH_DELAY_MS);
+
     return () => {
       cancelledRef.current = true;
-      clearInterval(interval);
+      clearTimeout(dispatchTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [namesKey]);
@@ -785,170 +1041,181 @@ export default function ClusterTable({
         },
       }}
     >
-      <Table
-        columns={[
-          {
-            id: 'name',
-            header: t('Name'),
-            accessorKey: 'name',
-            gridTemplate: 2,
-            Cell: ({ row: { original } }) => {
-              const appearance = getClusterAppearanceFromMeta(original.name);
-              return (
-                <LightTooltip title={original.name}>
-                  {/* Record as recently-used on open so it auto-connects on return.
+      <OcpVersionsContext.Provider value={ocpVersions}>
+        <Table
+          columns={[
+            {
+              id: 'name',
+              header: t('Name'),
+              accessorKey: 'name',
+              gridTemplate: 2,
+              Cell: ({ row: { original } }) => {
+                const appearance = getClusterAppearanceFromMeta(original.name);
+                return (
+                  <LightTooltip title={original.name}>
+                    {/* Record as recently-used on open so it auto-connects on return.
                     onClickCapture on the wrapper keeps the Link's native
                     navigation (and works for keyboard activation) while the Link
                     would disable navigation if given an onClick. */}
-                  <span
-                    onClickCapture={() => {
-                      setRecentCluster(original.name);
-                      if (CONNECT_ON_CLUSTER_LINK) {
-                        onConnectCluster?.(original.name);
-                      }
-                    }}
-                  >
-                    <Link routeName="cluster" params={{ cluster: original.name }}>
-                      <ClusterBadge
-                        name={original.name}
-                        icon={appearance.icon}
-                        accentColor={appearance.accentColor}
-                      />
-                    </Link>
-                  </span>
-                </LightTooltip>
-              );
+                    <span
+                      onClickCapture={() => {
+                        setRecentCluster(original.name);
+                        if (CONNECT_ON_CLUSTER_LINK) {
+                          onConnectCluster?.(original.name);
+                        }
+                      }}
+                    >
+                      <Link routeName="cluster" params={{ cluster: original.name }}>
+                        <ClusterBadge
+                          name={original.name}
+                          icon={appearance.icon}
+                          accentColor={appearance.accentColor}
+                        />
+                      </Link>
+                    </span>
+                  </LightTooltip>
+                );
+              },
             },
-          },
-          // Origin column intentionally hidden per product requirement.
-          // Kept commented out for easy reinstatement if the info is ever
-          // needed again — do not delete without confirming the requirement
-          // has changed.
-          // {
-          //   id: 'origin',
-          //   header: t('Origin'),
-          //   accessorFn: cluster => getOrigin(cluster),
-          //   Cell: ({ row: { original } }) => (
-          //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
-          //   ),
-          // },
-          {
-            id: 'status',
-            header: t('Status'),
-            // Mirror the visible cell text so the filter dropdown and sort order
-            // read as "Not connected" / "Connecting…" / "Active" / "Unavailable"
-            // instead of the cryptic "⋯".
-            accessorFn: cluster => {
-              const name = cluster?.name;
-              if (!isClusterConnected(name) && errors[name] === undefined) {
-                return t('translation|Not connected');
-              }
-              if (isClusterConnected(name) && errors[name] === undefined) {
-                return t('translation|Connecting…');
-              }
-              return getClusterStatusAccessor(cluster, errors[name], t);
+            // Origin column intentionally hidden per product requirement.
+            // Kept commented out for easy reinstatement if the info is ever
+            // needed again — do not delete without confirming the requirement
+            // has changed.
+            // {
+            //   id: 'origin',
+            //   header: t('Origin'),
+            //   accessorFn: cluster => getOrigin(cluster),
+            //   Cell: ({ row: { original } }) => (
+            //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
+            //   ),
+            // },
+            {
+              id: 'status',
+              header: t('Status'),
+              // Mirror the visible cell text so the filter dropdown and sort order
+              // read as "Not connected" / "Connecting…" / "Active" / "Unavailable"
+              // instead of the cryptic "⋯".
+              accessorFn: cluster => {
+                const name = cluster?.name;
+                if (!isClusterConnected(name) && errors[name] === undefined) {
+                  return t('translation|Not connected');
+                }
+                if (isClusterConnected(name) && errors[name] === undefined) {
+                  return t('translation|Connecting…');
+                }
+                return getClusterStatusAccessor(cluster, errors[name], t);
+              },
+              filterVariant: 'multi-select',
+              Cell: ({ row: { original } }) => (
+                <ClusterStatus
+                  error={errors[original.name]}
+                  cluster={original}
+                  isConnected={isClusterConnected(original.name)}
+                  onConnect={onConnectCluster ?? (() => {})}
+                  version={versions[original.name]}
+                />
+              ),
             },
-            filterVariant: 'multi-select',
-            Cell: ({ row: { original } }) => (
-              <ClusterStatus
-                error={errors[original.name]}
-                cluster={original}
-                isConnected={isClusterConnected(original.name)}
-                onConnect={onConnectCluster ?? (() => {})}
-                version={versions[original.name]}
-              />
-            ),
-          },
-          {
-            id: 'warnings',
-            header: t('Warnings'),
-            // Warnings track connection status: list them for connected clusters,
-            // "n/a" when the cluster isn't connected or the count hasn't loaded
-            // yet — blank/⋯ cells were confusing for users.
-            accessorFn: cluster =>
-              isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '' : '',
-            enableColumnFilter: false,
-            Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
-          },
-          {
-            id: 'ocpVersion',
-            header: t('OCP Version'),
-            // OCP version comes from the live OpenShift ClusterVersion CR — same
-            // value as `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
-            // "n/a" for non-OpenShift clusters or while the fetch is pending.
-            accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] ?? '' : ''),
-            Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
-          },
-          {
-            id: 'version',
-            header: t('glossary|Kubernetes Version'),
-            accessorFn: ({ name }) =>
-              isClusterConnected(name) ? versions[name]?.gitVersion ?? '' : '',
-            Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
-          },
-          // Actions column intentionally hidden per product requirement.
-          // Kept commented out for easy reinstatement — do not delete without
-          // confirming the requirement has changed.
-          // {
-          //   id: 'actions',
-          //   header: t('Actions'),
-          //   gridTemplate: 'min-content',
-          //   muiTableBodyCellProps: {
-          //     align: 'right',
-          //   },
-          //   accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
-          //   Cell: ({ row: { original: cluster } }) => {
-          //     return <ClusterContextMenu cluster={cluster} />;
-          //   },
-          //   enableSorting: false,
-          //   enableColumnFilter: false,
-          // },
-        ]}
-        data={clustersList}
-        enableRowSelection={
-          MULTI_HOME_ENABLED
-            ? row => {
-                // Only allow selection if the cluster is working
-                return canSelectCluster(errors[row.original.name]);
-              }
-            : false
-        }
-        state={{
-          columnVisibility,
-          sorting,
-          columnFilters,
-        }}
-        onColumnVisibilityChange={handleColumnVisibilityChange}
-        onSortingChange={handleSortingChange}
-        onColumnFiltersChange={handleColumnFiltersChange}
-        muiToolbarAlertBannerProps={{
-          sx: theme => ({
-            background: theme.palette.background.muted,
-          }),
-        }}
-        renderToolbarAlertBannerContent={({ table }) => (
-          <Button
-            variant="contained"
-            sx={{
-              marginLeft: 1,
-            }}
-            onClick={() => {
-              const selectedClusterNames = table
-                .getSelectedRowModel()
-                .rows.map(it => it.original.name);
-              // Opening clusters counts as using them; record as recently-used.
-              selectedClusterNames.forEach(name => setRecentCluster(name));
-              history.push({
-                pathname: generatePath(getClusterPrefixedPath(), {
-                  cluster: formatClusterPathParam(selectedClusterNames),
-                }),
-              });
-            }}
-          >
-            {viewClusters}
-          </Button>
-        )}
-      />
+            {
+              id: 'warnings',
+              header: t('Warnings'),
+              // Warnings track connection status: list them for connected clusters,
+              // "n/a" when the cluster isn't connected or the count hasn't loaded
+              // yet — blank/⋯ cells were confusing for users.
+              accessorFn: cluster =>
+                isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '' : '',
+              enableColumnFilter: false,
+              Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
+            },
+            {
+              id: 'ocpVersion',
+              header: t('OCP Version'),
+              // OCP version comes from the live OpenShift ClusterVersion CR — same
+              // value as `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
+              // Sort/filter on the version string; the Cell renders loading /
+              // unavailable / not-openshift states with a tooltip.
+              accessorFn: ({ name }) => {
+                if (!isClusterConnected(name)) return '';
+                return ocpVersions[name]?.version ?? '';
+              },
+              Cell: ({ row: { original } }) => (
+                <OcpVersionCell
+                  name={original.name}
+                  isConnected={isClusterConnected(original.name)}
+                />
+              ),
+            },
+            {
+              id: 'version',
+              header: t('glossary|Kubernetes Version'),
+              accessorFn: ({ name }) =>
+                isClusterConnected(name) ? versions[name]?.gitVersion ?? '' : '',
+              Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
+            },
+            // Actions column intentionally hidden per product requirement.
+            // Kept commented out for easy reinstatement — do not delete without
+            // confirming the requirement has changed.
+            // {
+            //   id: 'actions',
+            //   header: t('Actions'),
+            //   gridTemplate: 'min-content',
+            //   muiTableBodyCellProps: {
+            //     align: 'right',
+            //   },
+            //   accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
+            //   Cell: ({ row: { original: cluster } }) => {
+            //     return <ClusterContextMenu cluster={cluster} />;
+            //   },
+            //   enableSorting: false,
+            //   enableColumnFilter: false,
+            // },
+          ]}
+          data={clustersList}
+          enableRowSelection={
+            MULTI_HOME_ENABLED
+              ? row => {
+                  // Only allow selection if the cluster is working
+                  return canSelectCluster(errors[row.original.name]);
+                }
+              : false
+          }
+          state={{
+            columnVisibility,
+            sorting,
+            columnFilters,
+          }}
+          onColumnVisibilityChange={handleColumnVisibilityChange}
+          onSortingChange={handleSortingChange}
+          onColumnFiltersChange={handleColumnFiltersChange}
+          muiToolbarAlertBannerProps={{
+            sx: theme => ({
+              background: theme.palette.background.muted,
+            }),
+          }}
+          renderToolbarAlertBannerContent={({ table }) => (
+            <Button
+              variant="contained"
+              sx={{
+                marginLeft: 1,
+              }}
+              onClick={() => {
+                const selectedClusterNames = table
+                  .getSelectedRowModel()
+                  .rows.map(it => it.original.name);
+                // Opening clusters counts as using them; record as recently-used.
+                selectedClusterNames.forEach(name => setRecentCluster(name));
+                history.push({
+                  pathname: generatePath(getClusterPrefixedPath(), {
+                    cluster: formatClusterPathParam(selectedClusterNames),
+                  }),
+                });
+              }}
+            >
+              {viewClusters}
+            </Button>
+          )}
+        />
+      </OcpVersionsContext.Provider>
     </Box>
   );
 }

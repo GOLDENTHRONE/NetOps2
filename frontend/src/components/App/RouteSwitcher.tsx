@@ -171,18 +171,7 @@ function AuthRoute(props: AuthRouteProps) {
     queryKey: ['auth', cluster],
     queryFn: () => testAuth(cluster!),
     enabled: !!cluster && requiresAuth,
-    // Only a real auth failure (401/403) should fail fast. Transient problems
-    // (timeout/429/5xx/network) on slow or briefly-unreachable clusters are
-    // retried with backoff so we don't misclassify them as "logged out".
-    retry: (failureCount, error) => {
-      const status = (error as any)?.status;
-      if ([401, 403].includes(status)) {
-        return false;
-      }
-      return failureCount < 3;
-    },
-    retryDelay: attempt => Math.min(1000 * 2 ** attempt, 8000),
-    staleTime: 30_000,
+    retry: 0,
   });
 
   const clusters = useClustersConf();
@@ -220,22 +209,18 @@ function AuthRoute(props: AuthRouteProps) {
     }
 
     if (query.isError) {
-      // Redirect to re-authenticate only on an explicit auth failure. For
-      // transient/unreachable errors, keep the user on the page (their session
-      // is still valid) instead of bouncing to login, which previously caused a
-      // logout loop on slow remote clusters.
-      if (isExplicitAuthError) {
-        return (
-          <Redirect
-            to={{
-              pathname: createRouteURL(redirectRoute),
-              state: { from: location },
-            }}
-          />
-        );
-      }
-
-      return children;
+      // Redirect to /login so AuthChooser can show the "Failed to connect / Try
+      // Again" dialog for transient errors (5xx/timeout) and the token/OIDC
+      // flow for explicit auth failures. AuthChooser handles transient errors
+      // without looping back here.
+      return (
+        <Redirect
+          to={{
+            pathname: createRouteURL(redirectRoute),
+            state: { from: location },
+          }}
+        />
+      );
     }
 
     return null;

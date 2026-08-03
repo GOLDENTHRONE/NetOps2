@@ -16,6 +16,7 @@
 
 import _ from 'lodash';
 import React, { useMemo } from 'react';
+import { useVisibilityInterval } from '../../helpers/useVisibilityInterval';
 import { ConfigState } from '../../redux/configSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { getCluster } from '../cluster';
@@ -277,7 +278,13 @@ export function matchExpressionSimplifier(
  * @param clusters
  * @returns a map with cluster -> version-info, and a map with cluster -> error.
  */
-export function useClustersVersion(clusters: Cluster[]) {
+/** How often the All Clusters tab polls each cluster's /version endpoint. */
+export const STATUS_POLL_MS = 10000;
+
+export function useClustersVersion(
+  clusters: Cluster[],
+  onClusterResponse?: (clusterName: string) => void
+) {
   type VersionInfo = {
     version: StringDict | null;
     error: ApiError | null;
@@ -287,9 +294,18 @@ export function useClustersVersion(clusters: Cluster[]) {
     Object.values(clusters).map(c => c.name)
   );
   const [versions, setVersions] = React.useState<{ [cluster: string]: VersionInfo }>({});
-  const versionFetchInterval = 10000; // ms
   const cancelledRef = React.useRef(false);
   const lastUpdateRef = React.useRef(0);
+  // Latest cb in ref so fetch effect isn't retriggered by new inline fn each render.
+  const onClusterResponseRef = React.useRef(onClusterResponse);
+  onClusterResponseRef.current = onClusterResponse;
+
+  React.useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
 
   React.useEffect(() => {
     // We sort the lists so the order of clusters doesn't influence our comparison. We only
@@ -339,32 +355,19 @@ export function useClustersVersion(clusters: Cluster[]) {
         })
         .finally(() => {
           updateValues();
+          if (!cancelledRef.current) {
+            // Stamp per-cluster only after the response lands (success or error).
+            onClusterResponseRef.current?.(clusterName);
+          }
         });
     });
   }, [clusterNames]);
 
-  React.useEffect(() => {
-    cancelledRef.current = false;
-    // Trigger periodically
-    const timeout = setInterval(() => {
-      if (cancelledRef.current) {
-        return;
-      }
-
-      if (Date.now() - lastUpdateRef.current > versionFetchInterval - 1) {
-        // Refreshes the list of clusters
-        // Creating a new array will trigger the useEffect above
-        // effectively refreshing the versions/errors/statuses
-        setClusterNames([...clusterNames]);
-      }
-    }, versionFetchInterval);
-
-    return function cleanup() {
-      cancelledRef.current = true;
-      clearInterval(timeout);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useVisibilityInterval(() => {
+    if (Date.now() - lastUpdateRef.current > STATUS_POLL_MS - 1) {
+      setClusterNames([...clusterNames]);
+    }
+  }, STATUS_POLL_MS);
 
   return React.useMemo<
     [{ [clusterName: string]: StringDict }, { [clusterName: string]: VersionInfo['error'] }]

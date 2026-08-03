@@ -25,6 +25,7 @@ import { TestContext } from '../../../test';
 vi.mock('../../../lib/k8s', () => ({
   useClustersConf: vi.fn(() => ({})),
   useClustersVersion: vi.fn(() => [{}, {}]),
+  STATUS_POLL_MS: 10000,
 }));
 
 vi.mock('../../../lib/k8s/event', () => ({
@@ -33,7 +34,10 @@ vi.mock('../../../lib/k8s/event', () => ({
 }));
 
 // Keep the test focused on the auto-connect wiring by stubbing the heavy children.
-vi.mock('./ClusterTable', () => ({ default: () => null }));
+vi.mock('./ClusterTable', () => ({
+  default: () => null,
+  LastPollTsContext: { Provider: ({ children }: { children: React.ReactNode }) => children },
+}));
 vi.mock('./RecentClusters', () => ({ default: () => null }));
 vi.mock('../../project/ProjectList', () => ({ default: () => null }));
 vi.mock('../../common/SectionBox', () => ({

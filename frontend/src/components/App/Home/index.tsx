@@ -33,6 +33,7 @@ import { PageGrid } from '../../common/Resource';
 import SectionBox from '../../common/SectionBox';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterTable from './ClusterTable';
+import { LastPollTsContext } from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
 import { getCustomClusterNames } from './customClusterNames';
 import { HomeTabsState } from './homeTabsSlice';
@@ -166,7 +167,12 @@ function HomeComponent(props: HomeComponentProps) {
     [clusters, connectedClusters]
   );
 
-  const [versions, errors] = useClustersVersion(autoConnectClusters);
+  const [lastPollByCluster, setLastPollByCluster] = React.useState<Record<string, number>>({});
+  // Stamp per-cluster only after that cluster's /version response actually lands
+  // (success or error). Global stamp would lie when one cluster is 502 but another responds.
+  const [versions, errors] = useClustersVersion(autoConnectClusters, (clusterName: string) => {
+    setLastPollByCluster(prev => ({ ...prev, [clusterName]: Date.now() }));
+  });
 
   const clusterNames = React.useMemo(
     () => allClusterNames.filter(name => connectedClusters.has(name)),
@@ -197,15 +203,17 @@ function HomeComponent(props: HomeComponentProps) {
         {ENABLE_RECENT_CLUSTERS && (
           <RecentClusters clusters={Object.values(customNameClusters)} onButtonClick={() => {}} />
         )}
-        <ClusterTable
-          customNameClusters={customNameClusters}
-          versions={versions}
-          errors={errors}
-          warningLabels={warningLabels}
-          clusters={clusters}
-          connectedClusterNames={connectedClusters}
-          onConnectCluster={handleConnectCluster}
-        />
+        <LastPollTsContext.Provider value={lastPollByCluster}>
+          <ClusterTable
+            customNameClusters={customNameClusters}
+            versions={versions}
+            errors={errors}
+            warningLabels={warningLabels}
+            clusters={clusters}
+            connectedClusterNames={connectedClusters}
+            onConnectCluster={handleConnectCluster}
+          />
+        </LastPollTsContext.Provider>
       </>
     ),
     [
@@ -216,6 +224,7 @@ function HomeComponent(props: HomeComponentProps) {
       clusters,
       connectedClusters,
       handleConnectCluster,
+      lastPollByCluster,
     ]
   );
 

@@ -53,7 +53,10 @@ import { GlobalSearch } from '../globalSearch/GlobalSearch';
 import HeadlampButton from '../Sidebar/HeadlampButton';
 import { setWhetherSidebarOpen } from '../Sidebar/sidebarSlice';
 import { AppLogo } from './AppLogo';
-import { Notifications } from './Notifications';
+// Notifications disabled: it mounted useClustersVersion() with the full
+// cluster list, saturating the browser's per-origin HTTP pool and stalling
+// the Home page's status column. See ClusterTable perf notes.
+// import { Notifications } from './Notifications';
 import { handleLogoutPathUpdate } from './TopBar.utils';
 
 export interface TopBarProps {}
@@ -471,7 +474,8 @@ export const PureTopBar = memo(
       ...appBarActions,
       {
         id: DefaultAppBarAction.NOTIFICATION,
-        action: <Notifications />,
+        // action: <Notifications />, // disabled — see import comment above
+        action: null,
       },
       {
         id: DefaultAppBarAction.SETTINGS,
