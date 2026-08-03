@@ -24,7 +24,6 @@ import Popover from '@mui/material/Popover';
 import Stack from '@mui/material/Stack';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
-import _, { List } from 'lodash';
 import {
   MRT_ColumnFiltersState,
   MRT_SortingState,
@@ -41,13 +40,8 @@ import { formatClusterPathParam } from '../../../lib/cluster';
 import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
 import { clusterRequest } from '../../../lib/k8s/api/v1/clusterRequests';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
-import { Cluster, KubeMetrics, StringDict } from '../../../lib/k8s/cluster';
-import { KubeObject } from '../../../lib/k8s/KubeObject';
-import Node from '../../../lib/k8s/node';
-import Pod from '../../../lib/k8s/pod';
-import { useClusterOverviewStats } from '../../../lib/k8s/useClusterOverviewStats';
+import { Cluster, StringDict } from '../../../lib/k8s/cluster';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
-import { parseCpu, parseRam, TO_GB, TO_ONE_CPU } from '../../../lib/units';
 import { getClusterPrefixedPath } from '../../../lib/util';
 import { useTypedSelector } from '../../../redux/hooks';
 import { Loader } from '../../common';
@@ -445,54 +439,19 @@ function ClusterStatusErrorDetails({
 
 /**
  * ClusterStatusDetails renders the popover body for an Active cluster. It shows
- * the API-server reachability, Kubernetes version, CPU %, Memory %, node and pod
- * counts.
- *
- * Fast path: reads the backend `/overview-stats` aggregate (see
- * `useClusterOverviewStats`) so opening the popover on a large cluster costs a
- * single ~300 byte request instead of full Pod/Node/Metrics list fetches.
- *
- * Legacy fallback (`ClusterStatusDetailsLegacy`) is used only when the backend
- * endpoint is unavailable or errors, mirroring `components/cluster/Overview.tsx`.
- *
- * The component is only mounted while the popover is open, so subscriptions are
- * torn down on close.
+ * the API-server reachability and Kubernetes version. Live CPU/Memory/Pod/Node
+ * counts are intentionally not shown here — users should click through to the
+ * cluster Overview page for those (which uses the standard client-side
+ * `Pod.useList` / `Node.useList` / `Node.useMetrics` path, same as headlamp).
  */
-function ClusterStatusDetails(props: {
-  cluster: Cluster;
-  version?: StringDict | null;
-  error?: ApiError | null;
-  statusText: string;
-  statusIcon: string;
-  statusColor: string;
-  onClose?: () => void;
-}) {
-  const stats = useClusterOverviewStats(props.cluster.name);
-
-  // Same fallback semantics as `Overview.tsx`: a single failed request (404 /
-  // 5xx) drops back to the legacy client-side aggregation path so older backends
-  // and misconfigured clusters keep working.
-  if (stats.isError) {
-    return <ClusterStatusDetailsLegacy {...props} />;
-  }
-
-  return <ClusterStatusDetailsAggregate stats={stats.data} {...props} />;
-}
-
-/**
- * Fast path popover body: renders values from the backend aggregate snapshot.
- * Deliberately does not call `Pod.useList` / `Node.useList` / `Node.useMetrics`
- * so opening the popover on a large cluster is ~300 bytes instead of megabytes.
- */
-function ClusterStatusDetailsAggregate({
-  stats,
+function ClusterStatusDetails({
+  version,
   error,
   statusText,
   statusIcon,
   statusColor,
   onClose,
 }: {
-  stats: ReturnType<typeof useClusterOverviewStats>['data'];
   cluster: Cluster;
   version?: StringDict | null;
   error?: ApiError | null;
@@ -511,60 +470,7 @@ function ClusterStatusDetailsAggregate({
       ? t('translation|Unreachable (HTTP {{ code }})', { code: error.status })
       : t('translation|Unreachable');
 
-  const synced = stats?.synced === true;
-  const noMetrics = synced && stats?.metricsAvailable === false;
-
-  function pctStr(used: number, available: number): string {
-    if (available <= 0) return '0.0';
-    return ((used / available) * 100).toFixed(1);
-  }
-
-  let podsLabel: string | null;
-  let nodesLabel: string | null;
-  let cpuValue: string | null;
-  let memoryValue: string | null;
-
-  if (!synced) {
-    podsLabel = null;
-    nodesLabel = null;
-    cpuValue = null;
-    memoryValue = null;
-  } else {
-    const { pods, nodes } = stats!;
-
-    podsLabel =
-      pods.total === 0
-        ? `${t('translation|{{ numReady }} / {{ numItems }} Requested', {
-            numReady: 0,
-            numItems: 0,
-          })} (0.0%)`
-        : `${t('translation|{{ numReady }} / {{ numItems }} Requested', {
-            numReady: pods.ready,
-            numItems: pods.total,
-          })} (${pctStr(pods.ready, pods.total)}%)`;
-
-    nodesLabel =
-      nodes.total === 0
-        ? `0 / 0 Ready (0.0%)`
-        : `${t('translation|{{ numReady }} / {{ numItems }} Ready', {
-            numReady: nodes.ready,
-            numItems: nodes.total,
-          })} (${pctStr(nodes.ready, nodes.total)}%)`;
-
-    if (noMetrics) {
-      cpuValue = '—';
-      memoryValue = '—';
-    } else {
-      // Backend serves CPU in nanocores, memory in bytes. Convert to the same
-      // "CPU units" and GB scales the Overview page uses so numbers match.
-      const cpuUsed = stats!.cpu.used / TO_ONE_CPU;
-      const cpuCap = stats!.cpu.capacity / TO_ONE_CPU;
-      const memUsed = stats!.memory.used / TO_GB;
-      const memCap = stats!.memory.capacity / TO_GB;
-      cpuValue = `${cpuUsed.toFixed(2)} / ${cpuCap} units (${pctStr(cpuUsed, cpuCap)}%)`;
-      memoryValue = `${memUsed.toFixed(2)} / ${memCap.toFixed(2)} GB (${pctStr(memUsed, memCap)}%)`;
-    }
-  }
+  const versionLabel = version?.gitVersion ?? null;
 
   function Row({ label, value }: { label: string; value: string | null }) {
     return (
@@ -614,199 +520,7 @@ function ClusterStatusDetailsAggregate({
       <Divider sx={{ mb: 1 }} />
       <Stack spacing={0.75}>
         <Row label={t('translation|API server')} value={apiServerLabel} />
-        <Row label={t('glossary|CPU')} value={cpuValue} />
-        <Row label={t('glossary|Memory')} value={memoryValue} />
-        <Row label={t('glossary|Nodes')} value={nodesLabel} />
-        <Row label={t('glossary|Pods')} value={podsLabel} />
-      </Stack>
-    </Box>
-  );
-}
-
-/**
- * Legacy path: fetches full Pod / Node / Node.metrics lists and aggregates on
- * the client. Preserved as a fallback for backends without the
- * `/overview-stats` endpoint. See `ClusterStatusDetails` above.
- */
-function ClusterStatusDetailsLegacy({
-  cluster,
-  error,
-  statusText,
-  statusIcon,
-  statusColor,
-  onClose,
-}: {
-  cluster: Cluster;
-  version?: StringDict | null;
-  error?: ApiError | null;
-  statusText: string;
-  statusIcon: string;
-  statusColor: string;
-  onClose?: () => void;
-}) {
-  const { t } = useTranslation(['translation', 'glossary']);
-  const theme = useTheme();
-
-  // Copied from `components/cluster/Overview.tsx`: snapshot pod/node lists at
-  // the same 60 s cadence and pull node metrics for CPU / memory sums.
-  const OVERVIEW_REFETCH_INTERVAL_MS = 60_000;
-  const [pods] = Pod.useList({
-    refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS,
-    cluster: cluster.name,
-  });
-  const [nodes] = Node.useList({
-    refetchInterval: OVERVIEW_REFETCH_INTERVAL_MS,
-    cluster: cluster.name,
-  });
-  const [nodeMetrics, metricsError] = Node.useMetrics(cluster.name);
-
-  const noPermissions = metricsError?.status === 403;
-  const noMetrics = metricsError !== null && !noPermissions;
-
-  // API server line: error === null means the version probe returned 200, any
-  // other value means the probe failed (status code may be present).
-  const apiServerLabel =
-    error === null || error === undefined
-      ? t('translation|Reachable (HTTP 200)')
-      : error?.status
-      ? t('translation|Unreachable (HTTP {{ code }})', { code: error.status })
-      : t('translation|Unreachable');
-
-  // Copied from `PodsStatusCircleChart` in
-  // `components/cluster/Charts/StatusCharts.tsx` — a pod counts as "ready" if
-  // it Succeeded or has a Ready=True condition.
-  const podsReady = (pods || []).filter((pod: Pod) => {
-    if (pod.status?.phase === 'Succeeded') {
-      return true;
-    }
-    const readyCondition = pod.status?.conditions?.find(c => c.type === 'Ready');
-    return readyCondition?.status === 'True';
-  });
-  const podsLabel =
-    pods === null
-      ? null
-      : pods.length === 0
-      ? t('translation|{{ numReady }} / {{ numItems }} Requested', {
-          numReady: 0,
-          numItems: 0,
-        }) + ' (0.0%)'
-      : `${t('translation|{{ numReady }} / {{ numItems }} Requested', {
-          numReady: podsReady.length,
-          numItems: pods.length,
-        })} (${((podsReady.length / pods.length) * 100).toFixed(1)}%)`;
-
-  // Copied from `NodesStatusCircleChart` — Ready=True condition.
-  const nodesReady = (nodes || []).filter((node: Node) => {
-    const readyCondition = node.status?.conditions?.find(c => c.type === 'Ready');
-    return readyCondition?.status === 'True';
-  });
-  const nodesLabel =
-    nodes === null
-      ? null
-      : nodes.length === 0
-      ? `0 / 0 Ready (0.0%)`
-      : `${t('translation|{{ numReady }} / {{ numItems }} Ready', {
-          numReady: nodesReady.length,
-          numItems: nodes.length,
-        })} (${((nodesReady.length / nodes.length) * 100).toFixed(1)}%)`;
-
-  // Copied from `CircularChart` (`components/common/Resource/CircularChart.tsx`)
-  // + `CpuCircularChart` / `MemoryCircularChart`. Filter node metrics by name
-  // presence in the cluster's node list, then sum used vs. capacity.
-  function filterMetrics(items: KubeObject[] | null, metrics: KubeMetrics[] | null) {
-    if (!items || !metrics) return [];
-    const names = items.map(({ metadata }) => metadata.name);
-    return metrics.filter(item => names.includes(item.metadata.name));
-  }
-
-  // Match the Overview page cards:
-  //  CPU     : `<used>.2f / <capacity> units (<pct>.1f%)`
-  //  Memory  : `<used>.2f / <capacity>.2f GB (<pct>.1f%)`
-  function pctStr(used: number, available: number): string {
-    if (available <= 0) return '0.0';
-    return ((used / available) * 100).toFixed(1);
-  }
-
-  let cpuValue: string | null = null;
-  let memoryValue: string | null = null;
-  if (nodes === null) {
-    cpuValue = null;
-    memoryValue = null;
-  } else if (noMetrics || noPermissions) {
-    cpuValue = '—';
-    memoryValue = '—';
-  } else if (nodeMetrics === null) {
-    // Still loading metrics — leave as null to show spinner.
-    cpuValue = null;
-    memoryValue = null;
-  } else {
-    const filtered = filterMetrics(nodes as KubeObject[], nodeMetrics);
-    const cpuUsed = _.sumBy(filtered, (m: KubeMetrics) => parseCpu(m.usage.cpu) / TO_ONE_CPU);
-    const cpuCap = _.sumBy(
-      nodes as List<Node>,
-      (n: Node) => parseCpu(n.status?.capacity?.cpu) / TO_ONE_CPU
-    );
-    const memUsed = _.sumBy(filtered, (m: KubeMetrics) => parseRam(m.usage.memory) / TO_GB);
-    const memCap = _.sumBy(
-      nodes as List<Node>,
-      (n: Node) => parseRam(n.status?.capacity?.memory) / TO_GB
-    );
-    cpuValue = `${cpuUsed.toFixed(2)} / ${cpuCap} units (${pctStr(cpuUsed, cpuCap)}%)`;
-    memoryValue = `${memUsed.toFixed(2)} / ${memCap.toFixed(2)} GB (${pctStr(memUsed, memCap)}%)`;
-  }
-
-  function Row({ label, value }: { label: string; value: string | null }) {
-    return (
-      <Stack direction="row" spacing={1.5} alignItems="baseline">
-        <Typography
-          variant="caption"
-          sx={{
-            color: theme.palette.text.secondary,
-            minWidth: 130,
-            flexShrink: 0,
-          }}
-        >
-          {label}
-        </Typography>
-        {value === null ? (
-          <CircularProgress size={12} />
-        ) : (
-          <Typography variant="body2" sx={{ color: theme.palette.text.primary }}>
-            {value}
-          </Typography>
-        )}
-      </Stack>
-    );
-  }
-
-  return (
-    <Box sx={{ minWidth: 260 }}>
-      <Box display="flex" alignItems="center" mb={1}>
-        <Icon icon={statusIcon} width={16} color={statusColor} />
-        <Typography
-          variant="subtitle2"
-          sx={{ ml: 0.75, color: statusColor, fontWeight: 600, flexGrow: 1 }}
-        >
-          {statusText}
-        </Typography>
-        {onClose && (
-          <IconButton
-            size="small"
-            onClick={onClose}
-            aria-label={t('translation|Close')}
-            sx={{ ml: 1, p: 0.25 }}
-          >
-            <Icon icon="mdi:close" width={16} />
-          </IconButton>
-        )}
-      </Box>
-      <Divider sx={{ mb: 1 }} />
-      <Stack spacing={0.75}>
-        <Row label={t('translation|API server')} value={apiServerLabel} />
-        <Row label={t('glossary|CPU')} value={cpuValue} />
-        <Row label={t('glossary|Memory')} value={memoryValue} />
-        <Row label={t('glossary|Nodes')} value={nodesLabel} />
-        <Row label={t('glossary|Pods')} value={podsLabel} />
+        <Row label={t('glossary|Version')} value={versionLabel} />
       </Stack>
     </Box>
   );
@@ -844,12 +558,15 @@ const CLUSTER_TABLE_ID = 'home-clusters';
  */
 function renderNaFallback(value: string | null | undefined) {
   const trimmed = (value ?? '').trim();
-  if (trimmed === '' || trimmed === '⋯') {
-    // Match the muted `n/a` style used across the app (ApplicationList,
-    // ProjectResourcesTab): small caption in text.secondary, no italic.
+  const normalized = trimmed.toLowerCase();
+  if (trimmed === '' || trimmed === '⋯' || normalized === 'n/a' || normalized === 'na') {
     return (
-      <Typography component="span" variant="caption" color="text.secondary">
-        n/a
+      <Typography
+        component="span"
+        variant="body2"
+        sx={{ color: '#9CA3AF', fontStyle: 'italic', fontWeight: 400 }}
+      >
+        N/A
       </Typography>
     );
   }
@@ -1046,169 +763,192 @@ export default function ClusterTable({
   }
 
   return (
-    <Table
-      columns={[
-        {
-          id: 'name',
-          header: t('Name'),
-          accessorKey: 'name',
-          gridTemplate: 2,
-          Cell: ({ row: { original } }) => {
-            const appearance = getClusterAppearanceFromMeta(original.name);
-            return (
-              <LightTooltip title={original.name}>
-                {/* Record as recently-used on open so it auto-connects on return.
+    <Box
+      sx={{
+        '& .MuiTable-root a, & .MuiTable-root a:visited': {
+          textDecoration: 'none !important',
+        },
+        '& .MuiTable-root a *': {
+          textDecoration: 'none !important',
+        },
+        '& .MuiTable-root a:hover, & .MuiTable-root a:focus-visible': {
+          textDecoration: 'underline !important',
+        },
+        '& .MuiTable-root a:hover *, & .MuiTable-root a:focus-visible *': {
+          textDecoration: 'underline !important',
+        },
+        '& .MuiTable-root th, & .MuiTable-root td': {
+          border: '1px solid #e6e6e6 !important',
+        },
+        '& .MuiTable-root th': {
+          backgroundColor: '#f5f5f5 !important',
+        },
+      }}
+    >
+      <Table
+        columns={[
+          {
+            id: 'name',
+            header: t('Name'),
+            accessorKey: 'name',
+            gridTemplate: 2,
+            Cell: ({ row: { original } }) => {
+              const appearance = getClusterAppearanceFromMeta(original.name);
+              return (
+                <LightTooltip title={original.name}>
+                  {/* Record as recently-used on open so it auto-connects on return.
                     onClickCapture on the wrapper keeps the Link's native
                     navigation (and works for keyboard activation) while the Link
                     would disable navigation if given an onClick. */}
-                <span
-                  onClickCapture={() => {
-                    setRecentCluster(original.name);
-                    if (CONNECT_ON_CLUSTER_LINK) {
-                      onConnectCluster?.(original.name);
-                    }
-                  }}
-                >
-                  <Link routeName="cluster" params={{ cluster: original.name }}>
-                    <ClusterBadge
-                      name={original.name}
-                      icon={appearance.icon}
-                      accentColor={appearance.accentColor}
-                    />
-                  </Link>
-                </span>
-              </LightTooltip>
-            );
+                  <span
+                    onClickCapture={() => {
+                      setRecentCluster(original.name);
+                      if (CONNECT_ON_CLUSTER_LINK) {
+                        onConnectCluster?.(original.name);
+                      }
+                    }}
+                  >
+                    <Link routeName="cluster" params={{ cluster: original.name }}>
+                      <ClusterBadge
+                        name={original.name}
+                        icon={appearance.icon}
+                        accentColor={appearance.accentColor}
+                      />
+                    </Link>
+                  </span>
+                </LightTooltip>
+              );
+            },
           },
-        },
-        // Origin column intentionally hidden per product requirement.
-        // Kept commented out for easy reinstatement if the info is ever
-        // needed again — do not delete without confirming the requirement
-        // has changed.
-        // {
-        //   id: 'origin',
-        //   header: t('Origin'),
-        //   accessorFn: cluster => getOrigin(cluster),
-        //   Cell: ({ row: { original } }) => (
-        //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
-        //   ),
-        // },
-        {
-          id: 'status',
-          header: t('Status'),
-          // Mirror the visible cell text so the filter dropdown and sort order
-          // read as "Not connected" / "Connecting…" / "Active" / "Unavailable"
-          // instead of the cryptic "⋯".
-          accessorFn: cluster => {
-            const name = cluster?.name;
-            if (!isClusterConnected(name) && errors[name] === undefined) {
-              return t('translation|Not connected');
-            }
-            if (isClusterConnected(name) && errors[name] === undefined) {
-              return t('translation|Connecting…');
-            }
-            return getClusterStatusAccessor(cluster, errors[name], t);
+          // Origin column intentionally hidden per product requirement.
+          // Kept commented out for easy reinstatement if the info is ever
+          // needed again — do not delete without confirming the requirement
+          // has changed.
+          // {
+          //   id: 'origin',
+          //   header: t('Origin'),
+          //   accessorFn: cluster => getOrigin(cluster),
+          //   Cell: ({ row: { original } }) => (
+          //     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
+          //   ),
+          // },
+          {
+            id: 'status',
+            header: t('Status'),
+            // Mirror the visible cell text so the filter dropdown and sort order
+            // read as "Not connected" / "Connecting…" / "Active" / "Unavailable"
+            // instead of the cryptic "⋯".
+            accessorFn: cluster => {
+              const name = cluster?.name;
+              if (!isClusterConnected(name) && errors[name] === undefined) {
+                return t('translation|Not connected');
+              }
+              if (isClusterConnected(name) && errors[name] === undefined) {
+                return t('translation|Connecting…');
+              }
+              return getClusterStatusAccessor(cluster, errors[name], t);
+            },
+            filterVariant: 'multi-select',
+            Cell: ({ row: { original } }) => (
+              <ClusterStatus
+                error={errors[original.name]}
+                cluster={original}
+                isConnected={isClusterConnected(original.name)}
+                onConnect={onConnectCluster ?? (() => {})}
+                version={versions[original.name]}
+              />
+            ),
           },
-          filterVariant: 'multi-select',
-          Cell: ({ row: { original } }) => (
-            <ClusterStatus
-              error={errors[original.name]}
-              cluster={original}
-              isConnected={isClusterConnected(original.name)}
-              onConnect={onConnectCluster ?? (() => {})}
-              version={versions[original.name]}
-            />
-          ),
-        },
-        {
-          id: 'warnings',
-          header: t('Warnings'),
-          // Warnings track connection status: list them for connected clusters,
-          // "n/a" when the cluster isn't connected or the count hasn't loaded
-          // yet — blank/⋯ cells were confusing for users.
-          accessorFn: cluster =>
-            isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '' : '',
-          enableColumnFilter: false,
-          Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
-        },
-        {
-          id: 'ocpVersion',
-          header: t('OCP Version'),
-          // OCP version comes from the live OpenShift ClusterVersion CR — same
-          // value as `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
-          // "n/a" for non-OpenShift clusters or while the fetch is pending.
-          accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] ?? '' : ''),
-          Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
-        },
-        {
-          id: 'version',
-          header: t('glossary|Kubernetes Version'),
-          accessorFn: ({ name }) =>
-            isClusterConnected(name) ? versions[name]?.gitVersion ?? '' : '',
-          Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
-        },
-        // Actions column intentionally hidden per product requirement.
-        // Kept commented out for easy reinstatement — do not delete without
-        // confirming the requirement has changed.
-        // {
-        //   id: 'actions',
-        //   header: t('Actions'),
-        //   gridTemplate: 'min-content',
-        //   muiTableBodyCellProps: {
-        //     align: 'right',
-        //   },
-        //   accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
-        //   Cell: ({ row: { original: cluster } }) => {
-        //     return <ClusterContextMenu cluster={cluster} />;
-        //   },
-        //   enableSorting: false,
-        //   enableColumnFilter: false,
-        // },
-      ]}
-      data={clustersList}
-      enableRowSelection={
-        MULTI_HOME_ENABLED
-          ? row => {
-              // Only allow selection if the cluster is working
-              return canSelectCluster(errors[row.original.name]);
-            }
-          : false
-      }
-      state={{
-        columnVisibility,
-        sorting,
-        columnFilters,
-      }}
-      onColumnVisibilityChange={handleColumnVisibilityChange}
-      onSortingChange={handleSortingChange}
-      onColumnFiltersChange={handleColumnFiltersChange}
-      muiToolbarAlertBannerProps={{
-        sx: theme => ({
-          background: theme.palette.background.muted,
-        }),
-      }}
-      renderToolbarAlertBannerContent={({ table }) => (
-        <Button
-          variant="contained"
-          sx={{
-            marginLeft: 1,
-          }}
-          onClick={() => {
-            const selectedClusterNames = table
-              .getSelectedRowModel()
-              .rows.map(it => it.original.name);
-            // Opening clusters counts as using them; record as recently-used.
-            selectedClusterNames.forEach(name => setRecentCluster(name));
-            history.push({
-              pathname: generatePath(getClusterPrefixedPath(), {
-                cluster: formatClusterPathParam(selectedClusterNames),
-              }),
-            });
-          }}
-        >
-          {viewClusters}
-        </Button>
-      )}
-    />
+          {
+            id: 'warnings',
+            header: t('Warnings'),
+            // Warnings track connection status: list them for connected clusters,
+            // "n/a" when the cluster isn't connected or the count hasn't loaded
+            // yet — blank/⋯ cells were confusing for users.
+            accessorFn: cluster =>
+              isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '' : '',
+            enableColumnFilter: false,
+            Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
+          },
+          {
+            id: 'ocpVersion',
+            header: t('OCP Version'),
+            // OCP version comes from the live OpenShift ClusterVersion CR — same
+            // value as `oc get clusterversion -o jsonpath='{.items[0].status.desired.version}'`.
+            // "n/a" for non-OpenShift clusters or while the fetch is pending.
+            accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] ?? '' : ''),
+            Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
+          },
+          {
+            id: 'version',
+            header: t('glossary|Kubernetes Version'),
+            accessorFn: ({ name }) =>
+              isClusterConnected(name) ? versions[name]?.gitVersion ?? '' : '',
+            Cell: ({ cell }) => renderNaFallback(cell.getValue<string>()),
+          },
+          // Actions column intentionally hidden per product requirement.
+          // Kept commented out for easy reinstatement — do not delete without
+          // confirming the requirement has changed.
+          // {
+          //   id: 'actions',
+          //   header: t('Actions'),
+          //   gridTemplate: 'min-content',
+          //   muiTableBodyCellProps: {
+          //     align: 'right',
+          //   },
+          //   accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
+          //   Cell: ({ row: { original: cluster } }) => {
+          //     return <ClusterContextMenu cluster={cluster} />;
+          //   },
+          //   enableSorting: false,
+          //   enableColumnFilter: false,
+          // },
+        ]}
+        data={clustersList}
+        enableRowSelection={
+          MULTI_HOME_ENABLED
+            ? row => {
+                // Only allow selection if the cluster is working
+                return canSelectCluster(errors[row.original.name]);
+              }
+            : false
+        }
+        state={{
+          columnVisibility,
+          sorting,
+          columnFilters,
+        }}
+        onColumnVisibilityChange={handleColumnVisibilityChange}
+        onSortingChange={handleSortingChange}
+        onColumnFiltersChange={handleColumnFiltersChange}
+        muiToolbarAlertBannerProps={{
+          sx: theme => ({
+            background: theme.palette.background.muted,
+          }),
+        }}
+        renderToolbarAlertBannerContent={({ table }) => (
+          <Button
+            variant="contained"
+            sx={{
+              marginLeft: 1,
+            }}
+            onClick={() => {
+              const selectedClusterNames = table
+                .getSelectedRowModel()
+                .rows.map(it => it.original.name);
+              // Opening clusters counts as using them; record as recently-used.
+              selectedClusterNames.forEach(name => setRecentCluster(name));
+              history.push({
+                pathname: generatePath(getClusterPrefixedPath(), {
+                  cluster: formatClusterPathParam(selectedClusterNames),
+                }),
+              });
+            }}
+          >
+            {viewClusters}
+          </Button>
+        )}
+      />
+    </Box>
   );
 }

@@ -25,12 +25,10 @@ import { PercentageCircleProps } from '../Chart';
 import TileChart from '../TileChart';
 
 export interface CircularChartProps extends Omit<PercentageCircleProps, 'data'> {
-  /** Items to display in the chart (should have a corresponding value in @param itemsMetrics).
-   *  Optional when @param aggregate is provided. */
-  items?: Node[] | Pod[] | null;
-  /** Metrics to display in the chart (for items in @param items).
-   *  Optional when @param aggregate is provided. */
-  itemsMetrics?: KubeMetrics[] | null;
+  /** Items to display in the chart (should have a corresponding value in @param itemsMetrics) */
+  items: Node[] | Pod[] | null;
+  /** Metrics to display in the chart (for items in @param items) */
+  itemsMetrics: KubeMetrics[] | null;
   /** Whether no metrics are available. If true, then instead of a chart, a message will be displayed */
   noMetrics?: boolean;
   /** Function to get the "used" value for the metrics in question */
@@ -41,10 +39,6 @@ export interface CircularChartProps extends Omit<PercentageCircleProps, 'data'> 
   getLegend?: (used: number, available: number) => string;
   /** Tooltip to display when hovering over the chart */
   tooltip?: string | null;
-  /** Pre-aggregated values. When provided, the chart skips client-side summing over
-   *  @param items / @param itemsMetrics and uses these values directly. Used by the
-   *  cluster Overview page to avoid full pod/node list fetches on large clusters. */
-  aggregate?: { used: number; capacity: number };
 }
 
 export function CircularChart(props: CircularChartProps) {
@@ -56,7 +50,6 @@ export function CircularChart(props: CircularChartProps) {
     resourceAvailableGetter,
     title,
     getLegend,
-    aggregate,
     ...others
   } = props;
   const { t } = useTranslation();
@@ -78,10 +71,9 @@ export function CircularChart(props: CircularChartProps) {
   }
 
   function getResourceUsage() {
-    if (aggregate) return [aggregate.used, aggregate.capacity];
     if (!items) return [-1, -1];
 
-    const nodeMetrics = filterMetrics(items, itemsMetrics ?? null);
+    const nodeMetrics = filterMetrics(items, itemsMetrics);
     const usedValue = _.sumBy(nodeMetrics, resourceUsedGetter);
     const availableValue = _.sumBy(items as List<Node | Pod>, resourceAvailableGetter);
 

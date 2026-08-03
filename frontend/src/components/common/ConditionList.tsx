@@ -179,6 +179,7 @@ function ConditionStatusCell({ condition }: { condition: KubeCondition }) {
           sx={{
             display: 'inline-flex',
             alignItems: 'center',
+            verticalAlign: 'middle',
             justifyContent: 'center',
             gap: 0.5,
             px: 1,
@@ -187,6 +188,7 @@ function ConditionStatusCell({ condition }: { condition: KubeCondition }) {
             borderRadius: '999px',
             cursor: hasDetails ? 'pointer' : 'default',
             fontSize: '0.8125rem',
+            lineHeight: 1.2,
             fontWeight: 600,
             fontFamily: 'inherit',
             whiteSpace: 'nowrap',
