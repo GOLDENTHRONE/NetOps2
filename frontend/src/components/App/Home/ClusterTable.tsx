@@ -294,7 +294,6 @@ function StatusPopoverTrigger({
           (kind === 'active' ? (
             <ClusterStatusDetails
               cluster={cluster}
-              version={version}
               error={error}
               statusText={statusText}
               statusIcon={statusIcon}
@@ -467,7 +466,6 @@ function ClusterStatusErrorDetails({
  */
 function ClusterStatusDetails({
   cluster,
-  version,
   error,
   statusText,
   statusIcon,
@@ -476,7 +474,6 @@ function ClusterStatusDetails({
   onClose,
 }: {
   cluster: Cluster;
-  version?: StringDict | null;
   error?: ApiError | null;
   statusText: string;
   statusIcon: string;
@@ -496,8 +493,6 @@ function ClusterStatusDetails({
       : error?.status
       ? t('translation|Unreachable (HTTP {{ code }})', { code: error.status })
       : t('translation|Unreachable');
-
-  const versionLabel = version?.gitVersion ?? null;
 
   // Live "Last updated Xs ago" — ticks every 1s while popover is open.
   const [agoText, setAgoText] = useState<string>('');
@@ -566,7 +561,6 @@ function ClusterStatusDetails({
       <Divider sx={{ mb: 1 }} />
       <Stack spacing={0.75}>
         <Row label={t('translation|API server')} value={apiServerLabel} />
-        <Row label={t('glossary|Version')} value={versionLabel} />
         <Row
           label={t('translation|Last updated')}
           value={statusLoading ? t('translation|Checking…') : agoText}
@@ -624,20 +618,38 @@ function renderNaFallback(value: string | null | undefined) {
 }
 
 function OcpVersionCell({ name, isConnected }: { name: string; isConnected: boolean }) {
-  const { t } = useTranslation(['translation']);
   // Read from Context so TanStack Table cell memoization can't serve a stale closure.
   const ocpVersions = useContext(OcpVersionsContext);
   if (!isConnected) return renderNaFallback('');
   const entry = ocpVersions[name];
   if (!entry || entry.state === 'loading') {
     return (
-      <Typography
+      <Box
         component="span"
-        variant="body2"
-        sx={{ color: '#9CA3AF', fontStyle: 'italic', fontWeight: 400 }}
+        sx={{
+          display: 'inline-flex',
+          gap: '3px',
+          alignItems: 'center',
+          '& span': {
+            display: 'inline-block',
+            width: 4,
+            height: 4,
+            borderRadius: '50%',
+            backgroundColor: '#9CA3AF',
+            animation: 'dotPulse 1.2s infinite ease-in-out',
+          },
+          '& span:nth-of-type(2)': { animationDelay: '0.2s' },
+          '& span:nth-of-type(3)': { animationDelay: '0.4s' },
+          '@keyframes dotPulse': {
+            '0%, 80%, 100%': { opacity: 0.2 },
+            '40%': { opacity: 1 },
+          },
+        }}
       >
-        {t('translation|Loading…')}
-      </Typography>
+        <span />
+        <span />
+        <span />
+      </Box>
     );
   }
   if (entry.state === 'ok' && entry.version) {
