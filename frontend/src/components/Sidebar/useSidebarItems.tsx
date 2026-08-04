@@ -153,35 +153,38 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
         label: t('translation|Home'),
         url: '/',
       },
-      {
-        name: 'notifications',
-        icon: 'mdi:bell',
-        label: t('translation|Notifications'),
-        url: '/notifications',
-      },
-      {
-        name: 'settings',
-        icon: 'mdi:cog',
-        label: t('translation|Settings'),
-        url: '/settings/general',
-        subList: [
-          {
-            name: 'settingsGeneral',
-            label: t('translation|General'),
-            url: '/settings/general',
-          },
-          {
-            name: 'plugins',
-            label: t('translation|Plugins'),
-            url: '/settings/plugins',
-          },
-          {
-            name: 'settingsCluster',
-            label: t('glossary|Cluster'),
-            url: '/settings/cluster',
-          },
-        ],
-      },
+      // Notifications page disabled (hidden from sidebar). Restore this block to re-enable.
+      // {
+      //   name: 'notifications',
+      //   icon: 'mdi:bell',
+      //   label: t('translation|Notifications'),
+      //   url: '/notifications',
+      // },
+      // Settings page disabled (hidden from sidebar). Routes kept active because TopBar/menus
+      // still deep-link to /settings/cluster etc. Restore this block to re-enable.
+      // {
+      //   name: 'settings',
+      //   icon: 'mdi:cog',
+      //   label: t('translation|Settings'),
+      //   url: '/settings/general',
+      //   subList: [
+      //     {
+      //       name: 'settingsGeneral',
+      //       label: t('translation|General'),
+      //       url: '/settings/general',
+      //     },
+      //     {
+      //       name: 'plugins',
+      //       label: t('translation|Plugins'),
+      //       url: '/settings/plugins',
+      //     },
+      //     {
+      //       name: 'settingsCluster',
+      //       label: t('glossary|Cluster'),
+      //       url: '/settings/cluster',
+      //     },
+      //   ],
+      // },
     ];
     const inClusterItems: SidebarItemProps[] = [
       // Always shown, even with a single cluster: the Home page hosts the

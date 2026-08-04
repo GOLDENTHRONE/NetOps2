@@ -20,7 +20,8 @@ import NotFoundComponent from '../../components/404';
 import AuthToken from '../../components/account/Auth';
 import AddCluster from '../../components/App/CreateCluster/AddCluster';
 import Home from '../../components/App/Home';
-import NotificationList from '../../components/App/Notifications/List';
+// Notifications page disabled — import kept commented so route block below still references it if restored.
+// import NotificationList from '../../components/App/Notifications/List';
 import PluginSettings from '../../components/App/PluginSettings';
 import PluginSettingsDetails from '../../components/App/PluginSettings/PluginSettingsDetails';
 import Settings from '../../components/App/Settings';
@@ -881,22 +882,23 @@ const defaultRoutes: { [routeName: string]: Route } = {
     sidebar: 'crs',
     component: () => <CrInstanceList />,
   },
-  notifications: {
-    path: '/notifications',
-    exact: true,
-    useClusterURL: false,
-    name: 'Notifications',
-    sidebar: {
-      item: 'notifications',
-      sidebar: DefaultSidebars.HOME,
-    },
-    noAuthRequired: true,
-    component: () => (
-      <PageGrid>
-        <NotificationList />
-      </PageGrid>
-    ),
-  },
+  // Notifications page disabled. Restore this route + the NotificationList import above to re-enable.
+  // notifications: {
+  //   path: '/notifications',
+  //   exact: true,
+  //   useClusterURL: false,
+  //   name: 'Notifications',
+  //   sidebar: {
+  //     item: 'notifications',
+  //     sidebar: DefaultSidebars.HOME,
+  //   },
+  //   noAuthRequired: true,
+  //   component: () => (
+  //     <PageGrid>
+  //       <NotificationList />
+  //     </PageGrid>
+  //   ),
+  // },
   settings: {
     path: '/settings/general',
     exact: true,
