@@ -52,6 +52,7 @@ const WORKLOAD_STATE_TO_STATUS: Record<WorkloadState, KubeObjectStatus> = {
   progressing: 'warning',
   ready: 'success',
   scaledZero: 'success',
+  paused: 'warning',
 };
 
 /**
@@ -66,7 +67,11 @@ const WORKLOAD_STATE_TO_STATUS: Record<WorkloadState, KubeObjectStatus> = {
 export function getStatus(w: KubeObject): KubeObjectStatus {
   if (Pod.isClassOf(w)) return getPodStatus(w);
 
-  if (['DaemonSet', 'ReplicaSet', 'StatefulSet', 'Deployment', 'Job'].includes(w.kind)) {
+  if (
+    ['DaemonSet', 'ReplicaSet', 'StatefulSet', 'Deployment', 'DeploymentConfig', 'Job'].includes(
+      w.kind
+    )
+  ) {
     return WORKLOAD_STATE_TO_STATUS[evaluateWorkload(w.jsonData).state];
   }
 

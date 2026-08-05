@@ -370,12 +370,26 @@ export default function ApplicationList() {
         // the value carried by the row (see AppRow) changes as data lands, so
         // the memoized cell re-renders and the count is never stuck.
         accessorFn: app => app.summary?.count ?? (app.resourcesLoading ? -1 : 0),
-        Cell: ({ cell }) => {
+        Cell: ({ cell, row: { original } }) => {
           const value = cell.getValue<number>();
           if (value === -1) {
             return <LoadingDots size={5} />;
           }
-          return value;
+          // Bare total (1269 = ConfigMaps + Secrets + …) hides what an
+          // operator scans for. Hover surfaces the by-kind breakdown so the
+          // number can be read against reality without leaving the row.
+          const counts = original.summary?.health.resourceCountsByKind ?? {};
+          const breakdown = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, n]) => `${k}: ${n}`)
+            .join('\n');
+          return (
+            <Tooltip title={<Box sx={{ whiteSpace: 'pre-line' }}>{breakdown}</Box>} placement="top">
+              <Box component="span" sx={{ cursor: 'help' }}>
+                {value}
+              </Box>
+            </Tooltip>
+          );
         },
       },
       {

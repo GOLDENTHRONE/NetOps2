@@ -204,6 +204,34 @@ export const defaultApiResources = (() => {
       kind: 'LimitRange',
       isNamespaced: true,
     },
+    {
+      apiVersion: 'v1',
+      version: 'v1',
+      pluralName: 'pods',
+      singularName: 'pod',
+      kind: 'Pod',
+      isNamespaced: true,
+    },
+    {
+      apiVersion: 'policy/v1',
+      version: 'v1',
+      groupName: 'policy',
+      pluralName: 'poddisruptionbudgets',
+      singularName: 'poddisruptionbudget',
+      kind: 'PodDisruptionBudget',
+      isNamespaced: true,
+    },
+    {
+      // OpenShift DeploymentConfig: on non-OCP clusters this API is absent
+      // and the request 404s, which the resource hook already filters out.
+      apiVersion: 'apps.openshift.io/v1',
+      version: 'v1',
+      groupName: 'apps.openshift.io',
+      pluralName: 'deploymentconfigs',
+      singularName: 'deploymentconfig',
+      kind: 'DeploymentConfig',
+      isNamespaced: true,
+    },
   ];
 
   return resources;

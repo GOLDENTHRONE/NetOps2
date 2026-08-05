@@ -30,7 +30,15 @@ import { useTranslation } from 'react-i18next';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import Link from '../common/Link';
 import { LightTooltip } from '../common/Tooltip';
-import { AppHealth, AppHealthStatus, WorkloadHealth, WorkloadState } from './applicationHealth';
+import {
+  AppHealth,
+  AppHealthStatus,
+  PodHealth,
+  ScheduleInfo,
+  ScheduleState,
+  WorkloadHealth,
+  WorkloadState,
+} from './applicationHealth';
 
 /**
  * The one place that says how each application-health verdict reads: color,
@@ -58,7 +66,31 @@ export const WORKLOAD_STATE_COLOR: Record<WorkloadState, (t: Theme) => string> =
   degraded: t => t.palette.warning.main,
   down: t => t.palette.error.main,
   scaledZero: t => t.palette.text.disabled,
+  paused: t => t.palette.text.secondary,
 };
+
+/**
+ * Colors for the schedule/CronJob dots. Kept in a cooler palette than the
+ * workload states because a CronJob's state is scheduling context, not app
+ * health — an operator scanning the popover must never confuse the two.
+ */
+export const SCHEDULE_STATE_COLOR: Record<ScheduleState, (t: Theme) => string> = {
+  onSchedule: t => t.palette.success.main,
+  running: t => t.palette.info.main,
+  suspended: t => t.palette.text.disabled,
+  behind: t => t.palette.warning.main,
+  never: t => t.palette.text.secondary,
+};
+
+/**
+ * Dot color for a pod problem: hard faults (crashLoop / imagePull / oomKilled)
+ * are error-red; unschedulable is warning-amber since the pod is not broken,
+ * only unplaceable.
+ */
+function podColor(p: PodHealth, theme: Theme): string {
+  if (p.state === 'unschedulable') return theme.palette.warning.main;
+  return theme.palette.error.main;
+}
 
 /**
  * The three-dot pulse used by Headlamp's splash screen, as an inline loading
@@ -104,6 +136,22 @@ export function LoadingDots({ size = 6 }: { size?: number }) {
 export function WorkloadRow({ w, kubeObject }: { w: WorkloadHealth; kubeObject?: KubeObject }) {
   const theme = useTheme();
   const color = WORKLOAD_STATE_COLOR[w.state](theme);
+  // Surface the controller for controller-owned workloads (Job from CronJob
+  // is the common case: "Job foo-28912345 from CronJob foo" beats an opaque
+  // hash-suffixed Job name). Skip the trivial case where the owner is the
+  // resource itself (should not happen but be safe).
+  const ownerLabel =
+    w.ownerKind && w.ownerName && !(w.ownerKind === w.kind && w.ownerName === w.name)
+      ? `${w.ownerKind}/${w.ownerName}`
+      : undefined;
+  // HPA context tag, if an HPA scales this workload. Reading it as
+  // "min–max, current" tells an operator that a temporarily-low ready count
+  // is autoscaler behavior, not a mystery flap.
+  const hpaTag = w.hpa
+    ? `HPA ${w.hpa.min}–${w.hpa.max}${
+        w.hpa.current !== undefined ? `, current ${w.hpa.current}` : ''
+      }`
+    : undefined;
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}>
       <Box
@@ -113,13 +161,105 @@ export function WorkloadRow({ w, kubeObject }: { w: WorkloadHealth; kubeObject?:
       <Typography variant="caption" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
         {w.kind}
       </Typography>
-      <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap title={w.name}>
-        {/* NOTE: no onClick here — Link treats onClick as "disable navigation".
-            The popover is unmounted by the route change itself. */}
-        {kubeObject ? <Link kubeObject={kubeObject}>{w.name}</Link> : w.name}
-      </Typography>
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <Typography variant="caption" noWrap title={w.name}>
+          {/* NOTE: no onClick here — Link treats onClick as "disable navigation".
+              The popover is unmounted by the route change itself. */}
+          {kubeObject ? <Link kubeObject={kubeObject}>{w.name}</Link> : w.name}
+        </Typography>
+        {(ownerLabel || hpaTag) && (
+          <Typography
+            variant="caption"
+            sx={{ color: 'text.secondary', fontStyle: 'italic', lineHeight: 1.2 }}
+            noWrap
+            title={[ownerLabel, hpaTag].filter(Boolean).join(' · ')}
+          >
+            {[ownerLabel && `from ${ownerLabel}`, hpaTag].filter(Boolean).join(' · ')}
+          </Typography>
+        )}
+      </Box>
       <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
         {w.reason ?? `${w.ready}/${w.desired}`}
+      </Typography>
+    </Box>
+  );
+}
+
+/**
+ * One schedule (CronJob) row in the popover. Rendered under a separate
+ * heading so its state cannot be mistaken for a workload verdict.
+ */
+export function ScheduleRow({ s, kubeObject }: { s: ScheduleInfo; kubeObject?: KubeObject }) {
+  const theme = useTheme();
+  const color = SCHEDULE_STATE_COLOR[s.state](theme);
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}>
+      <Box
+        component="span"
+        sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }}
+      />
+      <Typography variant="caption" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {s.kind}
+      </Typography>
+      <Typography variant="caption" sx={{ flex: 1, minWidth: 0 }} noWrap title={s.name}>
+        {kubeObject ? <Link kubeObject={kubeObject}>{s.name}</Link> : s.name}
+      </Typography>
+      <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {s.reason}
+      </Typography>
+    </Box>
+  );
+}
+
+/**
+ * Generic problem row shared by pod / PVC / quota / service / ingress / PDB
+ * sections. Same shape as WorkloadRow (dot, kind, name-with-owner, reason),
+ * kept in one place so every section reads the same way.
+ */
+export function ProblemRow({
+  kind,
+  name,
+  namespace,
+  reason,
+  color,
+  owner,
+  workloadObjects,
+}: {
+  kind: string;
+  name: string;
+  namespace?: string;
+  reason: string;
+  color: string;
+  owner?: string;
+  workloadObjects?: Map<string, KubeObject>;
+}) {
+  const kubeObject = workloadObjects?.get(`${kind}/${namespace}/${name}`);
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.35 }}>
+      <Box
+        component="span"
+        sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color, flexShrink: 0 }}
+      />
+      <Typography variant="caption" sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {kind}
+      </Typography>
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <Typography variant="caption" noWrap title={name}>
+          {kubeObject ? <Link kubeObject={kubeObject}>{name}</Link> : name}
+        </Typography>
+        {owner && (
+          <Typography
+            variant="caption"
+            sx={{ color: 'text.secondary', fontStyle: 'italic', lineHeight: 1.2 }}
+            noWrap
+            title={owner}
+          >
+            {`from ${owner}`}
+          </Typography>
+        )}
+      </Box>
+      <Typography variant="caption" sx={{ color, fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {reason}
       </Typography>
     </Box>
   );
@@ -144,7 +284,18 @@ export function HealthBreakdown({
   const { t } = useTranslation(['translation']);
   const p = HEALTH_PRESENTATION[health.status];
   const color = p.color(theme);
-  const problems = health.workloads.filter(w => w.state !== 'ready' && w.state !== 'scaledZero');
+  // "Problems" excludes intentional off-states (scaledZero, paused): a paused
+  // Deployment with N/N ready is not a fault, and inflating the "not ready"
+  // count with it would misrepresent the app.
+  const problems = health.workloads.filter(
+    w => w.state !== 'ready' && w.state !== 'scaledZero' && w.state !== 'paused'
+  );
+  const shownServiceProblems = health.serviceProblems.slice(0, 6);
+  const hiddenServiceProblems = Math.max(
+    0,
+    health.serviceProblems.length - shownServiceProblems.length
+  );
+  const criticalServices = health.criticalServiceProblems.length;
 
   return (
     <>
@@ -180,6 +331,11 @@ export function HealthBreakdown({
           : health.status === 'empty'
           ? t('translation|This application has no resources.')
           : health.summary}
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+        {t(
+          'translation|Health status counts workloads first. Pods/storage/quota/network checks are extra signals shown below.'
+        )}
       </Typography>
 
       {health.totalWorkloads > 0 && (
@@ -232,6 +388,212 @@ export function HealthBreakdown({
               count: health.totalResources,
             })}
           </Typography>
+        </>
+      )}
+
+      {health.podProblems.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700, color: theme.palette.error.main }}>
+            {t('translation|Pod problems')} ({health.podProblems.length})
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {health.podProblems.slice(0, 6).map(p => (
+              <ProblemRow
+                key={`${p.kind}/${p.namespace}/${p.name}`}
+                kind={p.kind}
+                name={p.name}
+                namespace={p.namespace}
+                reason={p.reason}
+                color={podColor(p, theme)}
+                owner={p.ownerKind && p.ownerName ? `${p.ownerKind}/${p.ownerName}` : undefined}
+                workloadObjects={workloadObjects}
+              />
+            ))}
+            {health.podProblems.length > 6 && (
+              <Typography variant="caption" color="text.secondary">
+                {t('translation|…and {{ count }} more', {
+                  count: health.podProblems.length - 6,
+                })}
+              </Typography>
+            )}
+          </Box>
+        </>
+      )}
+
+      {health.pvcProblems.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700, color: theme.palette.warning.main }}>
+            {t('translation|Storage problems')} ({health.pvcProblems.length})
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {health.pvcProblems.slice(0, 6).map(p => (
+              <ProblemRow
+                key={`${p.kind}/${p.namespace}/${p.name}`}
+                kind={p.kind}
+                name={p.name}
+                namespace={p.namespace}
+                reason={p.reason}
+                color={p.state === 'lost' ? theme.palette.error.main : theme.palette.warning.main}
+                workloadObjects={workloadObjects}
+              />
+            ))}
+          </Box>
+        </>
+      )}
+
+      {health.quotaProblems.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography
+            variant="caption"
+            sx={{
+              fontWeight: 700,
+              color: health.quotaProblems.some(q => q.state === 'exhausted')
+                ? theme.palette.error.main
+                : theme.palette.warning.main,
+            }}
+          >
+            {t('translation|Quota pressure')} ({health.quotaProblems.length})
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {health.quotaProblems.slice(0, 4).map(q => (
+              <ProblemRow
+                key={`${q.kind}/${q.namespace}/${q.name}`}
+                kind={q.kind}
+                name={q.name}
+                namespace={q.namespace}
+                reason={q.reason}
+                color={
+                  q.state === 'exhausted' ? theme.palette.error.main : theme.palette.warning.main
+                }
+                workloadObjects={workloadObjects}
+              />
+            ))}
+          </Box>
+        </>
+      )}
+
+      {health.serviceProblems.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700, color: theme.palette.warning.main }}>
+            {t('translation|Service problems')} ({health.serviceProblems.length})
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            {criticalServices > 0
+              ? t(
+                  'translation|{{ count }} ingress-exposed service(s) affect app health. Others shown as diagnostics.',
+                  { count: criticalServices }
+                )
+              : t('translation|Diagnostic only: internal services without ready endpoints.')}
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {shownServiceProblems.map(s => (
+              <ProblemRow
+                key={`${s.kind}/${s.namespace}/${s.name}`}
+                kind={s.kind}
+                name={s.name}
+                namespace={s.namespace}
+                reason={
+                  health.criticalServiceProblems.some(
+                    cs => cs.name === s.name && cs.namespace === s.namespace
+                  )
+                    ? `${s.reason} (impacts health)`
+                    : `${s.reason} (diagnostic)`
+                }
+                color={
+                  health.criticalServiceProblems.some(
+                    cs => cs.name === s.name && cs.namespace === s.namespace
+                  )
+                    ? theme.palette.warning.main
+                    : theme.palette.text.secondary
+                }
+                workloadObjects={workloadObjects}
+              />
+            ))}
+            {hiddenServiceProblems > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                {t('translation|…and {{ count }} more services', {
+                  count: hiddenServiceProblems,
+                })}
+              </Typography>
+            )}
+          </Box>
+        </>
+      )}
+
+      {health.ingressProblems.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700, color: theme.palette.warning.main }}>
+            {t('translation|Ingress problems')} ({health.ingressProblems.length})
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {health.ingressProblems.slice(0, 6).map(i => (
+              <ProblemRow
+                key={`${i.kind}/${i.namespace}/${i.name}`}
+                kind={i.kind}
+                name={i.name}
+                namespace={i.namespace}
+                reason={i.reason}
+                color={
+                  i.state === 'missingBackend'
+                    ? theme.palette.warning.main
+                    : theme.palette.text.secondary
+                }
+                workloadObjects={workloadObjects}
+              />
+            ))}
+          </Box>
+        </>
+      )}
+
+      {health.pdbProblems.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary' }}>
+            {t('translation|Disruption budgets blocked')} ({health.pdbProblems.length})
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {health.pdbProblems.slice(0, 4).map(p => (
+              <ProblemRow
+                key={`${p.kind}/${p.namespace}/${p.name}`}
+                kind={p.kind}
+                name={p.name}
+                namespace={p.namespace}
+                reason={p.reason}
+                color={theme.palette.text.secondary}
+                workloadObjects={workloadObjects}
+              />
+            ))}
+          </Box>
+        </>
+      )}
+
+      {health.schedules.length > 0 && (
+        <>
+          <Divider sx={{ my: 1 }} />
+          <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary' }}>
+            {t('translation|Scheduled jobs (informational)')}
+          </Typography>
+          <Box sx={{ mt: 0.5 }}>
+            {health.schedules.slice(0, 6).map(s => (
+              <ScheduleRow
+                key={`${s.kind}/${s.namespace}/${s.name}`}
+                s={s}
+                kubeObject={workloadObjects?.get(`${s.kind}/${s.namespace}/${s.name}`)}
+              />
+            ))}
+            {health.schedules.length > 6 && (
+              <Typography variant="caption" color="text.secondary">
+                {t('translation|…and {{ count }} more', {
+                  count: health.schedules.length - 6,
+                })}
+              </Typography>
+            )}
+          </Box>
         </>
       )}
     </>
@@ -366,18 +728,29 @@ export function ApplicationHealthChip({
 
 /**
  * Builds the "kind/namespace/name" → KubeObject map the popover uses to link
- * each evaluated workload to its live object.
+ * each evaluated workload, schedule and problem row (pods, PVCs, quotas,
+ * services, ingresses, PDBs) to its live object.
  */
 export function buildWorkloadObjectsMap(
   items: KubeObject[],
   health: AppHealth
 ): Map<string, KubeObject> {
-  const workloadObjects = new Map<string, KubeObject>();
+  const wanted = new Set<string>();
+  const add = (arr: Array<{ kind: string; namespace?: string; name: string }>) => {
+    for (const it of arr) wanted.add(`${it.kind}/${it.namespace}/${it.name}`);
+  };
+  add(health.workloads);
+  add(health.schedules);
+  add(health.podProblems);
+  add(health.pvcProblems);
+  add(health.quotaProblems);
+  add(health.serviceProblems);
+  add(health.ingressProblems);
+  add(health.pdbProblems);
+  const out = new Map<string, KubeObject>();
   for (const item of items) {
     const key = `${item.kind}/${item.metadata.namespace}/${item.metadata.name}`;
-    if (health.workloads.some(w => `${w.kind}/${w.namespace}/${w.name}` === key)) {
-      workloadObjects.set(key, item);
-    }
+    if (wanted.has(key)) out.set(key, item);
   }
-  return workloadObjects;
+  return out;
 }

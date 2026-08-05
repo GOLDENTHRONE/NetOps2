@@ -26,12 +26,18 @@ import { isBusinessApplicationNamespace } from './applicationUtils';
 
 /**
  * Kinds that are fetched for the Projects feature but deliberately NOT for
- * Applications: they mirror other fetched kinds (Endpoints/EndpointSlices
- * restate Services) or are rarely-used namespace policy objects, yet their
- * cluster-wide lists are among the largest responses. Dropping them removes
- * requests and megabytes without losing information an operator acts on.
+ * Applications: raw Endpoints restate what EndpointSlice already provides,
+ * and LimitRange is a rarely-used namespace policy object whose cluster-wide
+ * list is among the largest responses. Dropping them removes requests and
+ * megabytes without losing information an operator acts on.
+ *
+ * NOTE: ResourceQuota and EndpointSlice were previously skipped for cost;
+ * they are now fetched because the application-health evaluator needs them
+ * (quota near-exhaustion warns before the next pod fails admission, and
+ * EndpointSlices are the only way to tell that a Service has no ready
+ * backends behind it).
  */
-const SKIPPED_KINDS = new Set(['Endpoints', 'EndpointSlice', 'LimitRange', 'ResourceQuota']);
+const SKIPPED_KINDS = new Set(['Endpoints', 'LimitRange']);
 
 /**
  * Fetch order: the browser only runs a handful of requests to the backend in
@@ -41,16 +47,21 @@ const SKIPPED_KINDS = new Set(['Endpoints', 'EndpointSlice', 'LimitRange', 'Reso
  */
 const KIND_PRIORITY = [
   'Deployment',
+  'DeploymentConfig',
   'StatefulSet',
   'DaemonSet',
   'ReplicaSet',
   'Job',
   'CronJob',
+  'Pod',
   'Service',
+  'EndpointSlice',
   'Ingress',
   'HorizontalPodAutoscaler',
-  'NetworkPolicy',
+  'PodDisruptionBudget',
+  'ResourceQuota',
   'PersistentVolumeClaim',
+  'NetworkPolicy',
   'Role',
   'RoleBinding',
   'ConfigMap',
