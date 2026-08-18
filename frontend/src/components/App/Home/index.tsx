@@ -35,6 +35,7 @@ import ProjectList from '../../project/ProjectList';
 import ClusterTable from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
 import { getCustomClusterNames } from './customClusterNames';
+import { useClustersOcpVersion } from './ocpVersion';
 import RecentClusters from './RecentClusters';
 
 export default function Home() {
@@ -148,6 +149,7 @@ function HomeComponent(props: HomeComponentProps) {
   );
 
   const warningLabels = useWarningSettingsPerCluster(clusterNames);
+  const ocpVersions = useClustersOcpVersion(clusterNames);
 
   React.useEffect(() => {
     if (isBackstage()) {
@@ -176,6 +178,7 @@ function HomeComponent(props: HomeComponentProps) {
           versions={versions}
           errors={errors}
           warningLabels={warningLabels}
+          ocpVersions={ocpVersions}
           clusters={clusters}
           connectedClusterNames={connectedClusters}
           onConnectCluster={handleConnectCluster}
@@ -187,6 +190,7 @@ function HomeComponent(props: HomeComponentProps) {
       errors,
       versions,
       warningLabels,
+      ocpVersions,
       clusters,
       connectedClusters,
       handleConnectCluster,

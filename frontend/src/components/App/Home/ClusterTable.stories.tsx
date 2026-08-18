@@ -22,6 +22,7 @@ import {
   CLUSTERS,
   CLUSTERS_BY_NAME,
   makeError,
+  OCP_VERSIONS,
   UNHEALTHY_INVENTORY_CLUSTER,
   VERSIONS,
   WARNING_LABELS,
@@ -55,12 +56,14 @@ const baseArgs: ClusterTableProps = {
   versions: VERSIONS,
   errors: Object.fromEntries(CLUSTERS.map(cluster => [cluster.name, null])),
   warningLabels: WARNING_LABELS,
+  ocpVersions: OCP_VERSIONS,
   connectedClusterNames: ALL_CONNECTED,
   onConnectCluster: () => {},
 };
 
-// Connected and reachable clusters, one per origin kind, so the Origin column
-// covers every branch of getOrigin.
+// Connected and reachable clusters, one per origin kind. The OCP version column
+// covers a version read from the cluster, one derived from the Kubernetes
+// version, and clusters that don't run OpenShift.
 export const Default = Template.bind({});
 Default.args = baseArgs;
 

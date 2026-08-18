@@ -352,6 +352,23 @@ export default function Table<RowItem extends Record<string, any>>({
     [tableProps.state?.columnVisibility, columnVisibility, responsiveHidden]
   );
 
+  // Whether any column filters through a dropdown of the values in the table.
+  const hasSelectFilterColumn = useMemo(
+    () =>
+      tableColumns.some(
+        column => column.filterVariant === 'select' || column.filterVariant === 'multi-select'
+      ),
+    [tableColumns]
+  );
+
+  // Column filters can come back from storage or from the URL while the filter
+  // row itself is hidden, which leaves the table filtered with nothing on screen
+  // to say why. Start with the filter row open whenever that happens.
+  const initialShowColumnFilters = useRef(
+    tableProps.initialState?.showColumnFilters ??
+      (tableProps.state?.columnFilters ?? tableProps.initialState?.columnFilters ?? []).length > 0
+  ).current;
+
   const table = useMaterialReactTable({
     ...tableProps,
     columns: tableColumns ?? [],
@@ -360,6 +377,11 @@ export default function Table<RowItem extends Record<string, any>>({
     enableDensityToggle: tableProps.enableDensityToggle ?? false,
     enableFullScreenToggle: tableProps.enableFullScreenToggle ?? false,
     enableColumnActions: false,
+    // Needed by the `filterVariant: 'select'` columns: it is what fills their
+    // dropdown with the values present in the table, and their counts. Only
+    // turned on for tables that have such a column, since the faceted values
+    // are computed for every filterable column of the table.
+    enableFacetedValues: tableProps.enableFacetedValues ?? hasSelectFilterColumn,
     localization: getTableLocalization(i18n.resolvedLanguage || i18n.language),
     autoResetAll: false,
     icons: {
@@ -393,8 +415,9 @@ export default function Table<RowItem extends Record<string, any>>({
         density: 'compact',
         globalFilter: globalFilter || '',
         ...(tableProps.initialState ?? {}),
+        showColumnFilters: initialShowColumnFilters,
       }),
-      [tableProps.initialState, globalFilter]
+      [tableProps.initialState, globalFilter, initialShowColumnFilters]
     ),
     state: useMemo(
       () => ({
@@ -485,6 +508,18 @@ export default function Table<RowItem extends Record<string, any>>({
     {},
     [table]
   );
+
+  // Hiding the column filters clears them too. Otherwise the table stays
+  // filtered by inputs that are no longer on screen, and toggling the button
+  // looks like it did nothing to the rows.
+  const showColumnFilters = table.getState().showColumnFilters;
+  const wasShowingColumnFilters = useRef(showColumnFilters);
+  useEffect(() => {
+    if (wasShowingColumnFilters.current && !showColumnFilters) {
+      table.setColumnFilters([]);
+    }
+    wasShowingColumnFilters.current = showColumnFilters;
+  }, [showColumnFilters, table]);
 
   // Hide actions column when others are hidden
   useEffect(() => {
@@ -632,6 +667,10 @@ export default function Table<RowItem extends Record<string, any>>({
                   showColumnFilters={table.getState().showColumnFilters}
                   selected={table.getSelectedRowModel().flatRows.length}
                   filterValue={header.column.getFilterValue()}
+                  filterOptions={getFilterOptionsKey(
+                    header as MRT_Header<Record<string, any>>,
+                    table.getState().showColumnFilters
+                  )}
                 />
               ))}
             </StyledHeadRow>
@@ -664,6 +703,33 @@ export default function Table<RowItem extends Record<string, any>>({
   );
 }
 
+/**
+ * Signature of the dropdown options of a "select" column filter: the values in
+ * the table and how many rows each of them has.
+ *
+ * The head cells are memoized, so without this they would keep showing the
+ * options (and counts) computed when they were last rendered. Only computed
+ * while the filters are on screen, since that's the only time they're shown.
+ *
+ * @param header - the header of the column.
+ * @param showColumnFilters - whether the column filters are visible.
+ * @returns a string that changes whenever the options or their counts change.
+ */
+function getFilterOptionsKey<RowItem extends Record<string, any>>(
+  header: MRT_Header<RowItem>,
+  showColumnFilters: boolean
+): string {
+  const filterVariant = header.column.columnDef.filterVariant;
+  if (!showColumnFilters || (filterVariant !== 'select' && filterVariant !== 'multi-select')) {
+    return '';
+  }
+
+  const facetedValues = header.column.getFacetedUniqueValues();
+  return Array.from(facetedValues?.entries() ?? [])
+    .map(([value, count]) => `${value}:${count}`)
+    .join(',');
+}
+
 const MemoHeadCell = memo(
   <RowItem extends Record<string, any>>({
     header,
@@ -676,6 +742,7 @@ const MemoHeadCell = memo(
     selected: number;
     showColumnFilters: boolean;
     filterValue: any;
+    filterOptions: string;
   }) => {
     return (
       <MRT_TableHeadCell
@@ -693,7 +760,8 @@ const MemoHeadCell = memo(
     a.isFiltered === b.isFiltered &&
     a.showColumnFilters === b.showColumnFilters &&
     (a.header.column.id === 'mrt-row-select' ? a.selected === b.selected : true) &&
-    a.filterValue === b.filterValue
+    a.filterValue === b.filterValue &&
+    a.filterOptions === b.filterOptions
 );
 
 const Row = memo(
