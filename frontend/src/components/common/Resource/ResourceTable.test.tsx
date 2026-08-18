@@ -227,3 +227,137 @@ describe('ResourceTable Column Visibility', () => {
     expect(lastTablePropsHolder.current.enableFacetedValues).toBe(true);
   });
 });
+
+describe('ResourceTable Category Filters', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    lastTablePropsHolder.current = null;
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation(query => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const renderTable = (props: any) => {
+    return render(
+      <TestContext>
+        <ThemeProvider theme={theme}>
+          <ResourceTable {...props} />
+        </ThemeProvider>
+      </TestContext>
+    );
+  };
+
+  const getColumn = (id: string) =>
+    lastTablePropsHolder.current.columns.find((col: any) => col.id === id);
+
+  const statusData = [
+    { metadata: { name: 'a', creationTimestamp: '2021-12-15T14:57:13Z' }, status: 'Running' },
+    { metadata: { name: 'b', creationTimestamp: '2021-12-15T14:57:13Z' }, status: 'Running' },
+    { metadata: { name: 'c', creationTimestamp: '2021-12-15T14:57:13Z' }, status: 'Completed' },
+    { metadata: { name: 'd', creationTimestamp: '2021-12-15T14:57:13Z' }, status: 'Failed' },
+  ] as any[];
+
+  it('turns a categorical column into a multi-select dropdown with per-category counts', () => {
+    const columns = [
+      { id: 'name', label: 'Name', getValue: (item: any) => item.metadata.name },
+      { id: 'status', label: 'Status', getValue: (item: any) => item.status },
+    ];
+
+    renderTable({ id: 'status-table', columns, data: statusData });
+
+    const statusColumn = getColumn('status');
+    expect(statusColumn.filterVariant).toBe('multi-select');
+    // Sorted by count descending, then label ascending.
+    expect(statusColumn.filterSelectOptions).toEqual([
+      { value: 'Running', label: 'Running (2)' },
+      { value: 'Completed', label: 'Completed (1)' },
+      { value: 'Failed', label: 'Failed (1)' },
+    ]);
+  });
+
+  it('leaves a column with a unique value per row as a free-text filter', () => {
+    const columns = [
+      { id: 'name', label: 'Name', getValue: (item: any) => item.metadata.name },
+      { id: 'status', label: 'Status', getValue: (item: any) => item.status },
+    ];
+
+    renderTable({ id: 'status-table', columns, data: statusData });
+
+    const nameColumn = getColumn('name');
+    expect(nameColumn.filterVariant).toBeUndefined();
+    expect(nameColumn.filterSelectOptions).toBeUndefined();
+  });
+
+  it('adds counts to a column that already uses a select filter', () => {
+    const columns = [
+      { id: 'name', label: 'Name', getValue: (item: any) => item.metadata.name },
+      {
+        id: 'status',
+        label: 'Status',
+        filterVariant: 'multi-select',
+        getValue: (item: any) => item.status,
+      },
+    ];
+
+    renderTable({ id: 'status-table', columns, data: statusData });
+
+    const statusColumn = getColumn('status');
+    expect(statusColumn.filterVariant).toBe('multi-select');
+    expect(statusColumn.filterSelectOptions).toEqual([
+      { value: 'Running', label: 'Running (2)' },
+      { value: 'Completed', label: 'Completed (1)' },
+      { value: 'Failed', label: 'Failed (1)' },
+    ]);
+  });
+
+  it('respects caller-provided filter options and does not inject counts', () => {
+    const columns = [
+      { id: 'name', label: 'Name', getValue: (item: any) => item.metadata.name },
+      {
+        id: 'status',
+        label: 'Status',
+        filterVariant: 'multi-select',
+        filterSelectOptions: ['Running', 'Completed', 'Failed'],
+        getValue: (item: any) => item.status,
+      },
+    ];
+
+    renderTable({ id: 'status-table', columns, data: statusData });
+
+    const statusColumn = getColumn('status');
+    expect(statusColumn.filterSelectOptions).toEqual(['Running', 'Completed', 'Failed']);
+  });
+
+  it('does not build category options once faceted values are disabled', () => {
+    const columns = [
+      { id: 'name', label: 'Name', getValue: (item: any) => item.metadata.name },
+      { id: 'status', label: 'Status', getValue: (item: any) => item.status },
+    ];
+    const data = Array.from({ length: 501 }, (_, index) => ({
+      metadata: { name: `pod-${index}`, creationTimestamp: '2021-12-15T14:57:13Z' },
+      status: index % 2 === 0 ? 'Running' : 'Failed',
+    })) as any[];
+
+    renderTable({ id: 'large-status-table', columns, data });
+
+    const statusColumn = getColumn('status');
+    expect(statusColumn.filterVariant).toBeUndefined();
+    expect(statusColumn.filterSelectOptions).toBeUndefined();
+  });
+});

@@ -27,6 +27,7 @@ import {
   MRT_BottomToolbar,
   MRT_Cell,
   MRT_ColumnDef as MaterialTableColumn,
+  MRT_ColumnFiltersState,
   MRT_Header,
   MRT_Localization,
   MRT_TableBodyCell,
@@ -50,7 +51,7 @@ import { MRT_Localization_PT } from 'material-react-table/locales/pt';
 import { MRT_Localization_RU } from 'material-react-table/locales/ru';
 import { MRT_Localization_ZH_HANS } from 'material-react-table/locales/zh-Hans';
 import { MRT_Localization_ZH_HANT } from 'material-react-table/locales/zh-Hant';
-import { memo, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getTablesRowsPerPage, setTablesRowsPerPage } from '../../../helpers/tablesRowsPerPage';
 import { useShortcut } from '../../../lib/useShortcut';
@@ -283,6 +284,50 @@ export default function Table<RowItem extends Record<string, any>>({
     tableProps.initialState?.columnVisibility ?? {}
   );
 
+  // Controlled column-filter state. We own both the visibility of the filter row
+  // and the active filter values so that hiding the filter row also clears any
+  // filters the user had typed/selected — showing it again always starts empty.
+  const [showColumnFilters, setShowColumnFilters] = useState<boolean>(
+    tableProps.initialState?.showColumnFilters ?? false
+  );
+  const [columnFilters, setColumnFilters] = useState<MRT_ColumnFiltersState>(
+    tableProps.initialState?.columnFilters ?? []
+  );
+  // Mirror of `showColumnFilters` for use inside callbacks without re-creating them.
+  const showColumnFiltersRef = useRef(showColumnFilters);
+  useEffect(() => {
+    showColumnFiltersRef.current = showColumnFilters;
+  }, [showColumnFilters]);
+
+  const handleShowColumnFiltersChange = useCallback(
+    (updater: boolean | ((old: boolean) => boolean)) => {
+      setShowColumnFilters(prev => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        // Clear any active column filters whenever the filter row is hidden.
+        if (!next) {
+          setColumnFilters([]);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleColumnFiltersChange = useCallback(
+    (
+      updater: MRT_ColumnFiltersState | ((old: MRT_ColumnFiltersState) => MRT_ColumnFiltersState)
+    ) => {
+      // The filter inputs debounce their changes, so an update can land just after
+      // the filter row was hidden. Ignore those so a cleared value can't reappear
+      // the next time the row is shown.
+      if (!showColumnFiltersRef.current) {
+        return;
+      }
+      setColumnFilters(prev => (typeof updater === 'function' ? updater(prev) : updater));
+    },
+    []
+  );
+
   // Provide defaults for the columns
   const tableColumns: TableColumn<RowItem>[] = useMemo(
     () =>
@@ -407,6 +452,8 @@ export default function Table<RowItem extends Record<string, any>>({
     },
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnFiltersChange: handleColumnFiltersChange,
+    onShowColumnFiltersChange: handleShowColumnFiltersChange,
     renderToolbarInternalActions: props => {
       const isSomeRowsSelected =
         tableProps.enableRowSelection && props.table.getSelectedRowModel().rows.length !== 0;
@@ -431,6 +478,8 @@ export default function Table<RowItem extends Record<string, any>>({
         ...(tableProps.state ?? {}),
         columnOrder,
         columnVisibility: mergedColumnVisibility,
+        columnFilters,
+        showColumnFilters,
         pagination: {
           pageIndex: page - 1,
           pageSize: pageSize,
@@ -438,7 +487,16 @@ export default function Table<RowItem extends Record<string, any>>({
         globalFilter,
         ...(globalFilter ? { showGlobalFilter: true } : {}),
       }),
-      [tableProps.state, columnOrder, mergedColumnVisibility, page, pageSize, globalFilter]
+      [
+        tableProps.state,
+        columnOrder,
+        mergedColumnVisibility,
+        columnFilters,
+        showColumnFilters,
+        page,
+        pageSize,
+        globalFilter,
+      ]
     ),
     positionActionsColumn: 'last',
     layoutMode: 'grid',

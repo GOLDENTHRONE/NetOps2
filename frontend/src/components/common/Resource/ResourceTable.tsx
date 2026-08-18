@@ -140,6 +140,50 @@ const DEFAULT_SORT_COLUMN_ID = 'age';
  */
 const MAX_TABLE_ID_LENGTH = 50;
 
+/**
+ * A text column is turned into a category dropdown filter only when it has at
+ * least this many distinct values (a single value isn't worth a dropdown).
+ */
+const MIN_CATEGORY_OPTIONS = 2;
+
+/**
+ * Upper bound on the number of distinct values for a plain text column to be
+ * auto-detected as categorical. Columns with more distinct values than this are
+ * left as free-text filters (they look like identifiers, not categories).
+ * Columns that already opt in to a select/multi-select filter are not subject to
+ * this cap.
+ */
+const MAX_AUTO_CATEGORY_OPTIONS = 8;
+
+/**
+ * Counts how many rows fall under each distinct value produced by the column's
+ * accessor. Empty/nullish values are ignored. Used to build the category
+ * dropdown options with their per-category counts.
+ */
+function getCategoryCounts<RowItem>(
+  accessorFn: ((item: RowItem) => any) | undefined,
+  rows: RowItem[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!accessorFn) {
+    return counts;
+  }
+  for (const row of rows) {
+    let value: any;
+    try {
+      value = accessorFn(row);
+    } catch {
+      continue;
+    }
+    if (value === null || value === undefined || value === '') {
+      continue;
+    }
+    const key = String(value);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export interface ResourceTableProps<RowItem> {
   /** The columns to be rendered, like used in Table, or by name. */
   columns: (ResourceTableColumn<RowItem> | ColumnType)[];
@@ -725,6 +769,53 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
   // it once the dataset exceeds a threshold where the cost outweighs the UX benefit.
   const enableFacetedValues = (data?.length ?? 0) <= 500;
 
+  // Turn columns with a small set of distinct values into a category dropdown and
+  // label every option with how many rows fall under it (e.g. "Running (12)").
+  // Columns that already use a select/multi-select filter keep that variant and
+  // simply gain the per-option counts. This runs for every table, so the feature
+  // is available wherever the column-filter row is shown. It reuses the same
+  // dataset-size guard as faceted values to avoid the cost on large clusters.
+  const columnsWithCategoryFilters = useMemo(() => {
+    const rows = data ?? [];
+    if (!enableFacetedValues || rows.length === 0) {
+      return allColumns;
+    }
+
+    return allColumns.map(column => {
+      // Skip columns that can't be filtered or already define their own options.
+      if (column.enableColumnFilter === false || column.filterSelectOptions) {
+        return column;
+      }
+
+      const variant = column.filterVariant;
+      const isSelectVariant = variant === 'select' || variant === 'multi-select';
+
+      const counts = getCategoryCounts(column.accessorFn as (item: RowItem) => any, rows);
+      const distinct = counts.size;
+
+      // Auto-detect categorical text columns: enough distinct values to be worth a
+      // dropdown, few enough to look like categories, and not one-value-per-row.
+      const isCategorical =
+        distinct >= MIN_CATEGORY_OPTIONS &&
+        distinct <= MAX_AUTO_CATEGORY_OPTIONS &&
+        distinct < rows.length;
+
+      if (!isSelectVariant && !isCategorical) {
+        return column;
+      }
+
+      const filterSelectOptions = Array.from(counts.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([value, count]) => ({ value, label: `${value} (${count})` }));
+
+      return {
+        ...column,
+        filterVariant: variant ?? 'multi-select',
+        filterSelectOptions,
+      };
+    });
+  }, [allColumns, data, enableFacetedValues]);
+
   return (
     <>
       <ClusterGroupErrorMessage errors={errors} />
@@ -734,7 +825,7 @@ function ResourceTableContent<RowItem extends KubeObject>(props: ResourceTablePr
         enableRowSelection={wrappedEnableRowSelection}
         renderRowSelectionToolbar={renderRowSelectionToolbar}
         errorMessage={errorMessage}
-        columns={allColumns as TableColumn<RowItem>[]}
+        columns={columnsWithCategoryFilters as TableColumn<RowItem>[]}
         data={(data ?? []) as Array<RowItem>}
         loading={data === null}
         initialState={initialState}
