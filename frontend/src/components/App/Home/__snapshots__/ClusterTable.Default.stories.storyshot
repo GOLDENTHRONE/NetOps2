@@ -135,7 +135,7 @@
         </div>
       </div>
       <table
-        class="MuiTable-root css-g0cegk-MuiTable-root"
+        class="MuiTable-root css-m7iqnn-MuiTable-root"
       >
         <thead
           class="MuiTableHead-root css-1tmrira-MuiTableHead-root"
@@ -232,61 +232,6 @@
                       >
                         <path
                           d="m20 12-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8z"
-                        />
-                      </svg>
-                    </span>
-                    <span
-                      class="MuiBadge-badge MuiBadge-standard MuiBadge-invisible MuiBadge-anchorOriginTopRight MuiBadge-anchorOriginTopRightCircular MuiBadge-overlapCircular css-dniquu-MuiBadge-badge"
-                    >
-                      0
-                    </span>
-                  </span>
-                </div>
-                <div
-                  class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
-                />
-              </div>
-            </th>
-            <th
-              aria-sort="none"
-              class="MuiTableCell-root MuiTableCell-head MuiTableCell-alignLeft MuiTableCell-sizeMedium css-4ks04s-MuiTableCell-root"
-              colspan="1"
-              data-can-sort="true"
-              data-index="-1"
-              scope="col"
-            >
-              <div
-                class="Mui-TableHeadCell-Content MuiBox-root css-1w86f15"
-              >
-                <div
-                  class="Mui-TableHeadCell-Content-Labels MuiBox-root css-68rqdf"
-                >
-                  <div
-                    class="Mui-TableHeadCell-Content-Wrapper MuiBox-root css-lapokc"
-                  >
-                    Origin
-                  </div>
-                  <span
-                    aria-label="Sort by Origin ascending"
-                    class="MuiBadge-root css-1c32n2y-MuiBadge-root"
-                    data-mui-internal-clone-element="true"
-                  >
-                    <span
-                      aria-label="Sort by Origin ascending"
-                      class="MuiButtonBase-root MuiTableSortLabel-root Mui-active css-542clt-MuiButtonBase-root-MuiTableSortLabel-root"
-                      role="button"
-                      tabindex="0"
-                    >
-                      <svg
-                        aria-hidden="true"
-                        class="MuiSvgIcon-root MuiSvgIcon-fontSizeMedium MuiTableSortLabel-icon MuiTableSortLabel-iconDirectionAsc css-1vweko9-MuiSvgIcon-root-MuiTableSortLabel-icon"
-                        data-testid="SyncAltIcon"
-                        focusable="false"
-                        style="transform: rotate(-90deg) scaleX(0.9) translateX(-1px);"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          d="m18 12 4-4-4-4v3H3v2h15zM6 12l-4 4 4 4v-3h15v-2H6z"
                         />
                       </svg>
                     </span>
@@ -467,30 +412,6 @@
                 />
               </div>
             </th>
-            <th
-              aria-sort="none"
-              class="MuiTableCell-root MuiTableCell-head MuiTableCell-alignLeft MuiTableCell-sizeMedium css-113nv55-MuiTableCell-root"
-              colspan="1"
-              data-index="-1"
-              scope="col"
-            >
-              <div
-                class="Mui-TableHeadCell-Content MuiBox-root css-1w86f15"
-              >
-                <div
-                  class="Mui-TableHeadCell-Content-Labels MuiBox-root css-1byo2ey"
-                >
-                  <div
-                    class="Mui-TableHeadCell-Content-Wrapper MuiBox-root css-lapokc"
-                  >
-                    Actions
-                  </div>
-                </div>
-                <div
-                  class="Mui-TableHeadCell-Content-Actions MuiBox-root css-epvm6"
-                />
-              </div>
-            </th>
           </tr>
         </thead>
         <tbody
@@ -555,15 +476,6 @@
               </span>
             </td>
             <td
-              class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-            >
-              <p
-                class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-              >
-                Kubeconfig: /home/user/.kube/config
-              </p>
-            </td>
-            <td
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
             >
               <div
@@ -586,24 +498,6 @@
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
             >
               v1.31.2
-            </td>
-            <td
-              class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
-            >
-              <button
-                aria-controls="context-menuid"
-                aria-haspopup="menu"
-                aria-label="Actions"
-                class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-hvz71z-MuiButtonBase-root-MuiIconButton-root"
-                data-mui-internal-clone-element="true"
-                tabindex="0"
-                type="button"
-              >
-                <span
-                  class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
-                />
-              </button>
-              <div />
             </td>
           </tr>
           <tr
@@ -665,15 +559,6 @@
               </span>
             </td>
             <td
-              class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-            >
-              <p
-                class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-              >
-                In-cluster
-              </p>
-            </td>
-            <td
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
             >
               <div
@@ -694,24 +579,6 @@
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
             >
               v1.30.6
-            </td>
-            <td
-              class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
-            >
-              <button
-                aria-controls="context-menuid"
-                aria-haspopup="menu"
-                aria-label="Actions"
-                class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-hvz71z-MuiButtonBase-root-MuiIconButton-root"
-                data-mui-internal-clone-element="true"
-                tabindex="0"
-                type="button"
-              >
-                <span
-                  class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
-                />
-              </button>
-              <div />
             </td>
           </tr>
           <tr
@@ -773,15 +640,6 @@
               </span>
             </td>
             <td
-              class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-            >
-              <p
-                class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-              >
-                Plugin
-              </p>
-            </td>
-            <td
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
             >
               <div
@@ -804,24 +662,6 @@
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
             >
               v1.29.9
-            </td>
-            <td
-              class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
-            >
-              <button
-                aria-controls="context-menuid"
-                aria-haspopup="menu"
-                aria-label="Actions"
-                class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-hvz71z-MuiButtonBase-root-MuiIconButton-root"
-                data-mui-internal-clone-element="true"
-                tabindex="0"
-                type="button"
-              >
-                <span
-                  class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
-                />
-              </button>
-              <div />
             </td>
           </tr>
           <tr
@@ -883,15 +723,6 @@
               </span>
             </td>
             <td
-              class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1fu0nlf-MuiTableCell-root"
-            >
-              <p
-                class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
-              >
-                Cluster Inventory
-              </p>
-            </td>
-            <td
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1n4xkg0-MuiTableCell-root"
             >
               <div
@@ -912,24 +743,6 @@
               class="MuiTableCell-root MuiTableCell-alignLeft MuiTableCell-sizeMedium css-1qb9npk-MuiTableCell-root"
             >
               v1.31.0
-            </td>
-            <td
-              class="MuiTableCell-root MuiTableCell-alignRight MuiTableCell-sizeMedium css-133cxkx-MuiTableCell-root"
-            >
-              <button
-                aria-controls="context-menuid"
-                aria-haspopup="menu"
-                aria-label="Actions"
-                class="MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall css-hvz71z-MuiButtonBase-root-MuiIconButton-root"
-                data-mui-internal-clone-element="true"
-                tabindex="0"
-                type="button"
-              >
-                <span
-                  class="MuiTouchRipple-root css-8je8zh-MuiTouchRipple-root"
-                />
-              </button>
-              <div />
             </td>
           </tr>
         </tbody>

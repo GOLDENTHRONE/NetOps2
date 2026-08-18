@@ -45,12 +45,14 @@ import Table from '../../common/Table';
 import { LightTooltip } from '../../common/Tooltip';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterBadge from '../../Sidebar/ClusterBadge';
-import ClusterContextMenu from './ClusterContextMenu';
+// Commented out together with the "Actions" column below.
+// import ClusterContextMenu from './ClusterContextMenu';
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
   getConditionTooltip,
-  isClusterInventoryCluster,
+  // Commented out together with the "Origin" column below.
+  // isClusterInventoryCluster,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 import { canSelectCluster } from './clusterStatus';
@@ -244,25 +246,29 @@ export default function ClusterTable({
     [setColumnFilters]
   );
 
-  /**
+  /*
+   * Commented out together with the "Origin" column below. Kept here so the
+   * column can be brought back without rewriting it.
+   *
    * Gets the origin of a cluster.
    *
    * @param cluster
    * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
+   *
+   * function getOrigin(cluster: Cluster): string {
+   *   if (cluster?.meta_data?.source === 'kubeconfig') {
+   *     const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
+   *     return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
+   *   } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
+   *     return t('translation|Plugin');
+   *   } else if (cluster?.meta_data?.source === 'incluster') {
+   *     return t('translation|In-cluster');
+   *   } else if (isClusterInventoryCluster(cluster)) {
+   *     return t('translation|Cluster Inventory');
+   *   }
+   *   return t('translation|Unknown');
+   * }
    */
-  function getOrigin(cluster: Cluster): string {
-    if (cluster?.meta_data?.source === 'kubeconfig') {
-      const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
-      return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
-    } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
-      return t('translation|Plugin');
-    } else if (cluster?.meta_data?.source === 'incluster') {
-      return t('translation|In-cluster');
-    } else if (isClusterInventoryCluster(cluster)) {
-      return t('translation|Cluster Inventory');
-    }
-    return t('translation|Unknown');
-  }
 
   const viewClusters = t('View Clusters');
 
@@ -344,17 +350,26 @@ export default function ClusterTable({
             );
           },
         },
-        {
-          id: 'origin',
-          header: t('Origin'),
-          accessorFn: cluster => getOrigin(cluster),
-          Cell: ({ row: { original } }) => (
-            <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
-          ),
-        },
+        /*
+         * The "Origin" column is commented out on purpose: it is not removed so
+         * it can be turned back on by uncommenting this block (and `getOrigin`
+         * plus its `isClusterInventoryCluster` import above).
+         *
+         * {
+         *   id: 'origin',
+         *   header: t('Origin'),
+         *   accessorFn: cluster => getOrigin(cluster),
+         *   Cell: ({ row: { original } }) => (
+         *     <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
+         *   ),
+         * },
+         */
         {
           id: 'status',
           header: t('Status'),
+          // Status has a small set of values, so it filters through a dropdown
+          // of the values that are actually in the table, with their counts.
+          filterVariant: 'select',
           accessorFn: cluster =>
             // When the cluster is not yet connected (no polling), the cell shows
             // "Not connected". Match the accessor so sorting/filtering is consistent.
@@ -381,23 +396,30 @@ export default function ClusterTable({
         {
           id: 'version',
           header: t('glossary|Kubernetes Version'),
+          filterVariant: 'select',
           accessorFn: ({ name }) =>
             isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
         },
-        {
-          id: 'actions',
-          header: t('Actions'),
-          gridTemplate: 'min-content',
-          muiTableBodyCellProps: {
-            align: 'right',
-          },
-          accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
-          Cell: ({ row: { original: cluster } }) => {
-            return <ClusterContextMenu cluster={cluster} />;
-          },
-          enableSorting: false,
-          enableColumnFilter: false,
-        },
+        /*
+         * The "Actions" column is commented out on purpose: it is not removed so
+         * it can be turned back on by uncommenting this block (and the
+         * `ClusterContextMenu` import above).
+         *
+         * {
+         *   id: 'actions',
+         *   header: t('Actions'),
+         *   gridTemplate: 'min-content',
+         *   muiTableBodyCellProps: {
+         *     align: 'right',
+         *   },
+         *   accessorFn: cluster => getClusterStatusAccessor(cluster, errors[cluster?.name], t),
+         *   Cell: ({ row: { original: cluster } }) => {
+         *     return <ClusterContextMenu cluster={cluster} />;
+         *   },
+         *   enableSorting: false,
+         *   enableColumnFilter: false,
+         * },
+         */
       ]}
       data={clustersList}
       enableRowSelection={

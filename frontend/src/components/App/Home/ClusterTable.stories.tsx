@@ -59,8 +59,7 @@ const baseArgs: ClusterTableProps = {
   onConnectCluster: () => {},
 };
 
-// Connected and reachable clusters, one per origin kind, so the Origin column
-// covers every branch of getOrigin.
+// Connected and reachable clusters, one per origin kind.
 export const Default = Template.bind({});
 Default.args = baseArgs;
 
