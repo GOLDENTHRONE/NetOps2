@@ -16,7 +16,6 @@
 
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster } from '../../../lib/k8s/cluster';
-import { ClusterOcpVersions } from './ocpVersion';
 
 /** One cluster per origin kind, already sorted by name like getCustomClusterNames returns them. */
 export const CLUSTERS: Cluster[] = [
@@ -62,19 +61,7 @@ export const VERSIONS = {
   'aks-prod': { gitVersion: 'v1.31.2' },
   'in-cluster': { gitVersion: 'v1.30.6' },
   'plugin-cluster': { gitVersion: 'v1.29.9' },
-  // OpenShift style version, so the OCP version can be derived from it.
-  'spoke-a': { gitVersion: 'v1.31.0+3d1b8f2' },
-};
-
-/**
- * OCP versions as the lookup reports them: read from the cluster, still being
- * looked up (undefined), or not an OpenShift cluster (null). `spoke-a` is
- * missing on purpose, so its version is derived from the Kubernetes version.
- */
-export const OCP_VERSIONS: ClusterOcpVersions = {
-  'aks-prod': null,
-  'in-cluster': '4.17.9',
-  'plugin-cluster': null,
+  'spoke-a': { gitVersion: 'v1.31.0' },
 };
 
 export const WARNING_LABELS: { [cluster: string]: string } = {

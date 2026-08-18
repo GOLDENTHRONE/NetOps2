@@ -58,7 +58,6 @@ import {
 import { canSelectCluster } from './clusterStatus';
 import { CONNECT_ON_CLUSTER_LINK, MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
-import { ClusterOcpVersions, getOcpVersionFromKubernetesVersion } from './ocpVersion';
 import RegisteredClusterEmptyState from './RegisteredClusterEmptyState';
 
 /**
@@ -170,8 +169,6 @@ export interface ClusterTableProps {
   clusters: ReturnType<typeof useClustersConf>;
   /** Warnings for each cluster. */
   warningLabels: { [cluster: string]: string };
-  /** OpenShift (OCP) versions for each cluster. */
-  ocpVersions?: ClusterOcpVersions;
   /**
    * Names of clusters that are currently being connected to / polled. When
    * omitted, all clusters are treated as connected (no "Not connected" state).
@@ -192,7 +189,6 @@ export default function ClusterTable({
   errors,
   clusters,
   warningLabels,
-  ocpVersions,
   connectedClusterNames,
   onConnectCluster,
 }: ClusterTableProps) {
@@ -273,41 +269,6 @@ export default function ClusterTable({
    *   return t('translation|Unknown');
    * }
    */
-
-  /**
-   * Gets the OpenShift version of a cluster.
-   *
-   * The version is read from the cluster's ClusterVersion resource. When that
-   * isn't available (no permissions, for instance) it is derived from the
-   * Kubernetes version, which for OpenShift maps to a known OCP release.
-   *
-   * @param clusterName - name of the cluster.
-   * @returns the version to show, and whether it was derived instead of read
-   * from the cluster.
-   */
-  function getOcpVersion(clusterName: string): { text: string; derived: boolean } {
-    if (!isClusterConnected(clusterName)) {
-      return { text: '', derived: false };
-    }
-
-    const reportedVersion = ocpVersions?.[clusterName];
-    if (typeof reportedVersion === 'string') {
-      return { text: reportedVersion, derived: false };
-    }
-
-    const derivedVersion = getOcpVersionFromKubernetesVersion(versions[clusterName]?.gitVersion);
-    if (derivedVersion) {
-      return { text: derivedVersion, derived: true };
-    }
-
-    // Still looking the version up, on either of the two sources.
-    if (reportedVersion === undefined || !versions[clusterName]?.gitVersion) {
-      return { text: '⋯', derived: false };
-    }
-
-    // The cluster doesn't run OpenShift.
-    return { text: t('translation|Not applicable'), derived: false };
-  }
 
   const viewClusters = t('View Clusters');
 
@@ -438,25 +399,6 @@ export default function ClusterTable({
           filterVariant: 'select',
           accessorFn: ({ name }) =>
             isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
-        },
-        {
-          id: 'ocpVersion',
-          header: t('glossary|OCP Version'),
-          filterVariant: 'select',
-          accessorFn: ({ name }) => getOcpVersion(name).text,
-          Cell: ({ row: { original } }) => {
-            const { text, derived } = getOcpVersion(original.name);
-            const version = <Typography variant="body2">{text}</Typography>;
-            return derived ? (
-              <LightTooltip
-                title={t('translation|Derived from the Kubernetes version of the cluster.')}
-              >
-                {version}
-              </LightTooltip>
-            ) : (
-              version
-            );
-          },
         },
         /*
          * The "Actions" column is commented out on purpose: it is not removed so

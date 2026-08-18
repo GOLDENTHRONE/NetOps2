@@ -85,7 +85,6 @@ vi.mock('../../common', () => ({
 vi.mock('../../common/Table', () => ({
   default: ({ columns, data }: { columns: any[]; data: Cluster[] }) => {
     const statusColumn = columns.find(column => column.id === 'status');
-    const ocpVersionColumn = columns.find(column => column.id === 'ocpVersion');
     return (
       <table>
         <tbody>
@@ -94,10 +93,8 @@ vi.mock('../../common/Table', () => ({
               key={cluster.name}
               data-testid={`cluster-row-${cluster.name}`}
               data-status-accessor={statusColumn.accessorFn(cluster) ?? ''}
-              data-ocp-version-accessor={ocpVersionColumn.accessorFn(cluster) ?? ''}
             >
               <td>{statusColumn.Cell({ row: { original: cluster } })}</td>
-              <td>{ocpVersionColumn.Cell({ row: { original: cluster } })}</td>
             </tr>
           ))}
         </tbody>
@@ -433,111 +430,6 @@ describe('ClusterTable', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'Connect' })).not.toBeInTheDocument();
-  });
-
-  it('shows the OCP version reported by the cluster', () => {
-    const cluster = {
-      name: 'spoke-a',
-      auth_type: '',
-      meta_data: { source: 'kubeconfig' },
-    } as Cluster;
-
-    renderWithTheme(
-      <MemoryRouter>
-        <ClusterTable
-          customNameClusters={[cluster]}
-          clusters={{ 'spoke-a': cluster }}
-          versions={{ 'spoke-a': { gitVersion: 'v1.29.14+29b5494' } }}
-          errors={{ 'spoke-a': null }}
-          warningLabels={{}}
-          ocpVersions={{ 'spoke-a': '4.16.21' }}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByText('4.16.21')).toBeInTheDocument();
-    expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
-      'data-ocp-version-accessor',
-      '4.16.21'
-    );
-  });
-
-  it('derives the OCP version from the Kubernetes version when the cluster has none', () => {
-    const cluster = {
-      name: 'spoke-a',
-      auth_type: '',
-      meta_data: { source: 'kubeconfig' },
-    } as Cluster;
-
-    renderWithTheme(
-      <MemoryRouter>
-        <ClusterTable
-          customNameClusters={[cluster]}
-          clusters={{ 'spoke-a': cluster }}
-          versions={{ 'spoke-a': { gitVersion: 'v1.29.14+29b5494' } }}
-          errors={{ 'spoke-a': null }}
-          warningLabels={{}}
-          ocpVersions={{ 'spoke-a': null }}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
-      'data-ocp-version-accessor',
-      '4.16'
-    );
-  });
-
-  it('marks clusters that do not run OpenShift as not applicable', () => {
-    const cluster = {
-      name: 'spoke-a',
-      auth_type: '',
-      meta_data: { source: 'kubeconfig' },
-    } as Cluster;
-
-    renderWithTheme(
-      <MemoryRouter>
-        <ClusterTable
-          customNameClusters={[cluster]}
-          clusters={{ 'spoke-a': cluster }}
-          versions={{ 'spoke-a': { gitVersion: 'v1.29.3' } }}
-          errors={{ 'spoke-a': null }}
-          warningLabels={{}}
-          ocpVersions={{ 'spoke-a': null }}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
-      'data-ocp-version-accessor',
-      'Not applicable'
-    );
-  });
-
-  it('waits for the lookup before showing an OCP version', () => {
-    const cluster = {
-      name: 'spoke-a',
-      auth_type: '',
-      meta_data: { source: 'kubeconfig' },
-    } as Cluster;
-
-    renderWithTheme(
-      <MemoryRouter>
-        <ClusterTable
-          customNameClusters={[cluster]}
-          clusters={{ 'spoke-a': cluster }}
-          versions={{ 'spoke-a': { gitVersion: 'v1.29.3' } }}
-          errors={{ 'spoke-a': null }}
-          warningLabels={{}}
-          ocpVersions={{}}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
-      'data-ocp-version-accessor',
-      '\u22ef'
-    );
   });
 });
 

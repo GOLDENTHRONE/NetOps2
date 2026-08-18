@@ -85,8 +85,6 @@
   "Origin": "Origin",
   "Status": "Status",
   "Not connected": "Not connected",
-  "Not applicable": "Not applicable",
-  "Derived from the Kubernetes version of the cluster.": "Derived from the Kubernetes version of the cluster.",
   "Warnings": "Warnings",
   "All Clusters": "All Clusters",
   "Projects": "Projects",

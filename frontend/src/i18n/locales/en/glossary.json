@@ -1,6 +1,5 @@
 {
   "Kubernetes Version": "Kubernetes Version",
-  "OCP Version": "OCP Version",
   "Cluster": "Cluster",
   "Cluster selector": "Cluster selector",
   "Namespace": "Namespace",
