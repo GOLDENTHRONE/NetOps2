@@ -221,6 +221,7 @@ function ProjectListContent() {
     <>
       {showCreate && <NewProjectPopup open={showCreate} onClose={() => setShowCreate(false)} />}
       <Box display="flex" justifyContent="flex-end" mb={2} mt={2}>
+        {/* Create Project button hidden per request, do not remove
         <Button
           variant="contained"
           startIcon={<Icon icon="mdi:plus" />}
@@ -228,6 +229,7 @@ function ProjectListContent() {
         >
           {t('Create Project')}
         </Button>
+        */}
       </Box>
 
       <Table key={pluginApiResources.length} columns={columns} data={projects} />
