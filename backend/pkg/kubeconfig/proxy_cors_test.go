@@ -17,6 +17,7 @@ limitations under the License.
 package kubeconfig_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -40,7 +41,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	)(next)
 }
 
-func proxyThroughCORS(t *testing.T, upstream func(w http.ResponseWriter, r *http.Request)) *http.Response {
+func proxyThroughCORS(t *testing.T, oidc bool, upstream func(w http.ResponseWriter, r *http.Request)) *http.Response {
 	t.Helper()
 
 	upstreamServer := httptest.NewServer(http.HandlerFunc(upstream))
@@ -50,12 +51,15 @@ func proxyThroughCORS(t *testing.T, upstream func(w http.ResponseWriter, r *http
 		Name:    "test-context",
 		Cluster: &api.Cluster{Server: upstreamServer.URL},
 	}
+	if oidc {
+		kContext.OidcConf = &kubeconfig.OidcConfig{}
+	}
 
 	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, kContext.ProxyRequest(w, r))
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/version", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/version", nil)
 	req.Header.Set("Origin", testOrigin)
 
 	rr := httptest.NewRecorder()
@@ -69,12 +73,24 @@ func proxyThroughCORS(t *testing.T, upstream func(w http.ResponseWriter, r *http
 func TestProxyDoesNotDuplicateCORSHeaders(t *testing.T) {
 	tests := []struct {
 		name     string
+		oidc     bool
 		upstream func(w http.ResponseWriter, r *http.Request)
 	}{
 		{
-			name: "upstream already sends CORS headers",
+			name: "non-OIDC upstream sends CORS headers",
 			upstream: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Access-Control-Allow-Origin", testOrigin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Upstream")
+				w.WriteHeader(http.StatusOK)
+			},
+		},
+		{
+			name: "OIDC upstream sends CORS headers",
+			oidc: true,
+			upstream: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Add("Access-Control-Allow-Origin", "https://upstream.example.com")
+				w.Header().Add("Access-Control-Allow-Origin", testOrigin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Access-Control-Expose-Headers", "X-Upstream")
 				w.WriteHeader(http.StatusOK)
@@ -90,8 +106,10 @@ func TestProxyDoesNotDuplicateCORSHeaders(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp := proxyThroughCORS(t, tc.upstream)
-			defer resp.Body.Close()
+			resp := proxyThroughCORS(t, tc.oidc, tc.upstream)
+			defer func() {
+				require.NoError(t, resp.Body.Close())
+			}()
 
 			allowOrigin := resp.Header.Values("Access-Control-Allow-Origin")
 
@@ -102,17 +120,32 @@ func TestProxyDoesNotDuplicateCORSHeaders(t *testing.T) {
 	}
 }
 
+func TestOIDCProxy401DoesNotDuplicateCORSHeaders(t *testing.T) {
+	resp := proxyThroughCORS(t, true, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "https://upstream.example.com")
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	assert.Equal(t, []string{testOrigin}, resp.Header.Values("Access-Control-Allow-Origin"))
+}
+
 // TestProxyKeepsNonCORSHeaders checks that stripping upstream CORS headers does not
 // drop unrelated headers, and that only the "Origin" token is removed from "Vary".
 func TestProxyKeepsNonCORSHeaders(t *testing.T) {
-	resp := proxyThroughCORS(t, func(w http.ResponseWriter, _ *http.Request) {
+	resp := proxyThroughCORS(t, false, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", testOrigin)
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Custom", "keep-me")
 		w.Header().Set("Vary", "Origin, Accept-Encoding")
 		w.WriteHeader(http.StatusOK)
 	})
-	defer resp.Body.Close()
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
 
 	assert.Len(t, resp.Header.Values("Access-Control-Allow-Origin"), 1)
 	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
@@ -126,12 +159,14 @@ func TestProxyKeepsNonCORSHeaders(t *testing.T) {
 // TestProxyDropsVaryWhenOnlyOrigin removes the header entirely when "Origin" was its
 // only value, so no empty "Vary" is sent.
 func TestProxyDropsVaryWhenOnlyOrigin(t *testing.T) {
-	resp := proxyThroughCORS(t, func(w http.ResponseWriter, _ *http.Request) {
+	resp := proxyThroughCORS(t, false, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", testOrigin)
 		w.Header().Set("Vary", "Origin")
 		w.WriteHeader(http.StatusOK)
 	})
-	defer resp.Body.Close()
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
 
 	assert.Len(t, resp.Header.Values("Access-Control-Allow-Origin"), 1)
 	assert.Empty(t, resp.Header.Values("Vary"))

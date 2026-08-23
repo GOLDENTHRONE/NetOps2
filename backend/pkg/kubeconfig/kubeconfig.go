@@ -492,19 +492,15 @@ func (c *Context) SetupProxy() error {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(URL)
+
+	var warnOnce sync.Once
+
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		stripUpstreamCORSHeaders(resp.Header)
 
-		return nil
-	}
-
-	// For OIDC clusters, log a hint upon receiving a 401 from the API server (StatusUnauthorized),
-	// as it can indicate the API server does not trust the same OIDC provider as Headlamp.
-	if c.AuthType() == "oidc" {
-		// Log at most once per proxy to avoid flooding the logs on repeated 401s.
-		var warnOnce sync.Once
-
-		proxy.ModifyResponse = func(resp *http.Response) error {
+		// For OIDC clusters, log a hint upon receiving a 401 from the API server (StatusUnauthorized),
+		// as it can indicate the API server does not trust the same OIDC provider as Headlamp.
+		if c.AuthType() == "oidc" {
 			authHeader := ""
 			if resp.Request != nil {
 				authHeader = resp.Request.Header.Get("Authorization")
@@ -518,9 +514,9 @@ func (c *Context) SetupProxy() error {
 							"and client-id as Headlamp")
 				})
 			}
-
-			return nil
 		}
+
+		return nil
 	}
 
 	restConf, err := c.RESTConfig()
