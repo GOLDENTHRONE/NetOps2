@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { ChildProcessWithoutNullStreams, exec, execFileSync, spawn } from 'child_process';
+import { ChildProcessWithoutNullStreams, execFileSync, spawn } from 'child_process';
 import { randomBytes } from 'crypto';
 import dotenv from 'dotenv';
 import {
@@ -29,23 +29,23 @@ import {
   shell,
 } from 'electron';
 import { IpcMainEvent, MenuItemConstructorOptions } from 'electron/main';
-import find_process from 'find-process';
 import * as fsPromises from 'fs/promises';
 import * as net from 'net';
-import { userInfo } from 'node:os';
-import { promisify } from 'node:util';
 import { platform } from 'os';
 import path from 'path';
 import url from 'url';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { setupCustomCAs, setupSystemCAs } from './certificates';
+import { withBackendMemoryDefaults } from './backendMemory';
+import { createCertificateSetup } from './certificates';
+import { startWindowsVMDetection, waitForWindowsVMDetection } from './hardwareAcceleration';
 import i18n from './i18next.config';
 import {
   getLegalDocumentsResourcePath,
   loadLegalDocuments,
   readLegalDocument,
 } from './legal-documents';
+import { runListPluginsCommand } from './list-plugins';
 import MCPClient from './mcp/MCPClient';
 import { filterUserOwnedPids } from './ownedProcesses';
 import {
@@ -67,6 +67,7 @@ import {
   setupRunCmdHandlers,
 } from './runCmd';
 import { loadSettings, SETTINGS_PATH } from './settings';
+import { getShellEnv } from './shellEnv';
 import {
   cleanupHeadlampTray,
   createHeadlampTray,
@@ -109,11 +110,7 @@ const ENABLE_MCP = process.env.HEADLAMP_MCP_ENABLE !== 'false';
 dotenv.config({ path: path.join(process.resourcesPath, '.env') });
 
 const settings = loadSettings(SETTINGS_PATH);
-setupSystemCAs(settings);
-
-if (settings.customCAPath) {
-  setupCustomCAs(settings.customCAPath);
-}
+const ensureCertificates = createCertificateSetup(settings);
 
 const isDev = !!process.env.ELECTRON_DEV;
 let frontendPath = '';
@@ -145,15 +142,7 @@ const args = yargs(hideBin(process.argv))
     'List all static and user-added plugins.',
     () => {},
     () => {
-      try {
-        const backendPath = path.join(process.resourcesPath, 'headlamp-server');
-        const stdout = execFileSync(backendPath, ['list-plugins']);
-        process.stdout.write(stdout);
-        process.exit(0);
-      } catch (error) {
-        console.error(`Error listing plugins: ${error}`);
-        process.exit(1);
-      }
+      process.exit(runListPluginsCommand(process.resourcesPath));
     }
   )
   .options({
@@ -200,7 +189,12 @@ if ('remote-debugging-port' in args) {
 }
 
 const isHeadlessMode = args.headless === true;
-let disableGPU = args['disable-gpu'] === true;
+const disableGPU = args['disable-gpu'];
+const windowsVMDetection = startWindowsVMDetection(disableGPU);
+if (disableGPU === true) {
+  console.info('Disabling GPU hardware acceleration. Reason: related flag is set.');
+  app.disableHardwareAcceleration();
+}
 const defaultPort = args.port || 4466;
 let actualPort = defaultPort; // Will be updated when backend starts
 const MAX_PORT_ATTEMPTS = Math.abs(Number(process.env.HEADLAMP_MAX_PORT_ATTEMPTS) || 100); // Maximum number of ports to try
@@ -369,6 +363,7 @@ class PluginManagerEventListeners {
 
     let pluginInfo: ArtifactHubHeadlampPkg | undefined = undefined;
     try {
+      ensureCertificates();
       pluginInfo = await PluginManager.fetchPluginInfo(URL, { signal: controller.signal });
     } catch (error) {
       console.error('Error fetching plugin info:', error);
@@ -464,6 +459,7 @@ class PluginManagerEventListeners {
       controller,
     };
 
+    ensureCertificates();
     PluginManager.update(
       pluginName,
       destinationFolder,
@@ -650,100 +646,6 @@ class PluginManagerEventListeners {
   }
 }
 
-/**
- * Returns the user's preferred shell or a fallback shell.
- * @returns A promise that resolves to the shell path.
- */
-async function getShell(): Promise<string> {
-  // Fallback chain
-  const shells = ['/bin/zsh', '/bin/bash', '/bin/sh'];
-  let userShell = '';
-
-  try {
-    userShell = userInfo().shell || process.env.SHELL || '';
-    if (userShell) shells.unshift(userShell);
-  } catch (error) {
-    console.error('Failed to get user shell:', error);
-  }
-
-  for (const shell of shells) {
-    try {
-      await fsPromises.stat(shell);
-      return shell;
-    } catch (error) {
-      console.error(`Shell not found: ${shell}, error: ${error}`);
-    }
-  }
-
-  console.error('No valid shell found, defaulting to /bin/sh');
-  return '/bin/sh';
-}
-
-/**
- * Retrieves the environment variables from the user's shell.
- * @returns A promise that resolves to the shell environment.
- */
-async function getShellEnv(): Promise<NodeJS.ProcessEnv> {
-  const execPromisify = promisify(exec);
-  const shell = await getShell();
-  const isWindows = process.platform === 'win32';
-
-  // For Windows, just return the current environment
-  if (isWindows) {
-    return { ...process.env };
-  }
-
-  // For Unix-like systems
-  const isZsh = shell.includes('zsh');
-  // interactive is supported only on zsh
-  const shellArgs = isZsh ? ['--login', '--interactive', '-c'] : ['--login', '-c'];
-
-  try {
-    const env = { ...process.env, DISABLE_AUTO_UPDATE: 'true' };
-    let stdout: string;
-    let isEnvNull = false;
-
-    try {
-      // Try env -0 first
-      const command = 'env -0';
-      ({ stdout } = await execPromisify(`${shell} ${shellArgs.join(' ')} '${command}'`, {
-        encoding: 'utf8',
-        timeout: 10000,
-        env,
-      }));
-      isEnvNull = true;
-    } catch (error) {
-      // If env -0 fails, fall back to env
-      console.log('env -0 failed, falling back to env');
-      const command = 'env';
-      ({ stdout } = await execPromisify(`${shell} ${shellArgs.join(' ')} '${command}'`, {
-        encoding: 'utf8',
-        timeout: 10000,
-        env,
-      }));
-    }
-
-    const processLines = (separator: string) => {
-      return stdout.split(separator).reduce((acc, line) => {
-        const firstEqualIndex = line.indexOf('=');
-        if (firstEqualIndex > 0) {
-          const key = line.slice(0, firstEqualIndex);
-          const value = line.slice(firstEqualIndex + 1);
-          acc[key] = value;
-        }
-        return acc;
-      }, {} as NodeJS.ProcessEnv);
-    };
-
-    const envVars = isEnvNull ? processLines('\0') : processLines('\n');
-    const mergedEnv = { ...process.env, ...envVars };
-    return mergedEnv;
-  } catch (error) {
-    console.error('Failed to get shell environment:', error);
-    return process.env;
-  }
-}
-
 let shellEnvironmentPromise: Promise<NodeJS.ProcessEnv> | null = null;
 
 /** Returns the cached login-shell changes merged with the current process environment. */
@@ -790,6 +692,17 @@ async function isPortAvailable(port: number): Promise<boolean> {
 async function findAvailablePort(startPort: number): Promise<number> {
   for (let i = 0; i < MAX_PORT_ATTEMPTS; i++) {
     const port = startPort + i;
+    // Probe the socket first so normal startup does not load and retain the
+    // process-inspection dependency when the preferred port is free.
+    const available = await isPortAvailable(port);
+
+    if (available) {
+      if (port !== startPort) {
+        console.info(`Port ${startPort} is in use, using port ${port} instead`);
+      }
+      return port;
+    }
+
     // Skip ports already used by another Headlamp instance.
     const headlampPIDs = await getHeadlampPIDsOnPort(port);
     if (headlampPIDs && headlampPIDs.length > 0) {
@@ -799,14 +712,6 @@ async function findAvailablePort(startPort: number): Promise<number> {
         )}, trying next port...`
       );
       continue;
-    }
-    const available = await isPortAvailable(port);
-
-    if (available) {
-      if (port !== startPort) {
-        console.info(`Port ${startPort} is in use, using port ${port} instead`);
-      }
-      return port;
     }
 
     console.info(`Port ${port} is occupied by another process, trying next port...`);
@@ -896,9 +801,7 @@ async function startServer(flags: string[] = []): Promise<ChildProcessWithoutNul
   const options = {
     detached: true,
     windowsHide: true,
-    env: {
-      ...extendedEnv,
-    },
+    env: withBackendMemoryDefaults(extendedEnv),
   };
 
   return spawn(serverFilePath, serverArgs, options);
@@ -1341,7 +1244,9 @@ function menusToTemplate(mainWindow: BrowserWindow | null, menusFromPlugins: App
 }
 
 async function getRunningHeadlampPIDs() {
-  const processes = await find_process('name', 'headlamp-server.*');
+  // Process inspection is only needed during cleanup, not normal startup.
+  const { default: findProcess } = await import('find-process');
+  const processes = await findProcess('name', 'headlamp-server.*');
   // Only consider processes owned by the current user: on shared machines
   // (e.g. Windows remote desktop servers) other users run their own
   // headlamp-server and we must never touch those.
@@ -1360,7 +1265,9 @@ async function getRunningHeadlampPIDs() {
 async function getHeadlampPIDsOnPort(port: number): Promise<number[] | null> {
   try {
     // Get all Headlamp processes
-    const headlampProcesses = await find_process('name', 'headlamp-server');
+    // Keep process inspection unloaded unless a port is actually occupied.
+    const { default: findProcess } = await import('find-process');
+    const headlampProcesses = await findProcess('name', 'headlamp-server');
     if (headlampProcesses.length === 0) {
       return null;
     }
@@ -1492,6 +1399,10 @@ function startElectron() {
   // The app legitimately needs multiple IPC listeners (currently 11)
   // Default is 10, setting to 20 provides headroom for future additions
   ipcMain.setMaxListeners(20);
+
+  ipcMain.on('request-backend-token', () => {
+    mainWindow?.webContents.send('backend-token', backendToken);
+  });
 
   let appVersion: string;
   if (isDev && process.env.HEADLAMP_APP_VERSION) {
@@ -1871,10 +1782,6 @@ function startElectron() {
       }
     });
 
-    ipcMain.on('request-backend-token', () => {
-      mainWindow?.webContents.send('backend-token', backendToken);
-    });
-
     ipcMain.on('request-backend-port', () => {
       mainWindow?.webContents.send('backend-port', actualPort);
     });
@@ -1935,26 +1842,14 @@ function startElectron() {
     if (ENABLE_MCP) {
       const configPath = path.join(app.getPath('userData'), 'mcp-tools-config.json');
       const settingsPath = path.join(app.getPath('userData'), 'mcp-tools-settings.json');
-      mcpClient = new MCPClient(configPath, settingsPath);
+      mcpClient = new MCPClient(configPath, settingsPath, ensureCertificates);
       await mcpClient.initialize();
       mcpClient.setMainWindow(mainWindow);
     }
   }
 
-  if (disableGPU) {
-    console.info('Disabling GPU hardware acceleration. Reason: related flag is set.');
-  } else if (
-    disableGPU === undefined &&
-    process.platform === 'linux' &&
-    ['arm', 'arm64'].includes(process.arch)
-  ) {
-    console.info(
-      'Disabling GPU hardware acceleration. Reason: known graphical issues in Linux on ARM (use --disable-gpu=false to force it if needed).'
-    );
-    disableGPU = true;
-  }
-
-  if (disableGPU) {
+  if (waitForWindowsVMDetection(windowsVMDetection)) {
+    console.info('Disabling GPU hardware acceleration. Reason: running in a Windows VM.');
     app.disableHardwareAcceleration();
   }
 
