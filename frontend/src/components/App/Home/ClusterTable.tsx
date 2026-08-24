@@ -33,7 +33,7 @@ import { isElectron } from '../../../helpers/isElectron';
 import { setRecentCluster } from '../../../helpers/recentClusters';
 import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSettings';
 import { formatClusterPathParam } from '../../../lib/cluster';
-import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
+import { useClustersConf, useClustersOcpVersion, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
@@ -161,6 +161,8 @@ export interface ClusterTableProps {
   customNameClusters: ReturnType<typeof getCustomClusterNames>;
   /** Versions for each cluster. */
   versions: ReturnType<typeof useClustersVersion>[0];
+  /** OpenShift (OCP) versions for each cluster, when applicable. */
+  ocpVersions?: ReturnType<typeof useClustersOcpVersion>;
   /** Errors for each cluster. */
   errors: ReturnType<typeof useClustersVersion>[1];
   /** Clusters configuration. */
@@ -184,6 +186,7 @@ const CLUSTER_TABLE_ID = 'home-clusters';
 export default function ClusterTable({
   customNameClusters,
   versions,
+  ocpVersions = {},
   errors,
   clusters,
   warningLabels,
@@ -377,6 +380,11 @@ export default function ClusterTable({
           // (⋯ while loading), blank for clusters that aren't connected.
           accessorFn: cluster =>
             isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '⋯' : '',
+        },
+        {
+          id: 'ocpVersion',
+          header: t('glossary|OCP Version'),
+          accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] || '' : ''),
         },
         {
           id: 'version',

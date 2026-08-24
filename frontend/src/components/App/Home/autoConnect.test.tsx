@@ -25,6 +25,7 @@ import { TestContext } from '../../../test';
 vi.mock('../../../lib/k8s', () => ({
   useClustersConf: vi.fn(() => ({})),
   useClustersVersion: vi.fn(() => [{}, {}]),
+  useClustersOcpVersion: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../lib/k8s/event', () => ({

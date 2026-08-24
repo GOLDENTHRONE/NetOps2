@@ -159,6 +159,31 @@ export function getVersion(clusterName: string = ''): Promise<StringDict> {
 }
 
 /**
+ * The relevant subset of the OpenShift ClusterVersion (config.openshift.io/v1) resource.
+ */
+export interface OcpClusterVersion {
+  status?: {
+    desired?: {
+      version?: string;
+    };
+  };
+}
+
+/**
+ * Gets the OpenShift ClusterVersion (config.openshift.io/v1) for the cluster given by the
+ * parameter. Only OpenShift (OCP) clusters expose this resource; on plain Kubernetes clusters
+ * the request will fail (typically with a 404), which callers should treat as "not OCP".
+ *
+ * @param clusterName - the name of the cluster to query, or the currently selected cluster.
+ * @returns a promise that resolves to the ClusterVersion object.
+ */
+export function getOcpClusterVersion(clusterName: string = ''): Promise<OcpClusterVersion> {
+  return clusterRequest('/apis/config.openshift.io/v1/clusterversions/version', {
+    cluster: clusterName || getCluster(),
+  });
+}
+
+/**
  * See {@link https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#list-and-watch-filtering|Label selector examples},
  * {@link https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#resources-that-support-set-based-requirements|deployment selector example},
  * {@link https://github.com/kubernetes/apimachinery/blob/be3a79b26814a8d7637d70f4d434a4626ee1c1e7/pkg/selection/operator.go#L24|possible operators}, and
@@ -284,7 +309,32 @@ export function matchExpressionSimplifier(
   return segments;
 }
 
-const versionFetchInterval = 10000; // ms
+export const versionFetchInterval = 10000; // ms
+
+// Cap backoff at 6x the base interval (60s): bounds how long it takes to notice a
+// cluster came back after a long outage, while still cutting steady-state polling
+// against a persistently unreachable cluster roughly 6x versus polling every
+// versionFetchInterval forever.
+export const maxVersionFetchInterval = versionFetchInterval * 6;
+
+/**
+ * Refetch interval for cluster version queries (K8s and OCP): polls at the normal
+ * `versionFetchInterval` while healthy, and backs off exponentially (capped at
+ * `maxVersionFetchInterval`) on consecutive failures so a persistently unreachable
+ * cluster isn't polled every 10s forever. Resets to the base interval as soon as a
+ * fetch succeeds (see the `consecutiveFailures` tracking in the callers below).
+ *
+ * Note: react-query's own `query.state.fetchFailureCount` resets to 0 every time a
+ * new fetch starts (it only counts retries within a single fetch attempt), so with
+ * `retry: false` it can never exceed 1 across separate polling cycles and can't
+ * drive multi-cycle backoff on its own — hence tracking consecutiveFailures ourselves.
+ */
+export function versionRefetchInterval(consecutiveFailures: number) {
+  if (consecutiveFailures <= 0) {
+    return versionFetchInterval;
+  }
+  return Math.min(versionFetchInterval * 2 ** consecutiveFailures, maxVersionFetchInterval);
+}
 
 /** Hook to get the version of the clusters given by the parameter.
  *
@@ -312,12 +362,29 @@ export function useClustersVersion(clusters: Cluster[]) {
     setClusterNames(prev => (_.isEqual(prev, nextClusterNames) ? prev : nextClusterNames));
   }, [clusters]);
 
+  // Tracks consecutive failures per cluster across separate polling cycles (see
+  // versionRefetchInterval's doc comment for why react-query's own failure count
+  // can't be used for this). Updated synchronously by queryFn itself, so the next
+  // refetchInterval computation always sees the latest count.
+  const consecutiveFailuresRef = React.useRef<{ [clusterName: string]: number }>({});
+
   const queries = React.useMemo(
     () =>
       clusterNames.map(clusterName => ({
         queryKey: ['clusterVersion', clusterName],
-        queryFn: () => getVersion(clusterName),
-        refetchInterval: versionFetchInterval,
+        queryFn: async () => {
+          try {
+            const data = await getVersion(clusterName);
+            consecutiveFailuresRef.current[clusterName] = 0;
+            return data;
+          } catch (err) {
+            consecutiveFailuresRef.current[clusterName] =
+              (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+            throw err;
+          }
+        },
+        refetchInterval: () =>
+          versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false, // surface errors immediately rather than hammering unreachable clusters
@@ -346,6 +413,73 @@ export function useClustersVersion(clusters: Cluster[]) {
     });
 
     return [versionsInfo, errorsInfo];
+  }, [clusterNames, results]);
+}
+
+/** Hook to get the OpenShift (OCP) ClusterVersion of the clusters given by the parameter.
+ *
+ * Non-OCP clusters don't expose the `config.openshift.io/v1` ClusterVersion resource, so a
+ * failed request is treated as "not applicable" (no version) rather than surfaced as an error.
+ *
+ * @param clusters
+ * @returns a map with cluster -> OCP version string (only set for clusters where it's known).
+ */
+export function useClustersOcpVersion(clusters: Cluster[]) {
+  const [clusterNames, setClusterNames] = React.useState<string[]>(() =>
+    Object.values(clusters)
+      .map(c => c.name)
+      .sort()
+  );
+
+  React.useEffect(() => {
+    const nextClusterNames = Object.values(clusters)
+      .map(c => c.name)
+      .sort();
+    setClusterNames(prev => (_.isEqual(prev, nextClusterNames) ? prev : nextClusterNames));
+  }, [clusters]);
+
+  // See useClustersVersion for why consecutive failures are tracked ourselves rather
+  // than via react-query's own (per-fetch-attempt) fetchFailureCount.
+  const consecutiveFailuresRef = React.useRef<{ [clusterName: string]: number }>({});
+
+  const queries = React.useMemo(
+    () =>
+      clusterNames.map(clusterName => ({
+        queryKey: ['clusterOcpVersion', clusterName],
+        // Let failures reject (instead of swallowing them here) so the result mapping
+        // below (which already treats a missing/errored query the same as "no OCP
+        // version") and the failure-count tracking above both see them.
+        queryFn: async () => {
+          try {
+            const data = await getOcpClusterVersion(clusterName);
+            consecutiveFailuresRef.current[clusterName] = 0;
+            return data;
+          } catch (err) {
+            consecutiveFailuresRef.current[clusterName] =
+              (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+            throw err;
+          }
+        },
+        refetchInterval: () =>
+          versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: 'always' as const,
+        retry: false,
+      })),
+    [clusterNames]
+  );
+
+  const results = useQueries({ queries });
+
+  return React.useMemo<{ [clusterName: string]: string | undefined }>(() => {
+    const ocpVersions: { [clusterName: string]: string | undefined } = {};
+
+    clusterNames.forEach((clusterName, i) => {
+      const { data } = results[i];
+      ocpVersions[clusterName] = data?.status?.desired?.version;
+    });
+
+    return ocpVersions;
   }, [clusterNames, results]);
 }
 

@@ -19,7 +19,15 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { createElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { createRouteURL } from '../router/createRouteURL';
-import { labelSelectorToQuery, ResourceClasses, useClustersVersion } from '.';
+import {
+  labelSelectorToQuery,
+  maxVersionFetchInterval,
+  ResourceClasses,
+  useClustersOcpVersion,
+  useClustersVersion,
+  versionFetchInterval,
+  versionRefetchInterval,
+} from '.';
 import { clusterRequest } from './api/v1/clusterRequests';
 import { Cluster, LabelSelector } from './cluster';
 import { KubeObjectClass } from './KubeObject';
@@ -294,6 +302,113 @@ describe('useClustersVersion', () => {
     visibilityState.mockReturnValue('visible');
     act(() => window.dispatchEvent(new Event('visibilitychange')));
     await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  });
+
+  test('tracks consecutive failures across polling cycles, resets on success, no duplicate requests (integration)', async () => {
+    const request = vi.mocked(clusterRequest).mockRejectedValue(new Error('unavailable'));
+    const queryKey = ['clusterVersion', 'cluster'];
+
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    // Status depends on this error being surfaced (see ClusterStatus/getClusterStatusInfo);
+    // the wrapping added for failure tracking must not swallow it.
+    await vi.waitFor(() => expect(result.current[1].cluster).toBeInstanceOf(Error));
+
+    // Force what the (growing) interval would eventually do, one poll at a time -
+    // exactly one new request per forced refetch, never more (no duplicate requests).
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(2);
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(3);
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(4);
+
+    // Cluster recovers: version is displayed, error clears, and (per versionRefetchInterval,
+    // tested in isolation below) polling would return to the normal cadence.
+    request.mockResolvedValue({ gitVersion: 'v1.32.0' });
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(5);
+    await vi.waitFor(() => expect(result.current[0].cluster).toEqual({ gitVersion: 'v1.32.0' }));
+    expect(result.current[1].cluster).toBeNull();
+  });
+});
+
+describe('versionRefetchInterval', () => {
+  test('uses the normal interval while healthy (0 consecutive failures)', () => {
+    expect(versionRefetchInterval(0)).toBe(versionFetchInterval);
+  });
+
+  test('doubles per consecutive failure, capped at maxVersionFetchInterval', () => {
+    expect(versionRefetchInterval(1)).toBe(20_000);
+    expect(versionRefetchInterval(2)).toBe(40_000);
+    expect(versionRefetchInterval(3)).toBe(maxVersionFetchInterval);
+    expect(versionRefetchInterval(10)).toBe(maxVersionFetchInterval);
+  });
+});
+
+describe('useClustersOcpVersion', () => {
+  let queryClient: QueryClient;
+
+  function wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          refetchOnWindowFocus: false,
+          retry: false,
+          staleTime: 3 * 60_000,
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    queryClient.clear();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  test('does not surface OCP query failures as errors (empty cell, not thrown)', async () => {
+    const request = vi.mocked(clusterRequest).mockRejectedValue(new Error('not found'));
+
+    const { result } = renderHook(() => useClustersOcpVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    expect(result.current.cluster).toBeUndefined();
+  });
+
+  test('tracks consecutive failures and resets on success, no duplicate requests (integration)', async () => {
+    const request = vi.mocked(clusterRequest).mockRejectedValue(new Error('unavailable'));
+    const queryKey = ['clusterOcpVersion', 'cluster'];
+
+    const { result } = renderHook(() => useClustersOcpVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    await act(() =>
+      vi.waitFor(() => expect(queryClient.getQueryState(queryKey)?.status).toBe('error'))
+    );
+    expect(result.current.cluster).toBeUndefined();
+
+    // One new request per forced poll, never more (no duplicate requests).
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(2);
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(3);
+
+    // Recovers -> OCP version becomes available.
+    request.mockResolvedValue({ status: { desired: { version: '4.16.43' } } });
+    await act(() => queryClient.refetchQueries({ queryKey }));
+    expect(request).toHaveBeenCalledTimes(4);
+    await vi.waitFor(() => expect(result.current.cluster).toBe('4.16.43'));
   });
 });
 

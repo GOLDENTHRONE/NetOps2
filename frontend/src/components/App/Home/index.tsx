@@ -24,7 +24,7 @@ import { setupBackstageMessageReceiver } from '../../../helpers/backstageMessage
 import { useAutoConnectClusters } from '../../../helpers/clusterAutoConnect';
 import { isBackstage } from '../../../helpers/isBackstage';
 import { isElectron } from '../../../helpers/isElectron';
-import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
+import { useClustersConf, useClustersOcpVersion, useClustersVersion } from '../../../lib/k8s';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { useEventWarningList } from '../../../lib/k8s/event';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
@@ -141,6 +141,7 @@ function HomeComponent(props: HomeComponentProps) {
   );
 
   const [versions, errors] = useClustersVersion(autoConnectClusters);
+  const ocpVersions = useClustersOcpVersion(autoConnectClusters);
 
   const clusterNames = React.useMemo(
     () => allClusterNames.filter(name => connectedClusters.has(name)),
@@ -174,6 +175,7 @@ function HomeComponent(props: HomeComponentProps) {
         <ClusterTable
           customNameClusters={customNameClusters}
           versions={versions}
+          ocpVersions={ocpVersions}
           errors={errors}
           warningLabels={warningLabels}
           clusters={clusters}
@@ -186,6 +188,7 @@ function HomeComponent(props: HomeComponentProps) {
       customNameClusters,
       errors,
       versions,
+      ocpVersions,
       warningLabels,
       clusters,
       connectedClusters,
