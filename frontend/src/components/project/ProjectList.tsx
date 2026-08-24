@@ -186,10 +186,7 @@ function ProjectListContent() {
         minHeight="400px"
         textAlign="center"
       >
-        <Icon
-          icon="mdi:folder-multiple"
-          style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }}
-        />
+        <Icon icon="mdi:apps" style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }} />
         <Typography variant="h6" gutterBottom>
           {t('No applications found')}
         </Typography>

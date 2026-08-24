@@ -219,8 +219,8 @@ function HomeComponent(props: HomeComponentProps) {
               value="projects"
               label={
                 <>
-                  <Icon icon="mdi:folder-multiple" />
-                  <Typography>{t('Projects')}</Typography>
+                  <Icon icon="mdi:apps" />
+                  <Typography>{t('Applications')}</Typography>
                 </>
               }
               sx={{
