@@ -15,7 +15,7 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Autocomplete, Box, TextField, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { groupBy, uniq } from 'lodash';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -27,6 +27,7 @@ import { ProjectDefinition } from '../../redux/projectsSlice';
 import AllowedNamespacesSelectorGate from '../App/AllowedNamespacesSelectorGate';
 import { StatusLabel } from '../common';
 import Link from '../common/Link';
+import { PureNamespacesAutocomplete } from '../common/NamespacesAutocomplete';
 import Table, { TableColumn } from '../common/Table/Table';
 import { getHealthIcon, getResourcesHealth, isSystemNamespace } from './projectUtils';
 import { useProjectItems } from './useProjectResources';
@@ -233,30 +234,22 @@ function ProjectListContent() {
 
   return (
     <>
-      <Box display="flex" justifyContent="flex-start" mb={1} mt={1}>
-        <Autocomplete
-          multiple
-          disableCloseOnSelect
-          options={namespaceOptions}
-          value={selectedNamespaces}
-          onChange={(_event, newValue) => setSelectedNamespaces(newValue)}
-          sx={{ minWidth: 320, maxWidth: 560 }}
-          // Let the dropdown grow to the longest namespace name so each option
-          // stays on a single line, and never wrap an individual option.
-          slotProps={{ paper: { sx: { width: 'max-content', minWidth: '100%' } } }}
-          ListboxProps={{ sx: { '& .MuiAutocomplete-option': { whiteSpace: 'nowrap' } } }}
-          renderInput={params => (
-            <TextField
-              {...params}
-              label={t('Namespace')}
-              placeholder={selectedNamespaces.length === 0 ? t('All namespaces') : undefined}
-              size="small"
-            />
-          )}
-          noOptionsText={t('No namespaces')}
-        />
-      </Box>
-      <Table key={pluginApiResources.length} columns={columns} data={filteredProjects} />
+      <Table
+        key={pluginApiResources.length}
+        columns={columns}
+        data={filteredProjects}
+        // Render the namespace filter on the left of the table's top toolbar so
+        // it sits on the same line as the search and column/filter buttons.
+        // Reuses the app's standard namespace selector (checkboxes + Filter box)
+        // for a consistent look and feel.
+        renderTopToolbarCustomActions={() => (
+          <PureNamespacesAutocomplete
+            namespaceNames={namespaceOptions}
+            filter={{ namespaces: new Set(selectedNamespaces) }}
+            onChange={(_event, newValue) => setSelectedNamespaces(newValue)}
+          />
+        )}
+      />
     </>
   );
 }
