@@ -28,7 +28,7 @@ import Namespace from '../../lib/k8s/namespace';
 import { createMuiTheme } from '../../lib/themes';
 import { HeadlampEventType } from '../../redux/headlampEventSlice';
 import { recordHeadlampEvents, TestContext } from '../../test';
-import ProjectList, { groupNamespacesIntoProjects, useProject } from './ProjectList';
+import ProjectList, { discoverProjectsFromNamespaces, useProject } from './ProjectList';
 import { PROJECT_ID_LABEL } from './projectUtils';
 
 // cyclic imports fix
@@ -45,24 +45,25 @@ function ns(name: string, opts: { project?: string; cluster?: string } = {}) {
   };
 }
 
-describe('groupNamespacesIntoProjects', () => {
-  it('groups namespaces by project id', () => {
-    const projects = groupNamespacesIntoProjects([
-      ns('app-prod', { project: 'app' }),
-      ns('app-staging', { project: 'app' }),
-      ns('billing', { project: 'billing' }),
+describe('discoverProjectsFromNamespaces', () => {
+  it('maps every namespace to an application named after the namespace', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('app-prod'),
+      ns('app-staging'),
+      ns('billing'),
     ]);
 
     expect(projects).toEqual([
-      { id: 'app', namespaces: ['app-prod', 'app-staging'], clusters: ['cluster-a'] },
+      { id: 'app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
+      { id: 'app-staging', namespaces: ['app-staging'], clusters: ['cluster-a'] },
       { id: 'billing', namespaces: ['billing'], clusters: ['cluster-a'] },
     ]);
   });
 
-  it('collects clusters from every namespace in a project', () => {
-    const projects = groupNamespacesIntoProjects([
-      ns('shared', { project: 'app', cluster: 'cluster-a' }),
-      ns('shared', { project: 'app', cluster: 'cluster-b' }),
+  it('collapses a same-named namespace across clusters into one application', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('shared', { cluster: 'cluster-a' }),
+      ns('shared', { cluster: 'cluster-b' }),
     ]);
 
     expect(projects).toHaveLength(1);
@@ -70,31 +71,30 @@ describe('groupNamespacesIntoProjects', () => {
     expect(projects[0].clusters).toEqual(['cluster-a', 'cluster-b']);
   });
 
-  // Regression test for #5254: a namespace without metadata.labels reached
-  // the inner groupBy iteratee through a stale react-query cache and crashed
-  // the Projects page with
-  //   TypeError: Cannot read properties of undefined (reading 'headlamp.dev/project-id')
-  it('skips namespaces with no labels instead of crashing', () => {
-    expect(() =>
-      groupNamespacesIntoProjects([ns('labelled', { project: 'app' }), ns('unlabelled')])
-    ).not.toThrow();
-
-    const projects = groupNamespacesIntoProjects([
-      ns('labelled', { project: 'app' }),
-      ns('unlabelled'),
+  it('excludes system / infrastructure namespaces', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('openshift-config'),
+      ns('kube-system'),
+      ns('open-cluster-management-agent'),
+      ns('default'),
+      ns('my-app'),
     ]);
-    expect(projects).toEqual([{ id: 'app', namespaces: ['labelled'], clusters: ['cluster-a'] }]);
+
+    expect(projects).toEqual([{ id: 'my-app', namespaces: ['my-app'], clusters: ['cluster-a'] }]);
   });
 
-  it('skips namespaces whose labels object is present but has no project id', () => {
-    const projects = groupNamespacesIntoProjects([
-      {
-        metadata: { name: 'other', labels: { 'app.kubernetes.io/name': 'x' } },
-        cluster: 'cluster-a',
-      },
-      ns('mine', { project: 'app' }),
+  // Regression guard for #5254: a namespace without metadata.name reached the
+  // groupBy iteratee through a stale react-query cache and crashed the page.
+  it('skips namespaces with no name instead of crashing', () => {
+    expect(() =>
+      discoverProjectsFromNamespaces([ns('real'), { metadata: {} as any, cluster: 'cluster-a' }])
+    ).not.toThrow();
+
+    const projects = discoverProjectsFromNamespaces([
+      ns('real'),
+      { metadata: {} as any, cluster: 'cluster-a' },
     ]);
-    expect(projects).toEqual([{ id: 'app', namespaces: ['mine'], clusters: ['cluster-a'] }]);
+    expect(projects).toEqual([{ id: 'real', namespaces: ['real'], clusters: ['cluster-a'] }]);
   });
 });
 
@@ -144,7 +144,7 @@ describe('ProjectList events', () => {
           type: HeadlampEventType.PROJECT_LIST_VIEW,
           data: {
             projects: [
-              { id: 'app', namespaces: ['app-prod'], clusters: ['cluster-a'] },
+              { id: 'app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
               { id: 'billing', namespaces: ['billing'], clusters: ['cluster-a'] },
             ],
           },

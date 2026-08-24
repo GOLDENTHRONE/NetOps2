@@ -15,9 +15,9 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Box, Button, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { groupBy, uniq } from 'lodash';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
 import Namespace from '../../lib/k8s/namespace';
@@ -28,29 +28,29 @@ import AllowedNamespacesSelectorGate from '../App/AllowedNamespacesSelectorGate'
 import { StatusLabel } from '../common';
 import Link from '../common/Link';
 import Table, { TableColumn } from '../common/Table/Table';
-import { NewProjectPopup } from './NewProjectPopup';
-import { getHealthIcon, getResourcesHealth, PROJECT_ID_LABEL } from './projectUtils';
+import { getHealthIcon, getResourcesHealth, isSystemNamespace } from './projectUtils';
 import { useProjectItems } from './useProjectResources';
 
-// The labelSelector on Namespace.useList filters at the API level, but the
-// returned list can still transiently include items without metadata.labels
-// populated (multi-cluster fan-out, react-query cache during a label
-// removal). Without the filter below an unguarded access crashed the
-// Projects page. See issue #5254.
-export function groupNamespacesIntoProjects(
+// Applications are auto-discovered: every namespace the user's token can see
+// becomes an application (application name = namespace name), except system /
+// infrastructure namespaces (see isSystemNamespace). Namespaces with the same
+// name across multiple clusters are collapsed into a single application that
+// spans those clusters.
+//
+// metadata.name is guarded because the multi-cluster fan-out / react-query
+// cache can transiently yield items without it. See issue #5254.
+export function discoverProjectsFromNamespaces(
   namespaces: ReadonlyArray<{
-    metadata: { name: string; labels?: Record<string, string> };
+    metadata: { name: string };
     cluster: string;
   }>
 ): ProjectDefinition[] {
-  const labelled = namespaces.filter(n => n.metadata.labels?.[PROJECT_ID_LABEL]);
-  return Object.entries(groupBy(labelled, n => n.metadata.labels![PROJECT_ID_LABEL])).map(
-    ([id, ns]) => ({
-      id,
-      namespaces: uniq(ns.map(it => it.metadata.name)),
-      clusters: uniq(ns.map(it => it.cluster)),
-    })
-  );
+  const visible = namespaces.filter(n => n.metadata?.name && !isSystemNamespace(n.metadata.name));
+  return Object.entries(groupBy(visible, n => n.metadata.name)).map(([name, ns]) => ({
+    id: name,
+    namespaces: [name],
+    clusters: uniq(ns.map(it => it.cluster)),
+  }));
 }
 
 const useProjects = (): ProjectDefinition[] => {
@@ -59,10 +59,9 @@ const useProjects = (): ProjectDefinition[] => {
 
   const { items: namespaces } = Namespace.useList({
     clusters: clusters.map(c => c.name),
-    labelSelector: PROJECT_ID_LABEL,
   });
 
-  return useMemo(() => groupNamespacesIntoProjects(namespaces ?? []), [namespaces]);
+  return useMemo(() => discoverProjectsFromNamespaces(namespaces ?? []), [namespaces]);
 };
 
 export const useProject = (name: string) => {
@@ -71,14 +70,13 @@ export const useProject = (name: string) => {
 
   const { items: namespaces, isLoading } = Namespace.useList({
     clusters: clusters.map(c => c.name),
-    labelSelector: PROJECT_ID_LABEL + '=' + name,
   });
 
   return useMemo(
     () => ({
       isLoading,
       project: namespaces
-        ? groupNamespacesIntoProjects(namespaces).find(project => project.id === name) ?? {
+        ? discoverProjectsFromNamespaces(namespaces).find(project => project.id === name) ?? {
             id: name,
             clusters: [],
             namespaces: [],
@@ -91,7 +89,6 @@ export const useProject = (name: string) => {
 
 function ProjectListContent() {
   const { t } = useTranslation();
-  const [showCreate, setShowCreate] = useState(false);
   const pluginApiResources = useTypedSelector(state => state.projects.apiResources);
 
   const projects = useProjects();
@@ -101,10 +98,6 @@ function ProjectListContent() {
     dispatchHeadlampEvent({ projects });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects]);
-
-  const handleCreateProject = () => {
-    setShowCreate(true);
-  };
 
   const columns = useMemo(() => {
     const columns: TableColumn<ProjectDefinition, any>[] = [
@@ -185,53 +178,30 @@ function ProjectListContent() {
 
   if (projects.length === 0) {
     return (
-      <>
-        {showCreate && <NewProjectPopup open={showCreate} onClose={() => setShowCreate(false)} />}
-        <Box
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          justifyContent="center"
-          minHeight="400px"
-          textAlign="center"
-        >
-          <Icon
-            icon="mdi:folder-multiple"
-            style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }}
-          />
-          <Typography variant="h6" gutterBottom>
-            {t('No projects found')}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" paragraph>
-            {t('Create your first project to organize your Kubernetes resources')}
-          </Typography>
-          <Button
-            variant="contained"
-            startIcon={<Icon icon="mdi:plus" />}
-            onClick={handleCreateProject}
-          >
-            {t('Create Project')}
-          </Button>
-        </Box>
-      </>
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="400px"
+        textAlign="center"
+      >
+        <Icon
+          icon="mdi:folder-multiple"
+          style={{ fontSize: 64, color: '#ccc', marginBottom: 16 }}
+        />
+        <Typography variant="h6" gutterBottom>
+          {t('No applications found')}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" paragraph>
+          {t('No namespaces are visible to your account, or they are all system namespaces.')}
+        </Typography>
+      </Box>
     );
   }
 
   return (
     <>
-      {showCreate && <NewProjectPopup open={showCreate} onClose={() => setShowCreate(false)} />}
-      <Box display="flex" justifyContent="flex-end" mb={2} mt={2}>
-        {/* Create Project button hidden per request, do not remove
-        <Button
-          variant="contained"
-          startIcon={<Icon icon="mdi:plus" />}
-          onClick={handleCreateProject}
-        >
-          {t('Create Project')}
-        </Button>
-        */}
-      </Box>
-
       <Table key={pluginApiResources.length} columns={columns} data={projects} />
     </>
   );
