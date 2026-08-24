@@ -15,9 +15,9 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Box, Typography } from '@mui/material';
+import { Autocomplete, Box, TextField, Typography } from '@mui/material';
 import { groupBy, uniq } from 'lodash';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
 import Namespace from '../../lib/k8s/namespace';
@@ -51,6 +51,27 @@ export function discoverProjectsFromNamespaces(
     namespaces: [name],
     clusters: uniq(ns.map(it => it.cluster)),
   }));
+}
+
+/**
+ * Filters the application (project) list by a set of selected namespaces.
+ *
+ * An empty selection means "no filter" and returns every project unchanged, so
+ * the default view (nothing selected) shows all applications.
+ *
+ * @param projects - The full list of discovered applications.
+ * @param selectedNamespaces - Namespaces chosen in the dropdown.
+ * @returns The projects that include at least one of the selected namespaces.
+ */
+export function filterProjectsByNamespaces(
+  projects: ProjectDefinition[],
+  selectedNamespaces: string[]
+): ProjectDefinition[] {
+  if (!selectedNamespaces || selectedNamespaces.length === 0) {
+    return projects;
+  }
+  const selected = new Set(selectedNamespaces);
+  return projects.filter(project => project.namespaces.some(ns => selected.has(ns)));
 }
 
 const useProjects = (): ProjectDefinition[] => {
@@ -93,6 +114,19 @@ function ProjectListContent() {
 
   const projects = useProjects();
   const dispatchHeadlampEvent = useEventCallback(HeadlampEventType.PROJECT_LIST_VIEW);
+
+  // No namespace is selected by default, so the table shows every application.
+  const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>([]);
+
+  const namespaceOptions = useMemo(
+    () => uniq(projects.flatMap(project => project.namespaces)).sort(),
+    [projects]
+  );
+
+  const filteredProjects = useMemo(
+    () => filterProjectsByNamespaces(projects, selectedNamespaces),
+    [projects, selectedNamespaces]
+  );
 
   useEffect(() => {
     dispatchHeadlampEvent({ projects });
@@ -199,7 +233,30 @@ function ProjectListContent() {
 
   return (
     <>
-      <Table key={pluginApiResources.length} columns={columns} data={projects} />
+      <Box display="flex" justifyContent="flex-start" mb={1} mt={1}>
+        <Autocomplete
+          multiple
+          disableCloseOnSelect
+          options={namespaceOptions}
+          value={selectedNamespaces}
+          onChange={(_event, newValue) => setSelectedNamespaces(newValue)}
+          sx={{ minWidth: 320, maxWidth: 560 }}
+          // Let the dropdown grow to the longest namespace name so each option
+          // stays on a single line, and never wrap an individual option.
+          slotProps={{ paper: { sx: { width: 'max-content', minWidth: '100%' } } }}
+          ListboxProps={{ sx: { '& .MuiAutocomplete-option': { whiteSpace: 'nowrap' } } }}
+          renderInput={params => (
+            <TextField
+              {...params}
+              label={t('Namespace')}
+              placeholder={selectedNamespaces.length === 0 ? t('All namespaces') : undefined}
+              size="small"
+            />
+          )}
+          noOptionsText={t('No namespaces')}
+        />
+      </Box>
+      <Table key={pluginApiResources.length} columns={columns} data={filteredProjects} />
     </>
   );
 }

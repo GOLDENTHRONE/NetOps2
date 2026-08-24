@@ -313,6 +313,7 @@
   "Previous Match (Shift+Enter)": "Previous Match (Shift+Enter)",
   "Next Match (Enter)": "Next Match (Enter)",
   "All namespaces": "All namespaces",
+  "No namespaces": "No namespaces",
   "From": "From",
   "Age": "Age",
   "{{ eventDate }} ({{ count }} times since {{ firstEventDate }})_one": "{{ eventDate }} ({{ count }} times since {{ firstEventDate }})",
