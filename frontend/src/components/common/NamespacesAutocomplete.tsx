@@ -79,8 +79,8 @@ export interface PureNamespacesAutocompleteProps {
   onChange: (event: React.ChangeEvent<{}>, newValue: string[]) => void;
   filter: { namespaces: Set<string> };
   /**
-   * Width of the input box. Defaults to '15rem' to preserve the existing
-   * layout everywhere it is already used.
+   * Width of the input box. The dropdown matches this width. Defaults to
+   * '24rem' so namespace names are readable across the whole tool.
    */
   inputWidth?: string;
   /**
@@ -91,8 +91,7 @@ export interface PureNamespacesAutocompleteProps {
   keepFilterTextOnSelect?: boolean;
   /**
    * Max characters of the selected-namespaces summary shown in the input before
-   * it is truncated with an ellipsis. Defaults to 12 to match the existing
-   * narrow input; a wider input can pass a larger value.
+   * it is truncated with an ellipsis. Defaults to 40 to suit the wider input.
    */
   maxSummaryChars?: number;
 }
@@ -101,9 +100,9 @@ export function PureNamespacesAutocomplete({
   namespaceNames,
   onChange: onChangeFromProps,
   filter,
-  inputWidth = '15rem',
+  inputWidth = '24rem',
   keepFilterTextOnSelect = false,
-  maxSummaryChars = 12,
+  maxSummaryChars = 40,
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);

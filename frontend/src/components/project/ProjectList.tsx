@@ -247,8 +247,6 @@ function ProjectListContent() {
             namespaceNames={namespaceOptions}
             filter={{ namespaces: new Set(selectedNamespaces) }}
             onChange={(_event, newValue) => setSelectedNamespaces(newValue)}
-            inputWidth="24rem"
-            maxSummaryChars={40}
           />
         )}
       />
