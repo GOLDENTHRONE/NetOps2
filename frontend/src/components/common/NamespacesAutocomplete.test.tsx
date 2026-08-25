@@ -93,37 +93,24 @@ describe('PureNamespacesAutocomplete', () => {
     expect(names).not.toContain('cert-manager');
   });
 
-  it('keeps the filter after selecting so multiple matches can be picked seamlessly', () => {
-    renderHarness({ keepFilterTextOnSelect: true });
-    const input = screen.getByRole('combobox');
+  it('keeps the list filtered after selecting a single namespace', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox') as HTMLInputElement;
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
 
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
 
-    // The list stays open and still filtered to the typed text, so the
-    // sibling matches remain immediately clickable (no reset to all 4).
-    expect((input as HTMLInputElement).value).toBe('vbgw');
+    // The list stays open and still filtered to the typed text (it does NOT
+    // reset to all namespaces), and the sibling matches remain clickable.
+    expect(input.value).toBe('vbgw');
     const names = optionNames();
     expect(names).toContain('wnv7a0vbgw0003c');
     expect(names).not.toContain('cert-manager');
   });
 
-  it('by default clears the filter on select (unchanged behavior for other pages)', () => {
+  it('keeps the list filtered while selecting multiple namespaces in a row', () => {
     renderHarness();
-    const input = screen.getByRole('combobox');
-    fireEvent.mouseDown(input);
-    fireEvent.change(input, { target: { value: 'vbgw' } });
-
-    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
-
-    // Filter is wiped, so the full list is shown again.
-    expect((input as HTMLInputElement).value).toBe('');
-    expect(optionNames()).toContain('cert-manager');
-  });
-
-  it('supports selecting several namespaces (multi-select accumulates)', () => {
-    renderHarness({ keepFilterTextOnSelect: true });
     const input = screen.getByRole('combobox');
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
@@ -131,7 +118,7 @@ describe('PureNamespacesAutocomplete', () => {
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0001c' }));
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0003c' }));
 
-    // Both remain checked in the still-open, still-filtered list.
+    // Both are checked, and the list is still filtered to 'vbgw' throughout.
     const listbox = screen.getByRole('listbox');
     expect(within(listbox).getByRole('option', { name: 'wnv7a0vbgw0001c' })).toHaveAttribute(
       'aria-selected',
@@ -141,5 +128,33 @@ describe('PureNamespacesAutocomplete', () => {
       'aria-selected',
       'true'
     );
+    expect(optionNames()).not.toContain('cert-manager');
+  });
+
+  it('clears the typed filter when the dropdown closes', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox') as HTMLInputElement;
+    fireEvent.mouseDown(input);
+    fireEvent.change(input, { target: { value: 'vbgw' } });
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
+    expect(input.value).toBe('vbgw');
+
+    // Closing the dropdown clears the search text so the input then shows only
+    // the selected namespaces.
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(input.value).toBe('');
+  });
+
+  it('shows the full list again after closing and reopening', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+    fireEvent.change(input, { target: { value: 'vbgw' } });
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    // Reopen: the filter is gone, so every namespace is listed again.
+    fireEvent.mouseDown(input);
+    expect(optionNames()).toContain('cert-manager');
   });
 });

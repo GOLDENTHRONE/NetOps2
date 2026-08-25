@@ -84,12 +84,6 @@ export interface PureNamespacesAutocompleteProps {
    */
   inputWidth?: string;
   /**
-   * When true, the typed filter text is kept after selecting an option, so the
-   * list stays filtered and multiple matching namespaces can be picked without
-   * the list resetting on every click. Defaults to false (existing behavior).
-   */
-  keepFilterTextOnSelect?: boolean;
-  /**
    * Max characters of the selected-namespaces summary shown in the input before
    * it is truncated with an ellipsis. Defaults to 40 to suit the wider input.
    */
@@ -101,7 +95,6 @@ export function PureNamespacesAutocomplete({
   onChange: onChangeFromProps,
   filter,
   inputWidth = '24rem',
-  keepFilterTextOnSelect = false,
   maxSummaryChars = 40,
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
@@ -118,12 +111,10 @@ export function PureNamespacesAutocomplete({
   };
 
   const onChange = (event: React.ChangeEvent<{}>, newValue: string[]) => {
-    // By default we reset the input so it won't show next to the selected
-    // namespaces. When keepFilterTextOnSelect is set, the typed filter is kept
-    // so the list stays filtered for seamless multi-selection.
-    if (!keepFilterTextOnSelect) {
-      setNamespaceInput('');
-    }
+    // Keep the typed filter after a selection so the list stays filtered and
+    // several matching namespaces can be picked in a row. The filter text is
+    // cleared instead when the dropdown closes (see onClose), so the input then
+    // shows only the selected namespaces.
     onChangeFromProps(event, newValue);
   };
 
@@ -136,6 +127,7 @@ export function PureNamespacesAutocomplete({
       disableCloseOnSelect
       options={namespaceNames}
       onChange={onChange}
+      onClose={() => setNamespaceInput('')}
       onInputChange={onInputChange}
       inputValue={namespaceInput}
       // We reverse the namespaces so the last chosen appear as the first in the label. This
