@@ -158,20 +158,34 @@ describe('PureNamespacesAutocomplete', () => {
     expect(optionNames()).toContain('cert-manager');
   });
 
-  it('hides the selection summary while open, and shows it only when closed', () => {
+  it('shows the selected summary in the input when picking via checkbox (not typing)', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+
+    // Pick via the checkbox, without typing anything.
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
+
+    // The name appears twice: as the checked option in the list AND as the
+    // summary shown in the input box (this was the reported bug — the input
+    // was empty after selecting).
+    expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(2);
+  });
+
+  it('hides the summary only while typing a filter, and restores it when cleared', () => {
     renderHarness();
     const input = screen.getByRole('combobox');
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
 
-    // While open, the name appears only as the checked option in the list — not
-    // also as a summary crammed next to the typed text in the input.
+    // While there is typed text, the summary is hidden, so the name is only in
+    // the list (not also crammed next to the typed text).
     expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(1);
 
-    // After closing, the list is gone and the input shows the summary.
-    fireEvent.keyDown(input, { key: 'Escape' });
-    expect(screen.getByText('wnv7a0vbgw0002c')).toBeInTheDocument();
+    // Clearing the typed filter brings the summary back into the input.
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(2);
   });
 
   it('unchecking a selected option removes it from the selection', () => {
