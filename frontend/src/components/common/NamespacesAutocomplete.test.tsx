@@ -157,4 +157,34 @@ describe('PureNamespacesAutocomplete', () => {
     fireEvent.mouseDown(input);
     expect(optionNames()).toContain('cert-manager');
   });
+
+  it('hides the selection summary while open, and shows it only when closed', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+    fireEvent.change(input, { target: { value: 'vbgw' } });
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
+
+    // While open, the name appears only as the checked option in the list — not
+    // also as a summary crammed next to the typed text in the input.
+    expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(1);
+
+    // After closing, the list is gone and the input shows the summary.
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByText('wnv7a0vbgw0002c')).toBeInTheDocument();
+  });
+
+  it('unchecking a selected option removes it from the selection', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+    fireEvent.change(input, { target: { value: 'vbgw' } });
+
+    const option = () => screen.getByRole('option', { name: 'wnv7a0vbgw0002c' });
+    fireEvent.click(option());
+    expect(option()).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(option());
+    expect(option()).toHaveAttribute('aria-selected', 'false');
+  });
 });
