@@ -78,12 +78,25 @@ export interface PureNamespacesAutocompleteProps {
   namespaceNames: string[];
   onChange: (event: React.ChangeEvent<{}>, newValue: string[]) => void;
   filter: { namespaces: Set<string> };
+  /**
+   * Width of the input box. Defaults to '15rem' to preserve the existing
+   * layout everywhere it is already used.
+   */
+  inputWidth?: string;
+  /**
+   * When true, the typed filter text is kept after selecting an option, so the
+   * list stays filtered and multiple matching namespaces can be picked without
+   * the list resetting on every click. Defaults to false (existing behavior).
+   */
+  keepFilterTextOnSelect?: boolean;
 }
 
 export function PureNamespacesAutocomplete({
   namespaceNames,
   onChange: onChangeFromProps,
   filter,
+  inputWidth = '15rem',
+  keepFilterTextOnSelect = false,
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);
@@ -99,8 +112,12 @@ export function PureNamespacesAutocomplete({
   };
 
   const onChange = (event: React.ChangeEvent<{}>, newValue: string[]) => {
-    // Now we reset the input so it won't show next to the selected namespaces.
-    setNamespaceInput('');
+    // By default we reset the input so it won't show next to the selected
+    // namespaces. When keepFilterTextOnSelect is set, the typed filter is kept
+    // so the list stays filtered for seamless multi-selection.
+    if (!keepFilterTextOnSelect) {
+      setNamespaceInput('');
+    }
     onChangeFromProps(event, newValue);
   };
 
@@ -184,7 +201,7 @@ export function PureNamespacesAutocomplete({
         );
       }}
       renderInput={params => (
-        <Box width="15rem">
+        <Box width={inputWidth}>
           <TextField
             {...params}
             variant="outlined"
