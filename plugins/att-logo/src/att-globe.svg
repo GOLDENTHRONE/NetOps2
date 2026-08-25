@@ -1,0 +1,14 @@
+<!--
+  PLACEHOLDER AT&T globe.
+  Replace the entire contents of this file with the real AT&T logo SVG from
+  Iconify (icon "thesvg-color:atandt" -> the colored blue globe -> "Copy SVG").
+  Keep viewBox="0 0 24 24" so the sizing in index.tsx stays correct.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <circle cx="12" cy="12" r="11" fill="#009FDB" />
+  <g fill="none" stroke="#ffffff" stroke-width="1.1" opacity="0.9">
+    <path d="M3 9 H21" />
+    <path d="M2.4 12 H21.6" />
+    <path d="M3 15 H21" />
+  </g>
+</svg>
