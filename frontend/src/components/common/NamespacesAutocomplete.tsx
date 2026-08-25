@@ -136,14 +136,6 @@ export function PureNamespacesAutocomplete({
       openOnFocus
       disableCloseOnSelect
       options={namespaceNames}
-      // Let the dropdown grow to fit the longest namespace name (instead of
-      // matching the narrow input) so every option stays on a single line.
-      // It is capped at the viewport and stays on-screen via MUI's default
-      // flip/preventOverflow modifiers.
-      slotProps={{
-        popper: { style: { width: 'fit-content' } },
-        paper: { sx: { minWidth: '15rem', maxWidth: '90vw' } },
-      }}
       onChange={onChange}
       onInputChange={onInputChange}
       inputValue={namespaceInput}
@@ -151,7 +143,7 @@ export function PureNamespacesAutocomplete({
       // is useful since the label is ellipsized and this we get to see it change.
       value={[...filter.namespaces.values()].reverse()}
       renderOption={(props, option, { selected }) => (
-        <li {...props} key={props.key} style={{ whiteSpace: 'nowrap' }}>
+        <li {...props} key={props.key}>
           <Checkbox
             icon={<Icon icon="mdi:checkbox-blank-outline" />}
             checkedIcon={<Icon icon="mdi:check-box-outline" />}
