@@ -101,7 +101,6 @@ export function PureNamespacesAutocomplete({
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);
   const [namespaceInput, setNamespaceInput] = React.useState<string>('');
-  const [isOpen, setIsOpen] = React.useState(false);
   const maxNamespacesChars = maxSummaryChars;
 
   const onInputChange = (event: object, value: string, reason: string) => {
@@ -129,11 +128,7 @@ export function PureNamespacesAutocomplete({
       disableCloseOnSelect
       options={namespaceNames}
       onChange={onChange}
-      onOpen={() => setIsOpen(true)}
-      onClose={() => {
-        setIsOpen(false);
-        setNamespaceInput('');
-      }}
+      onClose={() => setNamespaceInput('')}
       onInputChange={onInputChange}
       inputValue={namespaceInput}
       // We reverse the namespaces so the last chosen appear as the first in the label. This
@@ -153,10 +148,11 @@ export function PureNamespacesAutocomplete({
         </li>
       )}
       renderTags={(tags: string[]) => {
-        // While the dropdown is open the user is searching, so show only the
-        // typed text (the selection is visible via the checkboxes). The summary
-        // is shown only when the dropdown is closed.
-        if (isOpen) {
+        // Only while the user is actively typing a filter do we hide the
+        // summary and show just the typed text (avoids "selected, +N  typed"
+        // clutter). When not typing — including when picking via the
+        // checkboxes — the summary of selected namespaces is shown in the input.
+        if (namespaceInput !== '') {
           return null;
         }
         if (tags.length === 0) {
