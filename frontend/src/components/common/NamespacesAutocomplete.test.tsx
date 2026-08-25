@@ -32,19 +32,31 @@ const _dont_delete_me = App;
 const NAMESPACES = ['cert-manager', 'wnv7a0vbgw0001c', 'wnv7a0vbgw0002c', 'wnv7a0vbgw0003c'];
 
 /** Controlled harness mirroring how ProjectList drives the component. */
-function Harness(props: Partial<React.ComponentProps<typeof PureNamespacesAutocomplete>>) {
+function Harness({
+  onSelect,
+  ...props
+}: Partial<React.ComponentProps<typeof PureNamespacesAutocomplete>> & {
+  onSelect?: (value: string[]) => void;
+}) {
   const [selected, setSelected] = React.useState<string[]>([]);
   return (
     <PureNamespacesAutocomplete
       namespaceNames={NAMESPACES}
       filter={{ namespaces: new Set(selected) }}
-      onChange={(_event, newValue) => setSelected(newValue)}
+      onChange={(_event, newValue) => {
+        setSelected(newValue);
+        onSelect?.(newValue);
+      }}
       {...props}
     />
   );
 }
 
-function renderHarness(props?: Partial<React.ComponentProps<typeof PureNamespacesAutocomplete>>) {
+function renderHarness(
+  props?: Partial<React.ComponentProps<typeof PureNamespacesAutocomplete>> & {
+    onSelect?: (value: string[]) => void;
+  }
+) {
   return render(
     <TestContext>
       <ThemeProvider theme={createMuiTheme({ name: 'Light', base: 'light' })}>
@@ -200,5 +212,52 @@ describe('PureNamespacesAutocomplete', () => {
 
     fireEvent.click(option());
     expect(option()).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('emits the selected namespaces to the parent', () => {
+    const onSelect = vi.fn();
+    renderHarness({ onSelect });
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+
+    fireEvent.click(screen.getByRole('option', { name: 'cert-manager' }));
+    expect(onSelect).toHaveBeenLastCalledWith(['cert-manager']);
+
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0001c' }));
+    expect(onSelect).toHaveBeenLastCalledWith(['cert-manager', 'wnv7a0vbgw0001c']);
+  });
+
+  it('clears the whole selection with the clear (X) button', () => {
+    const onSelect = vi.fn();
+    renderHarness({ onSelect });
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+    fireEvent.click(screen.getByRole('option', { name: 'cert-manager' }));
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0001c' }));
+
+    fireEvent.click(screen.getByTitle('Clear'));
+    expect(onSelect).toHaveBeenLastCalledWith([]);
+  });
+
+  it('shows no options for a non-matching filter', () => {
+    renderHarness();
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+    fireEvent.change(input, { target: { value: 'zzzzzz' } });
+
+    expect(optionNames()).toHaveLength(0);
+    expect(screen.getByText('No options')).toBeInTheDocument();
+  });
+
+  it('can select an option with the keyboard (ArrowDown + Enter)', () => {
+    const onSelect = vi.fn();
+    renderHarness({ onSelect });
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(onSelect).toHaveBeenLastCalledWith(['cert-manager']);
   });
 });
