@@ -80,7 +80,8 @@ export interface PureNamespacesAutocompleteProps {
   filter: { namespaces: Set<string> };
   /**
    * Width of the input box. The dropdown matches this width. Defaults to
-   * '24rem' so namespace names are readable across the whole tool.
+   * '30rem' so even long namespace names stay on a single line across the
+   * whole tool (e.g. openshift-kube-storage-version-migrator-operator).
    */
   inputWidth?: string;
   /**
@@ -94,7 +95,7 @@ export function PureNamespacesAutocomplete({
   namespaceNames,
   onChange: onChangeFromProps,
   filter,
-  inputWidth = '24rem',
+  inputWidth = '30rem',
   maxSummaryChars = 40,
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
