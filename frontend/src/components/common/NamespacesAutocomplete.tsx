@@ -89,6 +89,12 @@ export interface PureNamespacesAutocompleteProps {
    * the list resetting on every click. Defaults to false (existing behavior).
    */
   keepFilterTextOnSelect?: boolean;
+  /**
+   * Max characters of the selected-namespaces summary shown in the input before
+   * it is truncated with an ellipsis. Defaults to 12 to match the existing
+   * narrow input; a wider input can pass a larger value.
+   */
+  maxSummaryChars?: number;
 }
 
 export function PureNamespacesAutocomplete({
@@ -97,11 +103,12 @@ export function PureNamespacesAutocomplete({
   filter,
   inputWidth = '15rem',
   keepFilterTextOnSelect = false,
+  maxSummaryChars = 12,
 }: PureNamespacesAutocompleteProps) {
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);
   const [namespaceInput, setNamespaceInput] = React.useState<string>('');
-  const maxNamespacesChars = 12;
+  const maxNamespacesChars = maxSummaryChars;
 
   const onInputChange = (event: object, value: string, reason: string) => {
     // For some reason, the AutoComplete component resets the text after a short
