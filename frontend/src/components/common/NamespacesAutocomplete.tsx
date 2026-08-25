@@ -22,7 +22,7 @@ import Checkbox from '@mui/material/Checkbox';
 import { useTheme } from '@mui/material/styles';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import { uniq } from 'lodash';
+import { isEqual, uniq } from 'lodash';
 import React, { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch } from 'react-redux';
@@ -79,6 +79,14 @@ export interface PureNamespacesAutocompleteProps {
   onChange: (event: React.ChangeEvent<{}>, newValue: string[]) => void;
   filter: { namespaces: Set<string> };
   /**
+   * Called when the dropdown closes (click away, Escape, or selecting an
+   * option while `disableCloseOnSelect` is off). Used by callers that need to
+   * sync the final selection elsewhere (e.g. the URL) without doing so on
+   * every intermediate pick, since navigating mid-selection can close the
+   * still-open dropdown.
+   */
+  onClose?: () => void;
+  /**
    * Width of the input box. The dropdown matches this width. Defaults to
    * '30rem' so even long namespace names stay on a single line across the
    * whole tool (e.g. openshift-kube-storage-version-migrator-operator).
@@ -95,6 +103,7 @@ export function PureNamespacesAutocomplete({
   namespaceNames,
   onChange: onChangeFromProps,
   filter,
+  onClose: onCloseFromProps,
   inputWidth = '30rem',
   maxSummaryChars = 40,
 }: PureNamespacesAutocompleteProps) {
@@ -130,6 +139,7 @@ export function PureNamespacesAutocomplete({
   const onClose = () => {
     setNamespaceInput('');
     setSearchTerm('');
+    onCloseFromProps?.();
   };
 
   const filterOptions = (options: string[]) => {
@@ -163,8 +173,14 @@ export function PureNamespacesAutocomplete({
             checkedIcon={<Icon icon="mdi:check-box-outline" />}
             style={{
               color: selected ? theme.palette.primary.main : theme.palette.text.primary,
+              // Purely a visual indicator: clicks pass through to the li so
+              // the checkbox (a focusable native input) never steals focus.
+              // Focusing it directly was read as a blur by the Autocomplete,
+              // closing the still-open dropdown after a single pick.
+              pointerEvents: 'none',
             }}
             checked={selected}
+            tabIndex={-1}
           />
           {option}
         </li>
@@ -254,8 +270,24 @@ export function NamespacesAutocomplete() {
   }, [cluster]);
 
   const onChange = (event: React.ChangeEvent<{}>, newValue: string[]) => {
-    addQuery({ namespace: newValue.join(' ') }, { namespace: '' }, history, location, '');
+    // Update redux synchronously so the table filters immediately as each
+    // namespace is picked.
     dispatch(setNamespaceFilter(newValue));
+  };
+
+  // Sync the URL only when the dropdown closes (click away, Escape, or a
+  // pick), not on every intermediate pick while it's still open. Pushing
+  // history from inside onChange - even deferred to an effect keyed on the
+  // redux filter - raced with fast consecutive picks and closed the
+  // still-open dropdown before the next pick landed.
+  const onClose = () => {
+    addQuery(
+      { namespace: [...filter.namespaces].join(' ') },
+      { namespace: '' },
+      history,
+      location,
+      ''
+    );
   };
 
   return namespaceNames.length > 0 ? (
@@ -263,9 +295,10 @@ export function NamespacesAutocomplete() {
       namespaceNames={namespaceNames}
       onChange={onChange}
       filter={filter}
+      onClose={onClose}
     />
   ) : (
-    <NamespacesFromClusterAutocomplete onChange={onChange} filter={filter} />
+    <NamespacesFromClusterAutocomplete onChange={onChange} filter={filter} onClose={onClose} />
   );
 }
 
@@ -311,13 +344,23 @@ function NamespacesFromClusterAutocomplete(
   props: Omit<PureNamespacesAutocompleteProps, 'namespaceNames'>
 ) {
   const [namespacesList, error] = Namespace.useList();
-  const namespaceNames = useMemo(
+  const rawNamespaceNames = useMemo(
     () =>
       uniq(namespacesList?.map(namespace => namespace.metadata.name) ?? [])
         .slice()
         .sort((a, b) => a.localeCompare(b)),
     [namespacesList]
   );
+  // Namespace.useList() re-emits on every watch event (including reconnects),
+  // which produced a brand-new array above even when the names didn't
+  // change. Passing a fresh `options` reference to the still-open Autocomplete
+  // on every one of those events was closing its dropdown mid-selection.
+  // Keep the same array reference when the contents are unchanged.
+  const namespaceNamesRef = React.useRef<string[]>(rawNamespaceNames);
+  if (!isEqual(namespaceNamesRef.current, rawNamespaceNames)) {
+    namespaceNamesRef.current = rawNamespaceNames;
+  }
+  const namespaceNames = namespaceNamesRef.current;
 
   useDefaultNamespaceFallback(namespacesList, Boolean(error));
 
