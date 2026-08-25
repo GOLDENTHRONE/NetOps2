@@ -112,10 +112,10 @@ export function PureNamespacesAutocomplete({
   };
 
   const onChange = (event: React.ChangeEvent<{}>, newValue: string[]) => {
-    // Keep the typed filter after a selection so the list stays filtered and
-    // several matching namespaces can be picked in a row. The filter text is
-    // cleared instead when the dropdown closes (see onClose), so the input then
-    // shows only the selected namespaces.
+    // Clear the search text on every selection so the input immediately shows
+    // the selected namespaces (their summary) instead of the text that was
+    // typed to find them.
+    setNamespaceInput('');
     onChangeFromProps(event, newValue);
   };
 

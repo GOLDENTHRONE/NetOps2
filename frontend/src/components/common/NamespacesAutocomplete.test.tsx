@@ -105,7 +105,7 @@ describe('PureNamespacesAutocomplete', () => {
     expect(names).not.toContain('cert-manager');
   });
 
-  it('keeps the list filtered after selecting a single namespace', () => {
+  it('clears the search and shows the selected name after selecting', () => {
     renderHarness();
     const input = screen.getByRole('combobox') as HTMLInputElement;
     fireEvent.mouseDown(input);
@@ -113,24 +113,24 @@ describe('PureNamespacesAutocomplete', () => {
 
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
 
-    // The list stays open and still filtered to the typed text (it does NOT
-    // reset to all namespaces), and the sibling matches remain clickable.
-    expect(input.value).toBe('vbgw');
-    const names = optionNames();
-    expect(names).toContain('wnv7a0vbgw0003c');
-    expect(names).not.toContain('cert-manager');
+    // The search text is cleared on select, so the input shows the selected
+    // name (not the typed 'vbgw') and the list is no longer filtered.
+    expect(input.value).toBe('');
+    expect(screen.getAllByText('wnv7a0vbgw0002c').length).toBeGreaterThanOrEqual(1);
+    expect(optionNames()).toContain('cert-manager');
   });
 
-  it('keeps the list filtered while selecting multiple namespaces in a row', () => {
+  it('accumulates multiple selections, clearing the search on each pick', () => {
     renderHarness();
-    const input = screen.getByRole('combobox');
+    const input = screen.getByRole('combobox') as HTMLInputElement;
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
-
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0001c' }));
+
+    // Search cleared -> full list shown again; pick another from it.
+    expect(input.value).toBe('');
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0003c' }));
 
-    // Both are checked, and the list is still filtered to 'vbgw' throughout.
     const listbox = screen.getByRole('listbox');
     expect(within(listbox).getByRole('option', { name: 'wnv7a0vbgw0001c' })).toHaveAttribute(
       'aria-selected',
@@ -140,19 +140,15 @@ describe('PureNamespacesAutocomplete', () => {
       'aria-selected',
       'true'
     );
-    expect(optionNames()).not.toContain('cert-manager');
   });
 
-  it('clears the typed filter when the dropdown closes', () => {
+  it('clears the typed filter when the dropdown closes (without selecting)', () => {
     renderHarness();
     const input = screen.getByRole('combobox') as HTMLInputElement;
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
-    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
     expect(input.value).toBe('vbgw');
 
-    // Closing the dropdown clears the search text so the input then shows only
-    // the selected namespaces.
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(input.value).toBe('');
   });
@@ -184,18 +180,21 @@ describe('PureNamespacesAutocomplete', () => {
     expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(2);
   });
 
-  it('hides the summary only while typing a filter, and restores it when cleared', () => {
+  it('hides the summary while typing, and shows it when not typing', () => {
     renderHarness();
     const input = screen.getByRole('combobox');
     fireEvent.mouseDown(input);
-    fireEvent.change(input, { target: { value: 'vbgw' } });
-    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
 
-    // While there is typed text, the summary is hidden, so the name is only in
-    // the list (not also crammed next to the typed text).
+    // Select via checkbox (no typing) -> the summary shows the name (it appears
+    // in the list AND in the input summary).
+    fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
+    expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(2);
+
+    // Now type -> the summary is hidden, so the name is only in the list.
+    fireEvent.change(input, { target: { value: 'vbgw' } });
     expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(1);
 
-    // Clearing the typed filter brings the summary back into the input.
+    // Clear the typed text -> the summary comes back.
     fireEvent.change(input, { target: { value: '' } });
     expect(screen.getAllByText('wnv7a0vbgw0002c')).toHaveLength(2);
   });
