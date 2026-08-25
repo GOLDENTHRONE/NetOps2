@@ -105,7 +105,7 @@ describe('PureNamespacesAutocomplete', () => {
     expect(names).not.toContain('cert-manager');
   });
 
-  it('clears the search and shows the selected name after selecting', () => {
+  it('clears the visible search text but keeps the list filtered after selecting', () => {
     renderHarness();
     const input = screen.getByRole('combobox') as HTMLInputElement;
     fireEvent.mouseDown(input);
@@ -113,22 +113,24 @@ describe('PureNamespacesAutocomplete', () => {
 
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
 
-    // The search text is cleared on select, so the input shows the selected
-    // name (not the typed 'vbgw') and the list is no longer filtered.
+    // The typed text is cleared from the visible textbox (so it doesn't look
+    // like stale search text), but the list stays filtered to the 'vbgw'
+    // matches so the user can keep picking without retyping.
     expect(input.value).toBe('');
     expect(screen.getAllByText('wnv7a0vbgw0002c').length).toBeGreaterThanOrEqual(1);
-    expect(optionNames()).toContain('cert-manager');
+    expect(optionNames()).not.toContain('cert-manager');
   });
 
-  it('accumulates multiple selections, clearing the search on each pick', () => {
+  it('accumulates multiple selections while the search stays filtered', () => {
     renderHarness();
     const input = screen.getByRole('combobox') as HTMLInputElement;
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0001c' }));
 
-    // Search cleared -> full list shown again; pick another from it.
+    // Visible text cleared, but list still filtered to 'vbgw' matches.
     expect(input.value).toBe('');
+    expect(optionNames()).not.toContain('cert-manager');
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0003c' }));
 
     const listbox = screen.getByRole('listbox');
@@ -159,6 +161,10 @@ describe('PureNamespacesAutocomplete', () => {
     fireEvent.mouseDown(input);
     fireEvent.change(input, { target: { value: 'vbgw' } });
     fireEvent.click(screen.getByRole('option', { name: 'wnv7a0vbgw0002c' }));
+
+    // Still open: the list stays filtered after picking.
+    expect(optionNames()).not.toContain('cert-manager');
+
     fireEvent.keyDown(input, { key: 'Escape' });
 
     // Reopen: the filter is gone, so every namespace is listed again.

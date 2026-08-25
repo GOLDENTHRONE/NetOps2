@@ -101,6 +101,12 @@ export function PureNamespacesAutocomplete({
   const theme = useTheme();
   const { t } = useTranslation(['glossary', 'translation']);
   const [namespaceInput, setNamespaceInput] = React.useState<string>('');
+  // Kept separate from namespaceInput: this is what narrows the option list.
+  // Unlike namespaceInput (the visible textbox text, cleared after each pick
+  // so it shows the selected-namespaces summary), the search term survives
+  // picks so the list stays filtered and multiple matches (e.g. all "bgw"
+  // namespaces) can be picked one after another without retyping.
+  const [searchTerm, setSearchTerm] = React.useState<string>('');
   const maxNamespacesChars = maxSummaryChars;
 
   const onInputChange = (event: object, value: string, reason: string) => {
@@ -108,15 +114,30 @@ export function PureNamespacesAutocomplete({
     // delay, so we need to avoid that or the user won't be able to edit/use what they type.
     if (reason !== 'reset') {
       setNamespaceInput(value);
+      setSearchTerm(value);
     }
   };
 
   const onChange = (event: React.ChangeEvent<{}>, newValue: string[]) => {
-    // Clear the search text on every selection so the input immediately shows
-    // the selected namespaces (their summary) instead of the text that was
-    // typed to find them.
+    // Clear only the visible textbox text so it immediately shows the
+    // selected namespaces (their summary) instead of the text that was typed
+    // to find them. The search term is left alone so the option list stays
+    // filtered, letting the user pick more matches without retyping.
     setNamespaceInput('');
     onChangeFromProps(event, newValue);
+  };
+
+  const onClose = () => {
+    setNamespaceInput('');
+    setSearchTerm('');
+  };
+
+  const filterOptions = (options: string[]) => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) {
+      return options;
+    }
+    return options.filter(option => option.toLowerCase().includes(term));
   };
 
   return (
@@ -127,8 +148,9 @@ export function PureNamespacesAutocomplete({
       openOnFocus
       disableCloseOnSelect
       options={namespaceNames}
+      filterOptions={filterOptions}
       onChange={onChange}
-      onClose={() => setNamespaceInput('')}
+      onClose={onClose}
       onInputChange={onInputChange}
       inputValue={namespaceInput}
       // We reverse the namespaces so the last chosen appear as the first in the label. This
