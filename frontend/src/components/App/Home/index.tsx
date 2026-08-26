@@ -118,6 +118,7 @@ function HomeComponent(props: HomeComponentProps) {
   // Always open Home on "All Clusters" tab when view mounts.
   const [view, setView] = React.useState<'clusters' | 'projects'>('clusters');
   const location = useLocation();
+  const history = useHistory();
   const { clusters } = props;
   const [customNameClusters, setCustomNameClusters] = React.useState(
     getCustomClusterNames(clusters)
@@ -212,7 +213,14 @@ function HomeComponent(props: HomeComponentProps) {
     <PageGrid>
       <SectionBox title="Home" headerProps={{ headerStyle: 'main' }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={view} onChange={(_, newView) => setView(() => newView)}>
+          <Tabs
+            value={view}
+            onChange={(_, newView: 'clusters' | 'projects') => {
+              // Navigate so tab clicks stay in sync with the sidebar's
+              // "All Clusters" / "Applications" links (both drive the URL).
+              history.push(createRouteURL(newView === 'projects' ? 'projectsHome' : 'home'));
+            }}
+          >
             <Tab
               value="clusters"
               label={
