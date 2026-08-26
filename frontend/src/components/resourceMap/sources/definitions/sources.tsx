@@ -15,13 +15,16 @@
  */
 
 import { Icon } from '@iconify/react';
-import { useQuery } from '@tanstack/react-query';
 import React, { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useCluster, useSelectedClusters } from '../../../../lib/k8s';
-import { apiDiscovery } from '../../../../lib/k8s/api/v2/apiDiscovery';
-import BackendTLSPolicy from '../../../../lib/k8s/backendTLSPolicy';
-import BackendTrafficPolicy from '../../../../lib/k8s/backendTrafficPolicy';
+import { useCluster } from '../../../../lib/k8s';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import { apiDiscovery } from '../../../../lib/k8s/api/v2/apiDiscovery';
+// === END GATEWAY (BETA) ===
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import BackendTLSPolicy from '../../../../lib/k8s/backendTLSPolicy';
+// import BackendTrafficPolicy from '../../../../lib/k8s/backendTrafficPolicy';
+// === END GATEWAY (BETA) ===
 import ConfigMap from '../../../../lib/k8s/configMap';
 import CRD from '../../../../lib/k8s/crd';
 import CronJob from '../../../../lib/k8s/cronJob';
@@ -29,12 +32,16 @@ import DaemonSet from '../../../../lib/k8s/daemonSet';
 import Deployment from '../../../../lib/k8s/deployment';
 import Endpoints from '../../../../lib/k8s/endpoints';
 import EndpointSlice from '../../../../lib/k8s/endpointSlices';
-import Gateway from '../../../../lib/k8s/gateway';
-import GatewayClass from '../../../../lib/k8s/gatewayClass';
-import { useGatewayL4RouteAvailability } from '../../../../lib/k8s/gatewayL4RouteAvailability';
-import GRPCRoute from '../../../../lib/k8s/grpcRoute';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import Gateway from '../../../../lib/k8s/gateway';
+// import GatewayClass from '../../../../lib/k8s/gatewayClass';
+// import { useGatewayL4RouteAvailability } from '../../../../lib/k8s/gatewayL4RouteAvailability';
+// import GRPCRoute from '../../../../lib/k8s/grpcRoute';
+// === END GATEWAY (BETA) ===
 import HPA from '../../../../lib/k8s/hpa';
-import HTTPRoute from '../../../../lib/k8s/httpRoute';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import HTTPRoute from '../../../../lib/k8s/httpRoute';
+// === END GATEWAY (BETA) ===
 import Ingress from '../../../../lib/k8s/ingress';
 import IngressClass from '../../../../lib/k8s/ingressClass';
 import Job from '../../../../lib/k8s/job';
@@ -50,7 +57,9 @@ import PersistentVolumeClaim from '../../../../lib/k8s/persistentVolumeClaim';
 import Pod from '../../../../lib/k8s/pod';
 import PDB from '../../../../lib/k8s/podDisruptionBudget';
 import PriorityClass from '../../../../lib/k8s/priorityClass';
-import ReferenceGrant from '../../../../lib/k8s/referenceGrant';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import ReferenceGrant from '../../../../lib/k8s/referenceGrant';
+// === END GATEWAY (BETA) ===
 import ReplicaSet from '../../../../lib/k8s/replicaSet';
 import ResourceQuota from '../../../../lib/k8s/resourceQuota';
 import Role from '../../../../lib/k8s/role';
@@ -60,8 +69,10 @@ import Secret from '../../../../lib/k8s/secret';
 import Service from '../../../../lib/k8s/service';
 import ServiceAccount from '../../../../lib/k8s/serviceAccount';
 import StatefulSet from '../../../../lib/k8s/statefulSet';
-import TCPRoute from '../../../../lib/k8s/tcpRoute';
-import UDPRoute from '../../../../lib/k8s/udpRoute';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import TCPRoute from '../../../../lib/k8s/tcpRoute';
+// import UDPRoute from '../../../../lib/k8s/udpRoute';
+// === END GATEWAY (BETA) ===
 import ValidatingWebhookConfiguration from '../../../../lib/k8s/validatingWebhookConfiguration';
 import VPA from '../../../../lib/k8s/vpa';
 import { useNamespaces } from '../../../../redux/filterSlice';
@@ -76,14 +87,16 @@ import { makeKubeSourceId } from './graphDefinitionUtils';
  */
 const BUILTIN_CRD_KINDS = [
   'VerticalPodAutoscaler',
-  'Gateway',
-  'GatewayClass',
-  'HTTPRoute',
-  'GRPCRoute',
-  'ReferenceGrant',
-  'BackendTLSPolicy',
-  'BackendTrafficPolicy',
-  'XBackendTrafficPolicy',
+  // === GATEWAY (BETA) - COMMENTED OUT ===
+  // 'Gateway',
+  // 'GatewayClass',
+  // 'HTTPRoute',
+  // 'GRPCRoute',
+  // 'ReferenceGrant',
+  // 'BackendTLSPolicy',
+  // 'BackendTrafficPolicy',
+  // 'XBackendTrafficPolicy',
+  // === END GATEWAY (BETA) ===
 ];
 
 /**
@@ -154,21 +167,25 @@ export function useGetAllSources(): GraphSource[] {
   const namespaces = useNamespaces();
   const { items: CustomResourceDefinition } = CRD.useList({ namespace: namespaces });
   const cluster = useCluster();
-  const selectedClusters = useSelectedClusters();
   const [vpaEnabled, setVpaEnabled] = React.useState(false);
 
+  // === GATEWAY (BETA) - COMMENTED OUT ===
   // Show the Gateway (beta) group only when the Gateway API group is served.
-  const { data: discoveredResources } = useQuery({
-    queryFn: () => apiDiscovery([...selectedClusters]),
-    queryKey: ['api-discovery', ...selectedClusters],
-  });
-  const { data: availableGatewayL4RouteKinds } = useGatewayL4RouteAvailability();
-  const gatewayEnabled =
-    (discoveredResources?.some(r => r.groupName === 'gateway.networking.k8s.io') ?? false) ||
-    !!availableGatewayL4RouteKinds?.length;
-  const gatewayKinds = new Set(availableGatewayL4RouteKinds);
-  const tcpRouteEnabled = gatewayKinds.has('TCPRoute');
-  const udpRouteEnabled = gatewayKinds.has('UDPRoute');
+  // const { data: discoveredResources } = useQuery({
+  //   queryFn: () => apiDiscovery([...selectedClusters]),
+  //   queryKey: ['api-discovery', ...selectedClusters],
+  // });
+  // const { data: availableGatewayL4RouteKinds } = useGatewayL4RouteAvailability();
+  // const gatewayEnabled =
+  //   (discoveredResources?.some(r => r.groupName === 'gateway.networking.k8s.io') ?? false) ||
+  //   !!availableGatewayL4RouteKinds?.length;
+  // const gatewayKinds = new Set(availableGatewayL4RouteKinds);
+  // const tcpRouteEnabled = gatewayKinds.has('TCPRoute');
+  // const udpRouteEnabled = gatewayKinds.has('UDPRoute');
+  // === END GATEWAY (BETA) ===
+  const gatewayEnabled = false;
+  const tcpRouteEnabled = false;
+  const udpRouteEnabled = false;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -290,48 +307,50 @@ export function useGetAllSources(): GraphSource[] {
           makeKubeSource(Lease),
         ],
       },
-      ...(gatewayEnabled
-        ? [
-            {
-              id: 'gateway-beta',
-              label: 'Gateway (beta)',
-              icon: (
-                <Icon
-                  icon="mdi:lan-connect"
-                  width="100%"
-                  height="100%"
-                  color={getKindGroupColor('network')}
-                />
-              ),
-              isEnabledByDefault: false,
-              sources: [
-                makeKubeSource(GatewayClass),
-                makeKubeSource(Gateway),
-                makeKubeSource(HTTPRoute),
-                makeKubeSource(GRPCRoute),
-                ...(tcpRouteEnabled
-                  ? [
-                      {
-                        ...makeKubeSource(TCPRoute),
-                        label: t('glossary|TCP Routes'),
-                      },
-                    ]
-                  : []),
-                ...(udpRouteEnabled
-                  ? [
-                      {
-                        ...makeKubeSource(UDPRoute),
-                        label: t('glossary|UDP Routes'),
-                      },
-                    ]
-                  : []),
-                makeKubeSource(ReferenceGrant),
-                makeKubeSource(BackendTLSPolicy),
-                makeKubeSource(BackendTrafficPolicy),
-              ],
-            },
-          ]
-        : []),
+      // === GATEWAY (BETA) - COMMENTED OUT ===
+      // ...(gatewayEnabled
+      //   ? [
+      //       {
+      //         id: 'gateway-beta',
+      //         label: 'Gateway (beta)',
+      //         icon: (
+      //           <Icon
+      //             icon="mdi:lan-connect"
+      //             width="100%"
+      //             height="100%"
+      //             color={getKindGroupColor('network')}
+      //           />
+      //         ),
+      //         isEnabledByDefault: false,
+      //         sources: [
+      //           makeKubeSource(GatewayClass),
+      //           makeKubeSource(Gateway),
+      //           makeKubeSource(HTTPRoute),
+      //           makeKubeSource(GRPCRoute),
+      //           ...(tcpRouteEnabled
+      //             ? [
+      //                 {
+      //                   ...makeKubeSource(TCPRoute),
+      //                   label: t('glossary|TCP Routes'),
+      //                 },
+      //               ]
+      //             : []),
+      //           ...(udpRouteEnabled
+      //             ? [
+      //                 {
+      //                   ...makeKubeSource(UDPRoute),
+      //                   label: t('glossary|UDP Routes'),
+      //                 },
+      //               ]
+      //             : []),
+      //           makeKubeSource(ReferenceGrant),
+      //           makeKubeSource(BackendTLSPolicy),
+      //           makeKubeSource(BackendTrafficPolicy),
+      //         ],
+      //       },
+      //     ]
+      //   : []),
+      // === END GATEWAY (BETA) ===
     ];
 
     if (CustomResourceDefinition !== null) {

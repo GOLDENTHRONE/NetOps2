@@ -42,24 +42,26 @@ import EndpointDetails from '../../components/endpoints/Details';
 import EndpointList from '../../components/endpoints/List';
 import EndpointSliceDetails from '../../components/endpointSlices/Details';
 import EndpointSliceList from '../../components/endpointSlices/List';
-import BackendTLSPolicyDetails from '../../components/gateway/BackendTLSPolicyDetails';
-import BackendTLSPolicyList from '../../components/gateway/BackendTLSPolicyList';
-import BackendTrafficPolicyDetails from '../../components/gateway/BackendTrafficPolicyDetails';
-import BackendTrafficPolicyList from '../../components/gateway/BackendTrafficPolicyList';
-import GatewayClassDetails from '../../components/gateway/ClassDetails';
-import GatewayClassList from '../../components/gateway/ClassList';
-import GatewayDetails from '../../components/gateway/GatewayDetails';
-import GatewayList from '../../components/gateway/GatewayList';
-import GRPCRouteDetails from '../../components/gateway/GRPCRouteDetails';
-import GRPCRouteList from '../../components/gateway/GRPCRouteList';
-import HTTPRouteDetails from '../../components/gateway/HTTPRouteDetails';
-import HTTPRouteList from '../../components/gateway/HTTPRouteList';
-import ReferenceGrantDetails from '../../components/gateway/ReferenceGrantDetails';
-import ReferenceGrantList from '../../components/gateway/ReferenceGrantList';
-import TCPRouteDetails from '../../components/gateway/TCPRouteDetails';
-import TCPRouteList from '../../components/gateway/TCPRouteList';
-import UDPRouteDetails from '../../components/gateway/UDPRouteDetails';
-import UDPRouteList from '../../components/gateway/UDPRouteList';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import BackendTLSPolicyDetails from '../../components/gateway/BackendTLSPolicyDetails';
+// import BackendTLSPolicyList from '../../components/gateway/BackendTLSPolicyList';
+// import BackendTrafficPolicyDetails from '../../components/gateway/BackendTrafficPolicyDetails';
+// import BackendTrafficPolicyList from '../../components/gateway/BackendTrafficPolicyList';
+// import GatewayClassDetails from '../../components/gateway/ClassDetails';
+// import GatewayClassList from '../../components/gateway/ClassList';
+// import GatewayDetails from '../../components/gateway/GatewayDetails';
+// import GatewayList from '../../components/gateway/GatewayList';
+// import GRPCRouteDetails from '../../components/gateway/GRPCRouteDetails';
+// import GRPCRouteList from '../../components/gateway/GRPCRouteList';
+// import HTTPRouteDetails from '../../components/gateway/HTTPRouteDetails';
+// import HTTPRouteList from '../../components/gateway/HTTPRouteList';
+// import ReferenceGrantDetails from '../../components/gateway/ReferenceGrantDetails';
+// import ReferenceGrantList from '../../components/gateway/ReferenceGrantList';
+// import TCPRouteDetails from '../../components/gateway/TCPRouteDetails';
+// import TCPRouteList from '../../components/gateway/TCPRouteList';
+// import UDPRouteDetails from '../../components/gateway/UDPRouteDetails';
+// import UDPRouteList from '../../components/gateway/UDPRouteList';
+// === END GATEWAY (BETA) ===
 import HpaDetails from '../../components/horizontalPodAutoscaler/Details';
 import HpaList from '../../components/horizontalPodAutoscaler/List';
 import IngressClassDetails from '../../components/ingress/ClassDetails';
@@ -439,133 +441,135 @@ const defaultRoutes: { [routeName: string]: Route } = {
     sidebar: 'NetworkPolicies',
     component: () => <NetworkPolicyDetails />,
   },
-  gateways: {
-    // fix magic name gateway
-    path: '/gateways',
-    exact: true,
-    name: 'Gateways',
-    sidebar: 'gateways',
-    component: () => <GatewayList />,
-  },
-  gateway: {
-    // fix magic name gateway
-    path: '/gateways/:namespace/:name',
-    exact: true,
-    name: 'Gateways',
-    sidebar: 'gateways',
-    component: () => <GatewayDetails />,
-  },
-  httproutes: {
-    path: '/httproutes',
-    exact: true,
-    name: 'HttpRoutes',
-    sidebar: 'httproutes',
-    component: () => <HTTPRouteList />,
-  },
-  httproute: {
-    path: '/httproutes/:namespace/:name',
-    exact: true,
-    name: 'HttpRoutes',
-    sidebar: 'httproutes',
-    component: () => <HTTPRouteDetails />,
-  },
-  grpcroutes: {
-    path: '/grpcroutes',
-    exact: true,
-    name: 'GRPCRoutes',
-    sidebar: 'grpcroutes',
-    component: () => <GRPCRouteList />,
-  },
-  grpcroute: {
-    path: '/grpcroutes/:namespace/:name',
-    exact: true,
-    name: 'GRPCRoutes',
-    sidebar: 'grpcroutes',
-    component: () => <GRPCRouteDetails />,
-  },
-  tcproutes: {
-    path: '/tcproutes',
-    exact: true,
-    name: 'TCPRoutes',
-    sidebar: 'tcproutes',
-    component: () => <TCPRouteList />,
-  },
-  tcproute: {
-    path: '/tcproutes/:namespace/:name',
-    exact: true,
-    name: 'TCPRoutes',
-    sidebar: 'tcproutes',
-    component: () => <TCPRouteDetails />,
-  },
-  udproutes: {
-    path: '/udproutes',
-    exact: true,
-    name: 'UDPRoutes',
-    sidebar: 'udproutes',
-    component: () => <UDPRouteList />,
-  },
-  udproute: {
-    path: '/udproutes/:namespace/:name',
-    exact: true,
-    name: 'UDPRoutes',
-    sidebar: 'udproutes',
-    component: () => <UDPRouteDetails />,
-  },
-  gatewayclasses: {
-    path: '/gatewayclasses',
-    exact: true,
-    name: 'GatewayClasses',
-    sidebar: 'gatewayclasses',
-    component: () => <GatewayClassList />,
-  },
-  gatewayclass: {
-    path: '/gatewayclasses/:name',
-    exact: true,
-    sidebar: 'gatewayclasses',
-    component: () => <GatewayClassDetails />,
-  },
-  referencegrants: {
-    path: '/referencegrants',
-    exact: true,
-    name: 'ReferenceGrants',
-    sidebar: 'referencegrants',
-    component: () => <ReferenceGrantList />,
-  },
-  referencegrant: {
-    path: '/referencegrant/:namespace/:name',
-    exact: true,
-    name: 'ReferenceGrants',
-    sidebar: 'referencegrants',
-    component: () => <ReferenceGrantDetails />,
-  },
-  backendtlspolicies: {
-    path: '/backendtlspolicies',
-    exact: true,
-    name: 'BackendTLSPolicies',
-    sidebar: 'backendtlspolicies',
-    component: () => <BackendTLSPolicyList />,
-  },
-  backendtlspolicy: {
-    path: '/backendtlspolicy/:namespace/:name',
-    exact: true,
-    name: 'BackendTLSPolicies',
-    sidebar: 'backendtlspolicies',
-    component: () => <BackendTLSPolicyDetails />,
-  },
-  backendtrafficpolicies: {
-    path: '/backendtrafficpolicies',
-    exact: true,
-    name: 'BackendTrafficPolicies',
-    sidebar: 'backendtrafficpolicies',
-    component: () => <BackendTrafficPolicyList />,
-  },
-  xbackendtrafficpolicy: {
-    path: '/backendtrafficpolicy/:namespace/:name',
-    exact: true,
-    name: 'BackendTrafficPolicies',
-    sidebar: 'backendtrafficpolicies',
-    component: () => <BackendTrafficPolicyDetails />,
-  },
+  // === GATEWAY (BETA) - COMMENTED OUT ===
+  // gateways: {
+  //   // fix magic name gateway
+  //   path: '/gateways',
+  //   exact: true,
+  //   name: 'Gateways',
+  //   sidebar: 'gateways',
+  //   component: () => <GatewayList />,
+  // },
+  // gateway: {
+  //   // fix magic name gateway
+  //   path: '/gateways/:namespace/:name',
+  //   exact: true,
+  //   name: 'Gateways',
+  //   sidebar: 'gateways',
+  //   component: () => <GatewayDetails />,
+  // },
+  // httproutes: {
+  //   path: '/httproutes',
+  //   exact: true,
+  //   name: 'HttpRoutes',
+  //   sidebar: 'httproutes',
+  //   component: () => <HTTPRouteList />,
+  // },
+  // httproute: {
+  //   path: '/httproutes/:namespace/:name',
+  //   exact: true,
+  //   name: 'HttpRoutes',
+  //   sidebar: 'httproutes',
+  //   component: () => <HTTPRouteDetails />,
+  // },
+  // grpcroutes: {
+  //   path: '/grpcroutes',
+  //   exact: true,
+  //   name: 'GRPCRoutes',
+  //   sidebar: 'grpcroutes',
+  //   component: () => <GRPCRouteList />,
+  // },
+  // grpcroute: {
+  //   path: '/grpcroutes/:namespace/:name',
+  //   exact: true,
+  //   name: 'GRPCRoutes',
+  //   sidebar: 'grpcroutes',
+  //   component: () => <GRPCRouteDetails />,
+  // },
+  // tcproutes: {
+  //   path: '/tcproutes',
+  //   exact: true,
+  //   name: 'TCPRoutes',
+  //   sidebar: 'tcproutes',
+  //   component: () => <TCPRouteList />,
+  // },
+  // tcproute: {
+  //   path: '/tcproutes/:namespace/:name',
+  //   exact: true,
+  //   name: 'TCPRoutes',
+  //   sidebar: 'tcproutes',
+  //   component: () => <TCPRouteDetails />,
+  // },
+  // udproutes: {
+  //   path: '/udproutes',
+  //   exact: true,
+  //   name: 'UDPRoutes',
+  //   sidebar: 'udproutes',
+  //   component: () => <UDPRouteList />,
+  // },
+  // udproute: {
+  //   path: '/udproutes/:namespace/:name',
+  //   exact: true,
+  //   name: 'UDPRoutes',
+  //   sidebar: 'udproutes',
+  //   component: () => <UDPRouteDetails />,
+  // },
+  // gatewayclasses: {
+  //   path: '/gatewayclasses',
+  //   exact: true,
+  //   name: 'GatewayClasses',
+  //   sidebar: 'gatewayclasses',
+  //   component: () => <GatewayClassList />,
+  // },
+  // gatewayclass: {
+  //   path: '/gatewayclasses/:name',
+  //   exact: true,
+  //   sidebar: 'gatewayclasses',
+  //   component: () => <GatewayClassDetails />,
+  // },
+  // referencegrants: {
+  //   path: '/referencegrants',
+  //   exact: true,
+  //   name: 'ReferenceGrants',
+  //   sidebar: 'referencegrants',
+  //   component: () => <ReferenceGrantList />,
+  // },
+  // referencegrant: {
+  //   path: '/referencegrant/:namespace/:name',
+  //   exact: true,
+  //   name: 'ReferenceGrants',
+  //   sidebar: 'referencegrants',
+  //   component: () => <ReferenceGrantDetails />,
+  // },
+  // backendtlspolicies: {
+  //   path: '/backendtlspolicies',
+  //   exact: true,
+  //   name: 'BackendTLSPolicies',
+  //   sidebar: 'backendtlspolicies',
+  //   component: () => <BackendTLSPolicyList />,
+  // },
+  // backendtlspolicy: {
+  //   path: '/backendtlspolicy/:namespace/:name',
+  //   exact: true,
+  //   name: 'BackendTLSPolicies',
+  //   sidebar: 'backendtlspolicies',
+  //   component: () => <BackendTLSPolicyDetails />,
+  // },
+  // backendtrafficpolicies: {
+  //   path: '/backendtrafficpolicies',
+  //   exact: true,
+  //   name: 'BackendTrafficPolicies',
+  //   sidebar: 'backendtrafficpolicies',
+  //   component: () => <BackendTrafficPolicyList />,
+  // },
+  // xbackendtrafficpolicy: {
+  //   path: '/backendtrafficpolicy/:namespace/:name',
+  //   exact: true,
+  //   name: 'BackendTrafficPolicies',
+  //   sidebar: 'backendtrafficpolicies',
+  //   component: () => <BackendTrafficPolicyDetails />,
+  // },
+  // === END GATEWAY (BETA) ===
   DaemonSets: {
     path: '/daemonsets',
     exact: true,

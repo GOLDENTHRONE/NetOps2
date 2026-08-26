@@ -23,7 +23,9 @@ import { getClusterAppearanceFromMeta } from '../../helpers/clusterAppearance';
 import { isElectron } from '../../helpers/isElectron';
 import { useClustersConf, useSelectedClusters } from '../../lib/k8s';
 import CRD from '../../lib/k8s/crd';
-import { useGatewayL4RouteAvailability } from '../../lib/k8s/gatewayL4RouteAvailability';
+// === GATEWAY (BETA) - COMMENTED OUT ===
+// import { useGatewayL4RouteAvailability } from '../../lib/k8s/gatewayL4RouteAvailability';
+// === END GATEWAY (BETA) ===
 import PodGroup from '../../lib/k8s/podGroup';
 import { createRouteURL } from '../../lib/router/createRouteURL';
 import { useTypedSelector } from '../../redux/hooks';
@@ -67,11 +69,13 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
   const { t } = useTranslation();
   const theme = useTheme();
 
-  const { data: availableGatewayL4RouteKinds } = useGatewayL4RouteAvailability();
-  const gatewayKinds = useMemo(
-    () => new Set(availableGatewayL4RouteKinds),
-    [availableGatewayL4RouteKinds]
-  );
+  // === GATEWAY (BETA) - COMMENTED OUT ===
+  // const { data: availableGatewayL4RouteKinds } = useGatewayL4RouteAvailability();
+  // const gatewayKinds = useMemo(
+  //   () => new Set(availableGatewayL4RouteKinds),
+  //   [availableGatewayL4RouteKinds]
+  // );
+  // === END GATEWAY (BETA) ===
 
   const [crds, error] = CRD.useList();
   if (error !== null) {
@@ -361,57 +365,59 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
           },
         ],
       },
-      {
-        name: 'gatewayapi',
-        label: t('glossary|Gateway (beta)'),
-        icon: 'mdi:lan-connect',
-        subList: [
-          {
-            name: 'gateways',
-            label: t('glossary|Gateways'),
-          },
-          {
-            name: 'gatewayclasses',
-            label: t('glossary|Gateway Classes'),
-          },
-          {
-            name: 'httproutes',
-            label: t('glossary|HTTP Routes'),
-          },
-          {
-            name: 'grpcroutes',
-            label: t('glossary|GRPC Routes'),
-          },
-          ...(gatewayKinds.has('TCPRoute')
-            ? [
-                {
-                  name: 'tcproutes',
-                  label: t('glossary|TCP Routes'),
-                },
-              ]
-            : []),
-          ...(gatewayKinds.has('UDPRoute')
-            ? [
-                {
-                  name: 'udproutes',
-                  label: t('glossary|UDP Routes'),
-                },
-              ]
-            : []),
-          {
-            name: 'referencegrants',
-            label: t('glossary|Reference Grants'),
-          },
-          {
-            name: 'backendtlspolicies',
-            label: t('glossary|BackendTLSPolicies'),
-          },
-          {
-            name: 'backendtrafficpolicies',
-            label: t('glossary|BackendTrafficPolicies'),
-          },
-        ],
-      },
+      // === GATEWAY (BETA) - COMMENTED OUT ===
+      // {
+      //   name: 'gatewayapi',
+      //   label: t('glossary|Gateway (beta)'),
+      //   icon: 'mdi:lan-connect',
+      //   subList: [
+      //     {
+      //       name: 'gateways',
+      //       label: t('glossary|Gateways'),
+      //     },
+      //     {
+      //       name: 'gatewayclasses',
+      //       label: t('glossary|Gateway Classes'),
+      //     },
+      //     {
+      //       name: 'httproutes',
+      //       label: t('glossary|HTTP Routes'),
+      //     },
+      //     {
+      //       name: 'grpcroutes',
+      //       label: t('glossary|GRPC Routes'),
+      //     },
+      //     ...(gatewayKinds.has('TCPRoute')
+      //       ? [
+      //           {
+      //             name: 'tcproutes',
+      //             label: t('glossary|TCP Routes'),
+      //           },
+      //         ]
+      //       : []),
+      //     ...(gatewayKinds.has('UDPRoute')
+      //       ? [
+      //           {
+      //             name: 'udproutes',
+      //             label: t('glossary|UDP Routes'),
+      //           },
+      //         ]
+      //       : []),
+      //     {
+      //       name: 'referencegrants',
+      //       label: t('glossary|Reference Grants'),
+      //     },
+      //     {
+      //       name: 'backendtlspolicies',
+      //       label: t('glossary|BackendTLSPolicies'),
+      //     },
+      //     {
+      //       name: 'backendtrafficpolicies',
+      //       label: t('glossary|BackendTrafficPolicies'),
+      //     },
+      //   ],
+      // },
+      // === END GATEWAY (BETA) ===
       {
         name: 'security',
         label: t('glossary|Security'),
@@ -631,7 +637,9 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
     selectedClusters.join(','),
     allClustersConf,
     crdsSidebarEntries,
-    gatewayKinds,
+    // === GATEWAY (BETA) - COMMENTED OUT ===
+    // gatewayKinds,
+    // === END GATEWAY (BETA) ===
     schedulingWorkloadsEnabled,
     t,
   ]);
