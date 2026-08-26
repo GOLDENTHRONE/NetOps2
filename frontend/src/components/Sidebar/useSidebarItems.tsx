@@ -179,6 +179,7 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
           : createRouteURL('cluster', { cluster: Object.keys(clusters)[0] }),
         divider: !shouldShowHomeItem,
       },
+      /*
       {
         name: 'notifications',
         icon: 'mdi:bell',
@@ -208,6 +209,7 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
           },
         ],
       },
+      */
     ];
     const inClusterItems: SidebarItemProps[] = [
       {

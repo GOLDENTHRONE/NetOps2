@@ -45,12 +45,10 @@ import Table from '../../common/Table';
 import { LightTooltip } from '../../common/Tooltip';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterBadge from '../../Sidebar/ClusterBadge';
-import ClusterContextMenu from './ClusterContextMenu';
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
   getConditionTooltip,
-  isClusterInventoryCluster,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 import { canSelectCluster } from './clusterStatus';
@@ -247,26 +245,6 @@ export default function ClusterTable({
     [setColumnFilters]
   );
 
-  /**
-   * Gets the origin of a cluster.
-   *
-   * @param cluster
-   * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
-   */
-  function getOrigin(cluster: Cluster): string {
-    if (cluster?.meta_data?.source === 'kubeconfig') {
-      const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
-      return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
-    } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
-      return t('translation|Plugin');
-    } else if (cluster?.meta_data?.source === 'incluster') {
-      return t('translation|In-cluster');
-    } else if (isClusterInventoryCluster(cluster)) {
-      return t('translation|Cluster Inventory');
-    }
-    return t('translation|Unknown');
-  }
-
   const viewClusters = t('View Clusters');
 
   const loading = clusters === null;
@@ -347,6 +325,7 @@ export default function ClusterTable({
             );
           },
         },
+        /*
         {
           id: 'origin',
           header: t('Origin'),
@@ -355,6 +334,7 @@ export default function ClusterTable({
             <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
           ),
         },
+        */
         {
           id: 'status',
           header: t('Status'),
@@ -384,7 +364,7 @@ export default function ClusterTable({
         {
           id: 'ocpVersion',
           header: t('glossary|OCP Version'),
-          accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] || '' : ''),
+          accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] || '⋯' : ''),
         },
         {
           id: 'version',
@@ -392,6 +372,7 @@ export default function ClusterTable({
           accessorFn: ({ name }) =>
             isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
         },
+        /*
         {
           id: 'actions',
           header: t('Actions'),
@@ -406,6 +387,7 @@ export default function ClusterTable({
           enableSorting: false,
           enableColumnFilter: false,
         },
+        */
       ]}
       data={clustersList}
       enableRowSelection={
