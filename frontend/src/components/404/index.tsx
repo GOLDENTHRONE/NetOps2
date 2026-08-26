@@ -15,15 +15,19 @@
  */
 
 import { useTranslation } from 'react-i18next';
-import headlampBrokenImage from '../../assets/headlamp-404.svg';
 import { getErrorPageGraphic, getErrorPageTitle } from '../../helpers/getProductInfo';
+import AtandtIcon from '../../resources/icon-dark.svg?react';
 import ErrorComponent from '../common/ErrorPage';
 
 export default function NotFoundComponent() {
   const { t } = useTranslation();
   return (
     <ErrorComponent
-      graphic={(getErrorPageGraphic('notFound') || headlampBrokenImage) as any}
+      graphic={
+        getErrorPageGraphic('notFound') || (
+          <AtandtIcon style={{ width: '160px', height: '160px' }} />
+        )
+      }
       title={getErrorPageTitle('notFound') || t(`Whoops! This page doesn't exist`)}
     />
   );

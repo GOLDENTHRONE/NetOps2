@@ -27,12 +27,12 @@ import { styled } from '@mui/system';
 import { useSnackbar } from 'notistack';
 import React from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import headlampBrokenImage from '../../../assets/headlamp-broken.svg';
 import {
   getErrorPageGraphic,
   getErrorPageTitle,
   getVersion,
 } from '../../../helpers/getProductInfo';
+import AtandtIcon from '../../../resources/icon-dark.svg?react';
 
 const WidthImg = styled('img')({
   width: '100%',
@@ -112,7 +112,9 @@ export default function ErrorComponent(props: ErrorComponentProps) {
     title = getErrorPageTitle('error') || t('Uh-oh! Something went wrong.'),
     message = '',
     withTypography = true,
-    graphic = getErrorPageGraphic('error') || headlampBrokenImage,
+    graphic = getErrorPageGraphic('error') || (
+      <AtandtIcon style={{ width: '160px', height: '160px' }} />
+    ),
     error,
   } = props;
   return (
