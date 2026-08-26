@@ -45,12 +45,18 @@ import Table from '../../common/Table';
 import { LightTooltip } from '../../common/Tooltip';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterBadge from '../../Sidebar/ClusterBadge';
+/*
+import ClusterContextMenu from './ClusterContextMenu';
+*/
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
   getConditionTooltip,
   STATUS_VARIANTS,
 } from './ClusterInventory';
+/*
+import { isClusterInventoryCluster } from './ClusterInventory';
+*/
 import { canSelectCluster } from './clusterStatus';
 import { CONNECT_ON_CLUSTER_LINK, MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
@@ -244,6 +250,26 @@ export default function ClusterTable({
     },
     [setColumnFilters]
   );
+
+  // /**
+  //  * Gets the origin of a cluster.
+  //  *
+  //  * @param cluster
+  //  * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
+  //  */
+  // function getOrigin(cluster: Cluster): string {
+  //   if (cluster?.meta_data?.source === 'kubeconfig') {
+  //     const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
+  //     return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
+  //   } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
+  //     return t('translation|Plugin');
+  //   } else if (cluster?.meta_data?.source === 'incluster') {
+  //     return t('translation|In-cluster');
+  //   } else if (isClusterInventoryCluster(cluster)) {
+  //     return t('translation|Cluster Inventory');
+  //   }
+  //   return t('translation|Unknown');
+  // }
 
   const viewClusters = t('View Clusters');
 
