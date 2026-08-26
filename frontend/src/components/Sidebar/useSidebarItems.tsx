@@ -177,6 +177,20 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
         url: shouldShowHomeItem
           ? '/'
           : createRouteURL('cluster', { cluster: Object.keys(clusters)[0] }),
+        subList: shouldShowHomeItem
+          ? [
+              {
+                name: 'homeAllClusters',
+                label: t('All Clusters'),
+                url: '/',
+              },
+              {
+                name: 'homeApplications',
+                label: t('Applications'),
+                url: '/projects',
+              },
+            ]
+          : undefined,
         divider: !shouldShowHomeItem,
       },
       /*

@@ -124,7 +124,14 @@ export default function ErrorComponent(props: ErrorComponentProps) {
       direction="column"
       alignItems="center"
       justifyContent="center"
-      sx={{ textAlign: 'center' }}
+      sx={{
+        textAlign: 'center',
+        width: '100%',
+        minHeight: {
+          xs: 'calc(100vh - 56px)',
+          sm: 'calc(100vh - 64px)',
+        },
+      }}
     >
       <Grid item xs={12}>
         {typeof graphic === 'string' ? <WidthImg src={graphic} alt="" /> : graphic}

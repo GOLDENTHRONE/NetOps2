@@ -212,6 +212,18 @@ const defaultRoutes: { [routeName: string]: Route } = {
     noAuthRequired: true,
     component: () => <Home />,
   },
+  projectsHome: {
+    path: '/projects',
+    exact: true,
+    name: 'Applications',
+    sidebar: {
+      item: 'homeApplications',
+      sidebar: DefaultSidebars.HOME,
+    },
+    useClusterURL: false,
+    noAuthRequired: true,
+    component: () => <Home />,
+  },
   advancedSearch: {
     path: '/advanced-search',
     exact: true,

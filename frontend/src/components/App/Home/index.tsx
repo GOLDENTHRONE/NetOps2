@@ -19,7 +19,7 @@ import { Box, Tab, Tabs, Typography } from '@mui/material';
 import { isEqual } from 'lodash';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useHistory } from 'react-router-dom';
+import { useHistory, useLocation } from 'react-router-dom';
 import { setupBackstageMessageReceiver } from '../../../helpers/backstageMessageReceiver';
 import { useAutoConnectClusters } from '../../../helpers/clusterAutoConnect';
 import { isBackstage } from '../../../helpers/isBackstage';
@@ -30,7 +30,6 @@ import { useEventWarningList } from '../../../lib/k8s/event';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { PageGrid } from '../../common/Resource';
 import SectionBox from '../../common/SectionBox';
-import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ProjectList from '../../project/ProjectList';
 import ClusterTable from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
@@ -116,10 +115,9 @@ function useWarningSettingsPerCluster(clusterNames: string[]) {
 }
 
 function HomeComponent(props: HomeComponentProps) {
-  const [view, setView] = useLocalStorageState<'clusters' | 'projects'>(
-    'home-tab-view',
-    'clusters'
-  );
+  // Always open Home on "All Clusters" tab when view mounts.
+  const [view, setView] = React.useState<'clusters' | 'projects'>('clusters');
+  const location = useLocation();
   const { clusters } = props;
   const [customNameClusters, setCustomNameClusters] = React.useState(
     getCustomClusterNames(clusters)
@@ -149,6 +147,20 @@ function HomeComponent(props: HomeComponentProps) {
   );
 
   const warningLabels = useWarningSettingsPerCluster(clusterNames);
+
+  React.useEffect(() => {
+    if (location.pathname === '/projects') {
+      setView('projects');
+      return;
+    }
+
+    const queryView = new URLSearchParams(location.search).get('view');
+    if (queryView === 'projects' || queryView === 'clusters') {
+      setView(queryView);
+      return;
+    }
+    setView('clusters');
+  }, [location.pathname, location.search]);
 
   React.useEffect(() => {
     if (isBackstage()) {
