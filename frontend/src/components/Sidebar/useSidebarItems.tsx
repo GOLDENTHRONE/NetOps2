@@ -76,6 +76,7 @@ export const useSidebarItems = (sidebarName: string = DefaultSidebars.IN_CLUSTER
   //   [availableGatewayL4RouteKinds]
   // );
   // === END GATEWAY (BETA) ===
+  // const gatewayKinds = new Set(); // Disabled for Gateway (beta)
 
   const [crds, error] = CRD.useList();
   if (error !== null) {

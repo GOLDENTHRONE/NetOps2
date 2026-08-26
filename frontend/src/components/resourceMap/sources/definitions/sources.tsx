@@ -167,6 +167,7 @@ export function useGetAllSources(): GraphSource[] {
   const namespaces = useNamespaces();
   const { items: CustomResourceDefinition } = CRD.useList({ namespace: namespaces });
   const cluster = useCluster();
+  // const selectedClusters = useSelectedClusters(); // Disabled for Gateway (beta)
   const [vpaEnabled, setVpaEnabled] = React.useState(false);
 
   // === GATEWAY (BETA) - COMMENTED OUT ===
@@ -183,6 +184,7 @@ export function useGetAllSources(): GraphSource[] {
   // const tcpRouteEnabled = gatewayKinds.has('TCPRoute');
   // const udpRouteEnabled = gatewayKinds.has('UDPRoute');
   // === END GATEWAY (BETA) ===
+  // const gatewayKinds = new Set(); // Disabled for Gateway (beta)
   const gatewayEnabled = false;
   const tcpRouteEnabled = false;
   const udpRouteEnabled = false;
