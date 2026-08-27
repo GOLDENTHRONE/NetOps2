@@ -31,7 +31,7 @@ import { isElectron } from '../../helpers/isElectron';
 import { createRouteURL } from '../../lib/router/createRouteURL';
 import { useTypedSelector } from '../../redux/hooks';
 import ActionButton from '../common/ActionButton';
-import CreateButton from '../common/Resource/CreateButton';
+// import CreateButton from '../common/Resource/CreateButton';
 import NavigationTabs from './NavigationTabs';
 import SidebarItem, { SidebarItemProps } from './SidebarItem';
 import { DefaultSidebars, setSidebarSelected, setWhetherSidebarOpen } from './sidebarSlice';
@@ -130,8 +130,6 @@ function SidebarToggleButton() {
 
 const DefaultLinkArea = memo((props: { sidebarName: string; isOpen: boolean }) => {
   const { sidebarName, isOpen } = props;
-  const { isTemporary } = useSidebarInfo();
-  const dispatch = useDispatch();
 
   if (sidebarName === DefaultSidebars.HOME) {
     return (
@@ -152,10 +150,12 @@ const DefaultLinkArea = memo((props: { sidebarName: string; isOpen: boolean }) =
 
   return (
     <Box textAlign="center">
+      {/*
       <CreateButton
         isNarrow={!isOpen}
         onClickExtra={isTemporary ? () => dispatch(setWhetherSidebarOpen(false)) : undefined}
       />
+      */}
       <Box
         display="flex"
         justifyContent="space-between"

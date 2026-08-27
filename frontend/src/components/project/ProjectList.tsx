@@ -17,7 +17,7 @@
 import { Icon } from '@iconify/react';
 import { Box, Typography } from '@mui/material';
 import { groupBy, uniq } from 'lodash';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
 import Namespace from '../../lib/k8s/namespace';
@@ -134,8 +134,36 @@ function ProjectListContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects]);
 
+  // MRT can only sort a column when it has a value on the row data (accessorFn/accessorKey),
+  // and it only recomputes that value when the *data array reference* passed to the table
+  // changes. The "Resources" and "Health" columns are rendered purely from a per-row Cell
+  // hook (useProjectItems), so the counts/ranks below are collected as they're computed and
+  // then baked directly onto the row objects (see `projectRows`) so a new data array is
+  // produced whenever they change, without altering what each Cell renders.
+  const [resourceCounts, setResourceCounts] = useState<Record<string, number>>({});
+  const [healthRanks, setHealthRanks] = useState<Record<string, number>>({});
+
+  const reportResourceCount = useCallback((id: string, count: number) => {
+    setResourceCounts(prev => (prev[id] === count ? prev : { ...prev, [id]: count }));
+  }, []);
+
+  const reportHealthRank = useCallback((id: string, rank: number) => {
+    setHealthRanks(prev => (prev[id] === rank ? prev : { ...prev, [id]: rank }));
+  }, []);
+
+  // -1 (not yet loaded) sorts before any loaded count/rank.
+  const projectRows = useMemo(
+    () =>
+      filteredProjects.map(project => ({
+        ...project,
+        resourceCount: resourceCounts[project.id] ?? -1,
+        healthRank: healthRanks[project.id] ?? -1,
+      })),
+    [filteredProjects, resourceCounts, healthRanks]
+  );
+
   const columns = useMemo(() => {
-    const columns: TableColumn<ProjectDefinition, any>[] = [
+    const columns: TableColumn<(typeof projectRows)[number], any>[] = [
       {
         id: 'name',
         header: t('Name'),
@@ -151,8 +179,12 @@ function ProjectListContent() {
       {
         id: 'resources',
         header: t('Resources'),
+        accessorFn: it => it.resourceCount,
         Cell: ({ row: { original } }) => {
           const { items } = useProjectItems(original, { disableWatch: true });
+          useEffect(() => {
+            reportResourceCount(original.id, items.length);
+          }, [original.id, items.length]);
           return items.length;
         },
         gridTemplate: 'min-content',
@@ -160,9 +192,22 @@ function ProjectListContent() {
       {
         id: 'health',
         header: t('Health'),
+        // Rank used purely for sorting: 0 = no resources, 1 = healthy, 2 = degraded, 3 = unhealthy.
+        accessorFn: it => it.healthRank,
         Cell: ({ row: { original } }) => {
           const { items } = useProjectItems(original, { disableWatch: true });
           const projectHealth = getResourcesHealth(items);
+          useEffect(() => {
+            const rank =
+              items.length === 0
+                ? 0
+                : projectHealth.error > 0
+                ? 3
+                : projectHealth.warning > 0
+                ? 2
+                : 1;
+            reportHealthRank(original.id, rank);
+          }, [original.id, items.length, projectHealth.error, projectHealth.warning]);
           return (
             <StatusLabel
               status={
@@ -209,7 +254,7 @@ function ProjectListContent() {
 
     return columns;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [t]);
 
   if (projects.length === 0) {
     return (
@@ -233,11 +278,17 @@ function ProjectListContent() {
   }
 
   return (
-    <>
+    <Box
+      sx={{
+        '& .MuiTable-root': {
+          mt: '8px',
+        },
+      }}
+    >
       <Table
         key={pluginApiResources.length}
         columns={columns}
-        data={filteredProjects}
+        data={projectRows}
         // Render the namespace filter on the left of the table's top toolbar so
         // it sits on the same line as the search and column/filter buttons.
         // Reuses the app's standard namespace selector (checkboxes + Filter box)
@@ -250,7 +301,7 @@ function ProjectListContent() {
           />
         )}
       />
-    </>
+    </Box>
   );
 }
 

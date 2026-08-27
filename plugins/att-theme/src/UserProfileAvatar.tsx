@@ -34,6 +34,7 @@ export function UserProfileAvatar() {
         sx={{
           bgcolor: '#009fdb',
           color: '#ffffff',
+          ml: 1.5,
           width: 36,
           height: 36,
           cursor: 'pointer',
