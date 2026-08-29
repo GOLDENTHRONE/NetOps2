@@ -51,13 +51,13 @@ import ClusterContextMenu from './ClusterContextMenu';
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
-  getConditionTooltip,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 /*
 import { isClusterInventoryCluster } from './ClusterInventory';
 */
 import { canSelectCluster } from './clusterStatus';
+import ClusterStatusPopover from './ClusterStatusPopover';
 import { CONNECT_ON_CLUSTER_LINK, MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
 import RegisteredClusterEmptyState from './RegisteredClusterEmptyState';
@@ -123,19 +123,25 @@ function ClusterStatus({
   // ambiguous "⋯".
   if (isConnected && error === undefined) {
     return (
-      <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
-        <CircularProgress size={14} />
-        <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
-          {t('translation|Connecting…')}
-        </Typography>
-      </Box>
+      <ClusterStatusPopover
+        cluster={cluster}
+        error={error}
+        statusKind="unknown"
+        statusText={t('translation|Connecting…')}
+      >
+        <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
+          <CircularProgress size={14} />
+          <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
+            {t('translation|Connecting…')}
+          </Typography>
+        </Box>
+      </ClusterStatusPopover>
     );
   }
 
-  const { kind, text, condition } = getClusterStatusInfo(cluster, error, t);
+  const { kind, text } = getClusterStatusInfo(cluster, error, t);
   const variant = STATUS_VARIANTS[kind];
   const color = theme.palette.home.status[variant.colorKey];
-  const tooltip = condition ? getConditionTooltip(condition) : '';
   const statusContent = (
     <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
       <Icon icon={variant.icon} width={16} color={color} />
@@ -151,12 +157,10 @@ function ClusterStatus({
     </Box>
   );
 
-  return tooltip ? (
-    <LightTooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tooltip}</span>}>
+  return (
+    <ClusterStatusPopover cluster={cluster} error={error} statusKind={kind} statusText={text}>
       {statusContent}
-    </LightTooltip>
-  ) : (
-    statusContent
+    </ClusterStatusPopover>
   );
 }
 
