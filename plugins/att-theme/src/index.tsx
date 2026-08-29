@@ -1,15 +1,20 @@
 import { registerAppBarAction, registerAppTheme } from '@kinvolk/headlamp-plugin/lib';
-import { ApiHealthBadge } from './ApiHealthBadge';
 import { attDarkTheme, attLightTheme } from './themes';
 import { ThemeToggle } from './ThemeToggle';
 import { UserProfileAvatar } from './UserProfileAvatar';
 
-// 1. Register AT&T Light & Dark themes
-registerAppTheme(attLightTheme);
-registerAppTheme(attDarkTheme);
+// Guards against duplicate registration if this module gets executed more than
+// once (e.g. dev-server hot reload), which previously caused the app bar
+// buttons to be appended and rendered multiple times.
+if (!(window as any).__attThemePluginRegistered) {
+  (window as any).__attThemePluginRegistered = true;
 
-// 2. Register Header Action Buttons (API Health, Sun/Moon Theme Toggle, User Avatar)
-registerAppBarAction(ApiHealthBadge);
-registerAppBarAction(ThemeToggle);
-registerAppBarAction(UserProfileAvatar);
+  registerAppTheme(attLightTheme);
+  registerAppTheme(attDarkTheme);
+
+  // API health badge intentionally not registered: no real metric has been
+  // defined to track yet. Do not show fabricated/placeholder status.
+  registerAppBarAction(ThemeToggle);
+  registerAppBarAction(UserProfileAvatar);
+}
 

@@ -213,17 +213,17 @@ export default function ClusterStatusPopover({
               )
             }
           />
-          <DetailRow
-            label={t('translation|HTTP code')}
-            value={
-              <Typography
-                variant="body2"
-                sx={{ color: error?.status === undefined ? undefined : summaryColor }}
-              >
-                {error?.status ?? emptyValue}
-              </Typography>
-            }
-          />
+          {/* Only failed requests carry a status code: clusterRequest drops it on success. */}
+          {error?.status !== undefined && (
+            <DetailRow
+              label={t('translation|HTTP code')}
+              value={
+                <Typography variant="body2" sx={{ color: summaryColor }}>
+                  {error.status}
+                </Typography>
+              }
+            />
+          )}
           {error?.message && (
             <DetailRow
               label={t('translation|Reported error')}

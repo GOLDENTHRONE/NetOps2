@@ -95,5 +95,7 @@ describe('ClusterStatusPopover', () => {
 
     expect(screen.getByText('Reachable')).toBeInTheDocument();
     expect(screen.getByText('https://api.example.com:6443')).toBeInTheDocument();
+    // A successful request carries no status code, so the row is left out.
+    expect(screen.queryByText('HTTP code')).not.toBeInTheDocument();
   });
 });
