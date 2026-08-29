@@ -207,7 +207,7 @@ const defaultRoutes: { [routeName: string]: Route } = {
     exact: true,
     name: 'Choose a cluster',
     sidebar: {
-      item: 'home',
+      item: 'homeAllClusters',
       sidebar: DefaultSidebars.HOME,
     },
     useClusterURL: false,

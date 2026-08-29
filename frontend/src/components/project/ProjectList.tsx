@@ -292,8 +292,6 @@ function ProjectListContent() {
         key={pluginApiResources.length}
         columns={columns}
         data={projectRows}
-        // Sort worst-health-first by default (rank 3 = unhealthy ... 0 = no resources).
-        initialState={{ sorting: [{ id: 'health', desc: true }] }}
         // Render the namespace filter on the left of the table's top toolbar so
         // it sits on the same line as the search and column/filter buttons.
         // Reuses the app's standard namespace selector (checkboxes + Filter box)
