@@ -192,7 +192,10 @@ function ProjectListContent() {
       {
         id: 'health',
         header: t('Health'),
-        // Rank used purely for sorting: 0 = no resources, 1 = healthy, 2 = degraded, 3 = unhealthy.
+        // Rank used for sorting: 0 = no resources, 1 = healthy, 2 = degraded, 3 = unhealthy.
+        // No filter here: health is computed lazily per visible row (see Cell below), so
+        // pagination means only on-screen rows have resolved -- a filter/count would be
+        // inaccurate or permanently empty for off-screen rows. Default-sorted worst-first instead.
         accessorFn: it => it.healthRank,
         Cell: ({ row: { original } }) => {
           const { items } = useProjectItems(original, { disableWatch: true });
@@ -289,6 +292,8 @@ function ProjectListContent() {
         key={pluginApiResources.length}
         columns={columns}
         data={projectRows}
+        // Sort worst-health-first by default (rank 3 = unhealthy ... 0 = no resources).
+        initialState={{ sorting: [{ id: 'health', desc: true }] }}
         // Render the namespace filter on the left of the table's top toolbar so
         // it sits on the same line as the search and column/filter buttons.
         // Reuses the app's standard namespace selector (checkboxes + Filter box)
