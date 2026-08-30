@@ -1,0 +1,545 @@
+You have live access to the Headlamp codebase AND a live Kubernetes/OpenShift cluster.
+
+We are designing/fixing the Applications/Projects Health column.
+
+You already produced a detailed investigation of the current implementation. I now want you to go one level deeper: independently validate the proposed health model and tell me exactly what should be implemented, without guessing.
+
+IMPORTANT:
+- Do NOT modify the cluster.
+- Do NOT create/delete/restart/scale resources.
+- Prefer read-only inspection and existing live data.
+- Do NOT assume a resource is healthy merely because its API request returned successfully.
+- Clearly distinguish LIVE-VERIFIED, CODE-VERIFIED, and NOT-VERIFIED.
+- If something cannot be safely reproduced on the current cluster, reason from Kubernetes semantics and the existing code instead of manufacturing a test.
+- Inspect the actual current source before making recommendations.
+
+GOAL
+
+I want a robust Applications health model where:
+
+Healthy = we have complete enough evidence that the application is healthy.
+Unhealthy = we have authoritative evidence of a failure.
+Progressing/Degraded = the application is observable but not fully healthy.
+Unknown = we cannot make a trustworthy health judgment because required evidence is missing, loading, forbidden, unreachable, truncated, etc.
+
+The most important principle:
+
+"Absence of evidence must never be interpreted as evidence of health."
+
+==================================================
+1. VALIDATE THE APPLICATION MODEL
+==================================================
+
+Confirm from the current code:
+
+- What exactly constitutes an Application/Project?
+- Is namespace still the authoritative membership boundary?
+- Can one application span multiple clusters?
+- Are labels/selectors/ownerReferences currently used for membership?
+- Which resources belong to the application?
+- Which resources are only used for attribution/navigation?
+
+Do NOT change application membership to selectors or ownerReferences unless you can prove that the current product model requires it.
+
+==================================================
+2. DEFINE THE HEALTH-BEARING RESOURCE SET
+==================================================
+
+Review every resource currently fetched by the Applications page.
+
+Classify each as exactly one of:
+
+A. HEALTH-BEARING
+   Can directly cause Unhealthy/Progressing/Degraded.
+
+B. SUPPORTING
+   Needed to explain/attribute/navigate a problem, but must not independently vote on application health.
+
+C. OPTIONAL
+   May legitimately be unavailable on some clusters because the API/CRD is not served.
+
+D. NON-HEALTH-BEARING
+   Must never affect health.
+
+Pay particular attention to:
+
+- Pods
+- Deployments
+- StatefulSets
+- DaemonSets
+- ReplicaSets
+- Jobs
+- CronJobs
+- PVCs
+- Services
+- EndpointSlices
+- Endpoints
+- Ingresses
+- OpenShift Routes
+- HPAs
+- ConfigMaps
+- Secrets
+- Roles
+- RoleBindings
+- NetworkPolicies
+- ResourceQuotas
+- LimitRanges
+
+Give me the final classification and explain why.
+
+Also answer:
+
+Should ReplicaSets contribute to application health independently, or should they only be used to trace Pod -> ReplicaSet -> Deployment?
+
+==================================================
+3. DESIGN THE ACTUAL HEALTH SEMANTICS
+==================================================
+
+Define the exact rules for:
+
+Deployment:
+- desired replicas
+- ready replicas
+- observedGeneration
+- Available condition
+- Progressing condition
+- unavailable replicas
+- rollout in progress
+- failed rollout
+
+StatefulSet:
+- desired replicas
+- ready replicas
+- updated replicas
+- current revision
+- observed generation
+
+DaemonSet:
+- desiredNumberScheduled
+- numberReady
+- numberAvailable
+- numberUnavailable
+- zero DaemonSets
+
+Pod:
+- Running + Ready
+- Running + not Ready
+- Pending
+- Failed
+- Succeeded
+- Unknown
+- CrashLoopBackOff
+- ImagePullBackOff
+- ErrImagePull
+- OOMKilled
+- CreateContainerConfigError
+- Unschedulable
+- ContainerCreating
+- PodInitializing
+
+Jobs:
+- failed
+- active
+- succeeded
+- completion deadline
+
+CronJobs:
+- Should CronJob itself vote?
+- Or should Job/Pod failures be the actual signal?
+
+PVC:
+- Bound
+- Pending
+- Lost
+
+Service / EndpointSlice:
+- Should zero ready endpoints be a health failure?
+- If yes, under exactly what conditions?
+- Avoid declaring a Service unhealthy simply because it intentionally has no endpoints.
+
+HPA:
+- Should ScalingActive=False affect application health?
+- Is this a primary signal or only supporting/degraded evidence?
+
+Routes/Ingress:
+- Should they participate in health?
+- If so, what exact signal is authoritative?
+
+==================================================
+4. UNKNOWN VS HEALTHY
+==================================================
+
+This is the most important part.
+
+For every one of these cases, define the correct Application status:
+
+1. Initial loading
+2. One resource kind still loading
+3. One resource kind returns 403
+4. 401
+5. 404 for an expected Kubernetes API
+6. 404 for an optional API such as Route
+7. 500
+8. 502
+9. 503
+10. 504
+11. timeout
+12. network/proxy failure
+13. one cluster unreachable in a multi-cluster application
+14. one cluster still loading
+15. one cluster returns 403
+16. list truncated because maxItems was reached
+17. partial data from a cluster
+18. resource status subresource absent
+19. Pod phase Unknown
+20. condition status Unknown
+21. zero resources legitimately exist
+22. a kind legitimately does not exist in a namespace
+23. spec.replicas = 0
+24. status.readyReplicas missing
+25. observedGeneration missing
+26. stale cached data
+27. all health-bearing kinds return zero objects
+28. only non-health-bearing objects exist
+
+For each case tell me:
+
+- status
+- observability
+- whether the health calculation is allowed to run
+- what the UI should display
+
+==================================================
+5. MULTI-CLUSTER SEMANTICS
+==================================================
+
+Work through this carefully.
+
+If an Application exists on clusters A, B and C:
+
+A = Healthy
+B = Healthy
+C = API unreachable
+
+What should the Application status be?
+
+I believe the answer should NOT be Healthy because the aggregate contains an unobserved member.
+
+Define the exact aggregation rules.
+
+For example:
+
+- Healthy + Healthy = Healthy
+- Healthy + Degraded = Degraded
+- Healthy + Unhealthy = Unhealthy
+- Healthy + Unknown = Unknown
+- Unhealthy + Unknown = Unknown OR Unhealthy
+
+Decide this based on sound observability semantics and explain the choice.
+
+Also determine how the UI should represent an application that exists on a cluster whose namespace list itself cannot be fetched.
+
+The application must not silently disappear merely because its cluster is unreachable.
+
+==================================================
+6. ERROR / DATA-PROVENANCE MODEL
+==================================================
+
+Review:
+
+- useKubeLists
+- useKubeObjectList
+- useProjectResources
+- ProjectList
+- ApiError
+- existing clusterResults
+- hasMore
+- remainingItemCount
+
+Determine exactly where information is currently being destroyed.
+
+I want the minimum architectural change required so that health evaluation receives:
+
+- per kind
+- per cluster
+- loading state
+- success state
+- HTTP error
+- truncation
+- hasMore
+- remainingItemCount
+
+Do NOT unnecessarily rewrite the Kubernetes fetching architecture.
+
+Reuse information that already exists.
+
+==================================================
+7. SINGLE HEALTH EVALUATOR
+==================================================
+
+Design a single pure evaluator.
+
+Something conceptually like:
+
+evaluateApplicationHealth(input) -> ApplicationHealth
+
+It must be consumed by BOTH:
+
+1. the table Health cell
+2. the Health popover
+
+The popover must NOT recompute health independently.
+
+Propose the exact TypeScript interfaces.
+
+For example, evaluate whether this shape is sufficient:
+
+ApplicationHealth {
+  status:
+    'healthy'
+    | 'degraded'
+    | 'progressing'
+    | 'unhealthy'
+    | 'unknown'
+
+  observability:
+    'complete'
+    | 'partial'
+    | 'loading'
+
+  evaluated: ...
+  gaps: ...
+  findings: ...
+  excluded: ...
+}
+
+If you would change this structure, explain why.
+
+Do NOT introduce a fake numeric "confidence" score unless there is actual evidence supporting such a metric.
+
+==================================================
+8. HEALTH FINDINGS / POPOVER
+==================================================
+
+Design what the Health popover should show.
+
+It should answer:
+
+"Why is this application Healthy/Degraded/Unhealthy/Unknown?"
+
+For example:
+
+Healthy:
+- 22 Deployments evaluated
+- 21 StatefulSets evaluated
+- 93 Pods evaluated
+- all required health-bearing data available
+
+Degraded:
+- 1 StatefulSet has 2/3 ready replicas
+
+Unhealthy:
+- Pod X is CrashLoopBackOff
+- Pod Y is OOMKilled
+
+Unknown:
+- Pod health could not be evaluated because Pods API returned 403
+- cluster B is unreachable
+- Deployment list is still loading
+
+The popover must distinguish:
+
+"there are zero resources"
+
+from:
+
+"we could not obtain the resources."
+
+Also distinguish:
+
+"117 Secrets exist but are not health-bearing"
+
+from:
+
+"117 Secrets are healthy."
+
+==================================================
+9. OWNER / NAVIGATION MODEL
+==================================================
+
+Validate the recommendation:
+
+Membership:
+    namespace
+
+Attribution:
+    Pod -> ReplicaSet -> Deployment
+    using ownerReferences
+
+Determine how we can generate a finding like:
+
+Pod:
+  caserver-xxxxx
+Reason:
+  CrashLoopBackOff
+Owner:
+  Deployment/caserver
+
+and make it navigable to the relevant Headlamp resource.
+
+Do NOT use Deployment selectors as the authoritative ownership mechanism.
+
+Explain how you would handle:
+
+- Pod owned by ReplicaSet
+- ReplicaSet owned by Deployment
+- Pod directly owned by another controller
+- Job-owned Pod
+- orphan Pod
+
+==================================================
+10. CURRENT CODE BUGS
+==================================================
+
+Re-check the current code for all places where:
+
+error -> []
+loading -> []
+truncated -> []
+missing status -> healthy
+404 -> ignored
+failed cluster -> missing application
+
+Create a concise table:
+
+BUG
+FILE
+CURRENT BEHAVIOUR
+WHY IT IS WRONG
+MINIMUM FIX
+
+Do not list theoretical bugs that are not actually supported by the code.
+
+==================================================
+11. LIVE CLUSTER VALIDATION
+==================================================
+
+Use the current live cluster read-only to validate as many semantics as possible.
+
+Specifically inspect:
+
+- Deployments
+- StatefulSets
+- DaemonSets
+- Pods
+- ReplicaSets
+- Jobs
+- CronJobs
+- PVCs
+- Services
+- EndpointSlices
+- Routes if available
+
+Look for naturally occurring examples of:
+
+- desired = 0
+- missing readyReplicas
+- completed Pods
+- Job-owned Pods
+- Deployment-owned Pods
+- Pods with readiness conditions
+- multiple ReplicaSets
+- zero DaemonSets
+- services with zero endpoints
+- optional APIs
+
+Do not create failures just for testing.
+
+Report what is actually present.
+
+==================================================
+12. IMPLEMENTATION PLAN
+==================================================
+
+After all of the above, give me the final implementation plan in dependency order.
+
+I want something like:
+
+1. Change X
+2. Change Y
+3. Change Z
+
+For every change include:
+
+- exact file
+- exact function/component
+- what changes
+- what existing behaviour is preserved
+- what new behaviour is introduced
+- whether tests are required
+
+Prefer the smallest maintainable change over a large refactor.
+
+==================================================
+13. TEST MATRIX
+==================================================
+
+Finally produce a test matrix for the implementation.
+
+At minimum include:
+
+Loading
+Empty
+Healthy
+Degraded
+Progressing
+Unhealthy
+Unknown
+
+and:
+
+Pod CrashLoopBackOff
+Pod Pending
+Pod Unknown
+Deployment rollout
+StatefulSet partial readiness
+DaemonSet partial readiness
+Job failure
+PVC Pending
+403
+401
+404 expected kind
+404 optional kind
+502
+timeout
+truncation
+multi-cluster partial failure
+zero replicas
+
+For each test say whether it should be:
+
+- unit test
+- component test
+- integration test
+- live/manual verification
+
+FINAL OUTPUT
+
+Give me these sections, in this exact order:
+
+1. FINAL HEALTH MODEL
+2. RESOURCE CLASSIFICATION
+3. UNKNOWN/ERROR SEMANTICS
+4. MULTI-CLUSTER AGGREGATION
+5. APPLICATIONHEALTH INTERFACE
+6. POPOVER DATA MODEL
+7. CODE CHANGES BY FILE
+8. LIVE CLUSTER EVIDENCE
+9. TEST MATRIX
+10. OPEN QUESTIONS / THINGS THAT CANNOT BE VERIFIED
+
+Be opinionated.
+
+If the earlier investigation's recommendation is wrong, say so explicitly and explain why.
+
+Do not start implementing yet. First give me the final technical design and implementation plan.
