@@ -1,0 +1,706 @@
+I want you to implement the Application Health feature described in the attached design/specification, directly in the existing Headlamp codebase.
+
+IMPORTANT:
+Do not redesign the requirements. First inspect the existing repository, understand the current data flow/hooks/components, and then implement the feature cleanly using the existing Headlamp architecture and patterns.
+
+The feature must be validated against a REAL/LIVE Kubernetes cluster, not only mocked data.
+
+==================================================
+GOAL
+==================================================
+
+Add an Application Health model to the Application/Project table.
+
+The health calculation must be centralized in ONE pure TypeScript evaluator:
+
+    evaluateApplicationHealth(...)
+
+Both:
+1. the Health table cell
+2. the Health popover
+
+must consume the SAME precomputed ApplicationHealth object.
+
+Do NOT duplicate health logic inside React components.
+
+==================================================
+1. HEALTH MODEL
+==================================================
+
+HealthStatus:
+
+    'healthy'
+    'degraded'
+    'progressing'
+    'unhealthy'
+    'unknown'
+
+ObservabilityStatus:
+
+    'complete'
+    'partial'
+    'loading'
+
+Severity:
+
+    'error'
+    'warning'
+    'info'
+    'unknown'
+
+Health precedence:
+
+    unknown > unhealthy > progressing > degraded > healthy
+
+However, IMPORTANT:
+
+Observability and health are different concepts.
+
+A Kubernetes API error such as:
+    401
+    403
+    404 where the API/resource is expected
+    500
+    502
+    503
+    504
+    timeout
+    loading
+    truncated list
+
+must NOT be converted into "unhealthy".
+
+It means that we cannot reliably observe/evaluate that resource.
+
+The resulting application can therefore become UNKNOWN because of insufficient evidence.
+
+Preserve known unhealthy findings from other observable clusters/resources even if the aggregate application status becomes UNKNOWN.
+
+Example:
+
+    Cluster A = unhealthy because Pod is CrashLoopBackOff
+    Cluster B = unknown because Pods API returns 403
+
+Application status = UNKNOWN
+
+But the popover MUST still show:
+
+    Observability gap:
+      Cluster B / Pods / 403 Forbidden
+
+    Known finding:
+      Cluster A / Pod / CrashLoopBackOff
+
+Do not hide known failures merely because another cluster is unobservable.
+
+==================================================
+2. APPLICATION MEMBERSHIP
+==================================================
+
+Membership remains namespace-scoped.
+
+Application ID:
+
+    namespace.metadata.name
+
+For multi-cluster:
+
+    collapse applications with the same namespace name across clusters.
+
+An application contains resources from that namespace across all configured clusters.
+
+Do NOT introduce custom label selectors or dynamic filters.
+
+Authoritative membership:
+
+    Any Kubernetes resource located in the namespace belongs to the Application.
+
+==================================================
+3. HEALTH-BEARING RESOURCE KINDS
+==================================================
+
+ONLY these resources vote on application health:
+
+    Pod
+    Deployment
+    StatefulSet
+    DaemonSet
+    Job
+    PersistentVolumeClaim
+
+ReplicaSet is SUPPORTING ONLY.
+
+It must NOT independently contribute to health.
+
+Use ReplicaSets only for ownership attribution:
+
+    Pod -> ReplicaSet -> Deployment
+
+Supporting resources that must NOT vote independently:
+
+    ReplicaSet
+    Service
+    Endpoints / EndpointSlice
+    CronJob
+    HPA
+
+Optional:
+
+    Ingress
+    OpenShift Route
+
+Non-health-bearing:
+
+    ConfigMap
+    Secret
+    Role / RoleBinding
+    ResourceQuota / LimitRange
+    NetworkPolicy
+
+These must never independently make an Application unhealthy.
+
+==================================================
+4. RESOURCE HEALTH EVALUATION
+==================================================
+
+POD
+
+Use actual Kubernetes runtime state as the primary ground truth.
+
+Evaluate:
+
+    phase
+    Ready condition
+    container waiting reasons
+    container terminated reasons
+    restart/crash information
+
+Examples:
+
+    Running + Ready -> healthy
+    CrashLoopBackOff -> unhealthy
+    OOMKilled -> unhealthy
+    ImagePullBackOff -> unhealthy
+    ErrImagePull -> unhealthy
+    failed container -> unhealthy
+    ContainerCreating -> progressing
+    initializing/creating -> progressing
+    unknown phase/condition when it prevents reliable evaluation -> unknown
+
+Do not infer Pod health from its owner.
+
+--------------------------------------------------
+
+DEPLOYMENT
+
+Evaluate using:
+
+    spec.replicas
+    status.availableReplicas
+    status.updatedReplicas
+    status.observedGeneration
+    Progressing condition
+    rollout deadline condition
+
+Examples:
+
+    desired == available and rollout observed -> healthy
+
+    desired > available but workload is transitioning ->
+        degraded/progressing according to actual Kubernetes state
+
+    ProgressDeadlineExceeded ->
+        unhealthy
+
+Use actual status conditions rather than arbitrary time-based assumptions.
+
+--------------------------------------------------
+
+STATEFULSET
+
+Evaluate:
+
+    spec.replicas
+    status.readyReplicas
+    status.currentRevision
+    status.updateRevision
+
+Examples:
+
+    3 desired / 3 ready -> healthy
+    2 desired / 3 ready -> degraded
+
+--------------------------------------------------
+
+DAEMONSET
+
+Evaluate:
+
+    status.desiredNumberScheduled
+    status.numberAvailable
+    status.numberUnavailable
+
+IMPORTANT:
+
+A DaemonSet with:
+
+    spec/desired replicas = 0
+
+is a legitimate healthy state.
+
+Do NOT classify zero desired replicas as unhealthy.
+
+--------------------------------------------------
+
+JOB
+
+Evaluate:
+
+    status.failed
+    status.active
+    status.succeeded
+
+Examples:
+
+    failed > 0 -> unhealthy
+    active > 0 -> progressing
+    succeeded > 0 and no failure -> healthy
+
+--------------------------------------------------
+
+PVC
+
+Evaluate:
+
+    status.phase
+
+Examples:
+
+    Bound -> healthy
+    Pending -> degraded/progressing
+    Lost -> unhealthy
+    unknown -> unknown
+
+==================================================
+5. OWNERSHIP / ATTRIBUTION
+==================================================
+
+Implement ownership tracing so findings are useful to humans.
+
+For example:
+
+    Pod
+      -> ReplicaSet
+        -> Deployment
+
+A finding should identify:
+
+    kind
+    name
+    namespace
+    cluster
+    reason
+    message
+    owner
+
+Example:
+
+    Pod caserver-xxxxx
+    CrashLoopBackOff
+    Owner: Deployment/caserver
+
+Do not incorrectly attribute a Pod directly to an Application if a useful workload owner can be resolved.
+
+==================================================
+6. OBSERVABILITY GAPS
+==================================================
+
+The existing resource-listing code must expose enough information to distinguish:
+
+    loading
+    API errors
+    cluster errors
+    truncation
+    successfully evaluated resources
+
+Inspect the existing:
+
+    useKubeLists
+    useProjectResources
+    kube utilities
+    cluster handling
+    API error handling
+
+and modify them using existing project conventions.
+
+Expose whatever is required, for example:
+
+    isTruncated
+    clusterResults
+    errorsByKind
+    loading state
+
+Do not invent parallel data-fetching architecture if the existing hooks can be extended.
+
+Examples:
+
+    Pods API -> 403
+        observability gap
+        Pods: 403 Forbidden
+
+    API -> 401
+        observability gap
+        Authentication expired/unauthorized
+
+    API -> 502/503/504/timeout
+        observability gap
+        API unavailable
+
+    resource list truncated
+        observability gap
+        list truncated
+
+    cluster unreachable
+        observability gap
+        cluster unreachable
+
+These should result in UNKNOWN where the missing evidence is required for a definitive health calculation.
+
+==================================================
+7. EMPTY / SPECIAL CASES
+==================================================
+
+If the namespace contains zero health-bearing resources:
+
+    Application health = healthy/neutral as defined by the existing spec
+
+UI should show:
+
+    No workloads
+
+Do NOT show a green check merely because the calculation happened successfully if the intended UX is a neutral empty state.
+
+If only non-health-bearing resources exist:
+
+    No workloads
+
+Do not count Secrets, Services, ConfigMaps, RBAC, etc. as workloads.
+
+If a health-bearing kind is legitimately absent, that absence alone must NOT cause UNKNOWN.
+
+Example:
+
+    No DaemonSets
+
+is completely valid.
+
+==================================================
+8. MULTI-CLUSTER AGGREGATION
+==================================================
+
+Applications with the same namespace name across clusters must be aggregated.
+
+Use:
+
+    unknown > unhealthy > progressing > degraded > healthy
+
+for final status precedence.
+
+But preserve findings and observability gaps from each cluster.
+
+Example:
+
+    Cluster A = healthy
+    Cluster B = degraded
+
+Application = degraded
+
+Example:
+
+    Cluster A = unhealthy
+    Cluster B = unknown
+
+Application = unknown
+
+BUT:
+
+    findings must include the unhealthy Cluster A finding
+    gaps must include the Cluster B observability failure
+
+Do not lose diagnostic information because of aggregation.
+
+==================================================
+9. APPLICATION HEALTH TYPE
+==================================================
+
+Create a single shared TypeScript contract similar to:
+
+    export type HealthStatus =
+      | 'healthy'
+      | 'degraded'
+      | 'progressing'
+      | 'unhealthy'
+      | 'unknown';
+
+    export type ObservabilityStatus =
+      | 'complete'
+      | 'partial'
+      | 'loading';
+
+    export type HealthSeverity =
+      | 'error'
+      | 'warning'
+      | 'info'
+      | 'unknown';
+
+Create appropriate interfaces for:
+
+    HealthGap
+    HealthFinding
+    KindEvaluationSummary
+    ApplicationHealth
+
+The ApplicationHealth object should contain enough information for the UI to render everything without recalculating health.
+
+At minimum it should support:
+
+    status
+    observability
+    healthChecks
+    evaluations
+    gaps
+    findings
+    excludeCount
+
+==================================================
+10. TABLE UI
+==================================================
+
+Update the Application health column to consume:
+
+    application.health
+
+The table cell must be presentation-only.
+
+It should NOT perform Kubernetes health calculations.
+
+Show the appropriate status:
+
+    Healthy
+    Degraded
+    Progressing
+    Unhealthy
+    Unknown
+
+with the existing Headlamp UI conventions.
+
+Fix the sorting/order logic so:
+
+    Unknown = highest severity
+    Unhealthy = next
+    Progressing = next
+    Degraded = next
+    Healthy = lowest
+
+Do not accidentally sort Unknown as the lowest value.
+
+==================================================
+11. POPOVER UI
+==================================================
+
+Create/update the Application Health popover.
+
+It should render the precomputed ApplicationHealth object.
+
+Suggested structure:
+
+    Application Health
+    [status]
+
+    OBSERVABILITY GAPS
+      - Pods: 403 Forbidden
+      - Cluster: unreachable
+      - Deployments: still loading
+
+    ACTIVE FINDINGS
+      - Pod caserver-xxx
+        CrashLoopBackOff
+        Owner: Deployment/caserver
+
+      - StatefulSet ets-crdb
+        2/3 replicas ready
+
+    EVALUATION SUMMARY
+      - Deployments: 22 evaluated, 22 healthy
+      - StatefulSets: 21 evaluated, 20 healthy, 1 degraded
+      - Pods: 93 evaluated, etc.
+
+    NON-HEALTH-BEARING
+      - Secrets: 117
+      - Services: 87
+      - PVCs: 48
+
+Only render the Observability Gaps section when gaps.length > 0.
+
+Only render Active Findings when findings.length > 0.
+
+Do not make the popover run new API calls.
+
+==================================================
+12. IMPORTANT: LIVE CLUSTER VALIDATION
+==================================================
+
+After implementation, DO NOT stop at unit tests.
+
+Run the actual Headlamp application against the available authenticated Kubernetes cluster.
+
+Validate the feature using REAL cluster data.
+
+At minimum verify:
+
+1. Application list loads.
+2. Health column renders.
+3. Clicking/opening the health popover works.
+4. Pods can be listed.
+5. Deployments can be listed.
+6. StatefulSets can be listed.
+7. Jobs can be listed.
+8. PVCs can be listed.
+9. Ownership chain works for at least one real Pod.
+10. A namespace with healthy workloads produces Healthy.
+11. A namespace with 0 health-bearing workloads produces the neutral "No workloads" state.
+12. The real cluster's DaemonSet/PVC/Deployment/Pod values agree with what the UI reports.
+13. No CORS/API proxy errors are introduced.
+14. No fabricated HTTP 200 values are used.
+15. Existing Headlamp functionality is not broken.
+
+If the current live cluster does not naturally contain failure scenarios such as CrashLoopBackOff or 403, DO NOT manufacture production failures.
+
+Instead, validate those cases with unit tests/mocked evaluator inputs, while validating all available real resource states against the live cluster.
+
+==================================================
+13. TESTS
+==================================================
+
+Add focused unit tests for:
+
+    healthy Pod
+    CrashLoopBackOff Pod
+    OOMKilled Pod
+    ImagePullBackOff Pod
+    ContainerCreating Pod
+    unknown Pod phase
+
+    healthy Deployment
+    degraded Deployment
+    ProgressDeadlineExceeded Deployment
+    progressing Deployment
+
+    healthy StatefulSet
+    degraded StatefulSet
+
+    DaemonSet with desired=0
+    healthy DaemonSet
+    degraded DaemonSet
+
+    successful Job
+    active Job
+    failed Job
+
+    Bound PVC
+    Pending PVC
+    Lost PVC
+
+    API 401
+    API 403
+    API 502
+    API 503
+    API 504
+    timeout
+    loading
+    truncated list
+    unreachable cluster
+
+    empty namespace
+    namespace containing only non-health-bearing resources
+
+    multi-cluster:
+        healthy + healthy
+        healthy + degraded
+        healthy + unhealthy
+        healthy + unknown
+        unhealthy + unknown
+
+Especially test:
+
+    unhealthy finding in Cluster A
+    +
+    unknown observability in Cluster B
+
+Expected:
+
+    overall status = unknown
+    Cluster A finding is still visible
+    Cluster B observability gap is still visible
+
+==================================================
+14. CODE QUALITY
+==================================================
+
+Follow existing Headlamp conventions.
+
+Do not introduce unnecessary dependencies.
+
+Do not duplicate types.
+
+Do not put business logic inside UI components.
+
+Do not hardcode cluster-specific resource names.
+
+Do not hardcode HTTP 200 for active clusters.
+
+Do not treat API errors as resource health failures.
+
+Do not make supporting resources vote independently.
+
+Keep the evaluator deterministic and testable.
+
+==================================================
+15. IMPLEMENTATION WORKFLOW
+==================================================
+
+Before changing code:
+
+1. Inspect the repository.
+2. Locate:
+       useKubeLists
+       useProjectResources
+       ProjectList
+       Application table
+       health/status components
+       popover implementation
+       existing Kubernetes resource utilities
+       existing tests
+3. Map the current data flow.
+4. Identify the minimum files that need modification.
+5. Implement the evaluator first.
+6. Add evaluator tests.
+7. Integrate into useProjectResources.
+8. Integrate the table health cell.
+9. Integrate the popover.
+10. Run lint/typecheck/tests.
+11. Run the application against the REAL authenticated cluster.
+12. Compare live Kubernetes values against UI output.
+13. Fix any discrepancies.
+14. Give me a concise final report containing:
+       - files changed
+       - architecture implemented
+       - tests added
+       - tests passed
+       - live-cluster validation performed
+       - any scenarios that could not be verified
+       - any remaining concerns
+
+IMPORTANT:
+Do not claim the feature is "validated" merely because TypeScript compiles or unit tests pass.
+Live-cluster verification is a required part of this task.
