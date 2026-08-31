@@ -1,0 +1,106 @@
+Do NOT modify code yet.
+
+Review the current git diff for the application health implementation.
+
+I want an audit of exactly what has changed in:
+- projectUtils.ts
+- projectHealthEvaluator.tests.ts
+- ProjectDetails.test.tsx
+- any other files touched by the health implementation
+
+For every change, explain:
+1. What behavior changed?
+2. Why is the change required by the health model?
+3. Could it incorrectly change existing Headlamp behavior?
+4. Is there any unnecessary code or over-engineering?
+5. Are there any remaining contradictions with the intended health model?
+
+Do not make any code changes. Only report findings.
+
+
+
+
+
+Now perform a READ-ONLY live-cluster validation of the current Application Health implementation.
+
+IMPORTANT:
+- Do NOT modify any code.
+- Do NOT modify any Kubernetes resources.
+- Do NOT restart, delete, scale, patch, or mutate anything.
+- Only inspect/read existing cluster resources and run the existing tests.
+
+Validate the implementation against the health model.
+
+For each namespace/application, collect and compare:
+
+HEALTH-BEARING:
+- Pods
+- Deployments
+- StatefulSets
+- DaemonSets
+- Jobs
+- PVCs
+
+SUPPORTING / NON-VOTING:
+- ReplicaSets
+- Services
+- Endpoints
+- EndpointSlices
+- CronJobs
+- HPAs
+
+NON-HEALTH-BEARING:
+- ConfigMaps
+- Secrets
+- Roles
+- RoleBindings
+- ResourceQuotas
+- LimitRanges
+- NetworkPolicies
+
+Verify all of the following:
+
+1. A healthy Deployment/StatefulSet/Pod workload produces Healthy.
+2. Deployment with insufficient ready replicas produces the correct Degraded/Unhealthy result according to the evaluator.
+3. CrashLoopBackOff Pod produces an Unhealthy finding.
+4. OOMKilled Pod produces an Unhealthy finding.
+5. ContainerCreating / recently transitioning Pod produces Progressing.
+6. Pod with unknown phase/condition produces Unknown.
+7. Deployment rollout deadline exceeded produces Unhealthy.
+8. StatefulSet with fewer ready replicas produces Degraded.
+9. Failed Job produces Unhealthy only when the Job is actually terminally failed.
+10. Job with historical failed retries but eventual successful completion is Healthy.
+11. PVC Pending produces the intended Degraded/Progressing result.
+12. PVC Lost produces Unhealthy.
+13. spec.replicas=0 Deployment is Healthy when intentionally scaled to zero.
+14. spec.replicas=0 DaemonSet is Healthy when that is the legitimate desired state.
+15. A 403/401/404/502/503/504/timeout on a HEALTH-BEARING API creates an observability gap and results in Unknown when health cannot be established.
+16. A 403/401/404/etc. on a SUPPORTING or NON-HEALTH-BEARING resource must NOT make an otherwise healthy application Unknown.
+17. Missing optional kinds must NOT make the application Unknown.
+18. Missing health-bearing data must result in Unknown rather than being treated as Healthy.
+19. Pod -> ReplicaSet -> Deployment ownership attribution works correctly.
+20. Pod -> Job -> CronJob ownership attribution works correctly where applicable.
+21. A concrete failing Pod finding should suppress the duplicate generic Deployment/StatefulSet replica-shortage finding for the same workload.
+22. Multi-cluster aggregation follows:
+    Unknown > Unhealthy > Progressing > Degraded > Healthy
+23. If one cluster is unreachable, the aggregate must not falsely claim Healthy.
+24. If namespace discovery is unavailable on one cluster, existing applications from other known clusters must still be represented correctly.
+
+For every check, report:
+
+PASS / FAIL / NOT VERIFIABLE
+
+and include:
+- observed Kubernetes state
+- evaluator result
+- expected result
+- explanation
+
+At the end produce:
+A. Confirmed correct behavior
+B. Incorrect behavior
+C. Ambiguous behavior
+D. Tests that still need to be added
+E. Code changes required, if any
+
+Do not implement fixes yet.
