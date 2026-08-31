@@ -1,0 +1,534 @@
+I need you to implement the Application Health improvements described below.
+
+IMPORTANT: Do NOT start coding immediately.
+
+First inspect the repository and understand the existing Application Health implementation, especially:
+
+- evaluateApplicationHealth.ts
+- useApplicationHealth.ts
+- resourceHealth.ts
+- resourceKinds.ts
+- dedupe.ts
+- healthApiResources.ts
+- types.ts
+- ApplicationHealthPopover.tsx
+- useKubeLists.ts
+- projectUtils.ts
+- projectsSlice.ts
+- relations.tsx
+- GraphSources.tsx
+- Workload.ts
+- existing getHealth() implementations
+- existing Application Health tests
+
+After inspection, give me an implementation plan and WAIT for my approval before modifying code.
+
+==================================================
+GOAL
+==================================================
+
+Improve Application Health so that it follows Kubernetes semantics more closely and clearly separates:
+
+1. HEALTH
+2. DIAGNOSIS
+3. INFORMATIONAL
+
+The core principle is:
+
+HEALTH = authoritative workload runtime state.
+
+DIAGNOSIS = concrete evidence explaining a workload problem.
+
+INFORMATIONAL = related resources that exist but have no demonstrated impact on workload health.
+
+Do not turn every Kubernetes resource into a health signal.
+
+==================================================
+1. HEALTH-BEARING RESOURCES
+==================================================
+
+Only authoritative workload/execution resources should directly vote on Application Health.
+
+Deployment:
+- Use its own authoritative status, such as desired replicas vs ready replicas.
+- Do not derive Deployment health from Service, EndpointSlice, PVC, ConfigMap, Secret, HPA, etc.
+
+StatefulSet:
+- Use its own authoritative desired/ready/current status semantics already supported by the repository.
+
+DaemonSet:
+- Use its own desired/ready semantics.
+
+ReplicaSet:
+- Only vote independently when it is a root/standalone workload.
+- If it is owned by a Deployment that is already included/fetched, do NOT independently count it.
+
+Pod:
+- Only independently vote when it is a standalone/root Pod with no fetched controller owner.
+- If it belongs to Deployment → ReplicaSet → Pod, the Pod must not become an additional health vote.
+- Pod runtime information may still be used for diagnosis.
+
+Job:
+- Can vote when it is a root execution workload.
+- Preserve the repository's existing getHealth() semantics.
+
+CronJob:
+- Preserve existing CronJob health semantics.
+- Do not independently count every Job created by a CronJob when the parent CronJob is already represented.
+
+==================================================
+2. OWNER-REFERENCE DEDUPLICATION
+==================================================
+
+The existing ownerReference-based deduplication is important and must be preserved.
+
+Correctly handle arbitrary-depth ownership chains such as:
+
+Deployment
+  -> ReplicaSet
+      -> Pod
+
+and:
+
+CronJob
+  -> Job
+      -> Pod
+
+If a resource has an owner that is itself present in the fetched resource set, the child should not independently vote.
+
+Do NOT replace this with:
+- name matching
+- name-prefix matching
+- Deployment/Service naming assumptions
+- one-hop-only logic
+
+Use Kubernetes ownerReferences.
+
+Do not introduce double counting.
+
+==================================================
+3. APPLICATION SCOPE
+==================================================
+
+The current Application model is namespace-scoped.
+
+DO NOT attempt to redesign or fix Application identity in this task.
+
+DO NOT modify:
+- ProjectDefinition
+- projectsSlice.ts
+- project discovery
+- project/application APIs
+- namespace scoping
+- global project/resource grouping
+
+If multiple unrelated workloads exist in the same namespace, acknowledge that the current Application scope can associate them together.
+
+Do NOT silently fix this.
+
+That is a separate architectural/product decision.
+
+==================================================
+4. SERVICE / ENDPOINT / ENDPOINTSLICE
+==================================================
+
+Service, Endpoint and EndpointSlice are NOT health votes.
+
+They represent connectivity/backend evidence.
+
+However, they should be useful for diagnosis when there is a real Kubernetes relationship.
+
+For example:
+
+Deployment -> Pods
+Service selector -> those Pods
+EndpointSlice -> 0 ready addresses
+
+This can produce a diagnosis such as:
+
+"Service X has no ready backends."
+
+But the Service must NOT automatically make the Application unhealthy.
+
+Most importantly:
+
+DO NOT diagnose an unrelated Service merely because it exists in the same namespace.
+
+Use actual Kubernetes selector matching against the fetched Pod set.
+
+Do NOT use resource-name matching.
+
+If the Service selector does not match the Application's fetched Pods, do not associate that Service with the Application.
+
+==================================================
+5. CONFIGMAP / SECRET
+==================================================
+
+ConfigMap and Secret must NOT automatically become health votes.
+
+Their existence/absence alone is insufficient.
+
+Use already-fetched workload/Pod template information to detect concrete references through mechanisms already available in the repository, such as:
+
+- env
+- envFrom
+- volumes
+- other existing supported reference fields
+
+Example:
+
+Deployment/Pod references ConfigMap "app-config"
+AND
+ConfigMap "app-config" is missing
+AND
+there is concrete evidence that the workload is failing because of it
+
+Then:
+
+- workload health remains based on the workload's authoritative status
+- ConfigMap becomes diagnostic evidence
+
+If the ConfigMap is merely missing but the workload is healthy, do not manufacture an unhealthy state.
+
+If a ConfigMap/Secret is unrelated or unreferenced, it remains informational.
+
+Do not add broad new API fetching solely for this.
+
+==================================================
+6. PVC
+==================================================
+
+PVC must also be conditional.
+
+A Pending/Lost PVC should NOT automatically make an Application unhealthy.
+
+Only correlate a PVC when a fetched workload actually references it.
+
+Example:
+
+StatefulSet
+  -> Pod
+      -> volume
+          -> PVC "data"
+
+If that PVC is Pending/Lost and there is concrete evidence that it affects the workload:
+
+- workload remains the health authority
+- PVC can be surfaced as a diagnosis
+
+An unrelated Pending PVC must remain informational.
+
+==================================================
+7. HPA
+==================================================
+
+HPA is a scaling controller, not a workload execution health signal.
+
+Do NOT make HPA existence affect Application Health.
+
+A normal/steady HPA should remain informational.
+
+Only surface an HPA issue diagnostically if there is already concrete evidence in the existing data that it cannot perform its required function.
+
+Do not invent new complex HPA relationship logic.
+
+==================================================
+8. RBAC / NETWORK POLICY
+==================================================
+
+RBAC and NetworkPolicy must NOT become health votes.
+
+Their existence does not prove that the workload is healthy or unhealthy.
+
+If an existing fetch produces a concrete 403/RBAC error, preserve that as diagnostic/error information according to the existing implementation.
+
+Do not infer runtime network failure merely from the existence of a NetworkPolicy.
+
+==================================================
+9. RESOURCE QUOTA / LIMITRANGE
+==================================================
+
+ResourceQuota/LimitRange should normally be informational.
+
+They may become diagnostic only when there is concrete evidence that they caused a workload failure.
+
+For example:
+
+Pod = Pending
+Pod reason/status explicitly indicates quota-related failure
+
+Then surface the quota relationship diagnostically if the required resource is already available.
+
+Do not add event-log/API fetching just for this feature.
+
+==================================================
+10. HEALTH AGGREGATION
+==================================================
+
+For multiple independent root workloads:
+
+Deployment A = Healthy
+Deployment B = Unhealthy
+Deployment C = Healthy
+
+Overall Application Health should be the worst state among the root health-bearing workloads.
+
+Do not count every child Pod as another vote.
+
+For:
+
+Deployment
+ -> ReplicaSet
+    -> Pod 1
+    -> Pod 2
+    -> Pod 3
+
+this should effectively represent ONE root workload health signal.
+
+For standalone Pods, their own runtime state may be a health signal.
+
+==================================================
+11. DIAGNOSIS
+==================================================
+
+Diagnosis must be evidence-based.
+
+Examples of valid diagnoses:
+
+- Service has zero ready backends and its selector actually matches Application Pods.
+- Referenced ConfigMap/Secret is missing and the workload shows a correlated failure.
+- Referenced PVC is Pending/Lost and the workload is affected.
+- Pod has ImagePullBackOff.
+- Pod has CrashLoopBackOff.
+- Pod has CreateContainerConfigError.
+- Pod is Pending because of an explicit quota-related reason.
+- Existing API/RBAC fetch failure.
+
+Do NOT create speculative diagnoses.
+
+Do not convert every supporting-resource problem into an Application health failure.
+
+==================================================
+12. INFORMATIONAL
+==================================================
+
+Resources without concrete health impact should remain informational.
+
+Examples:
+
+- healthy/normal Services
+- HPA
+- NetworkPolicy
+- RBAC resources
+- unreferenced ConfigMaps
+- unreferenced Secrets
+- unused PVCs
+- other supporting resources
+- existence counts
+
+Preserve the existing informational count behavior where possible.
+
+==================================================
+13. VERY IMPORTANT EXAMPLES
+==================================================
+
+Case A:
+
+Deployment healthy
+Service exists
+Service has healthy endpoints
+
+Result:
+Health = Healthy
+Diagnosis = none
+Service = informational/supporting
+
+Case B:
+
+Deployment healthy
+Service selector matches Deployment Pods
+Service has zero ready endpoints
+
+Result:
+Health = Healthy
+Diagnosis = "Service has no ready backends"
+
+Do NOT make the Service an additional health vote.
+
+Case C:
+
+Deployment unhealthy
+Service exists
+
+Result:
+Health = Unhealthy because of Deployment
+Service does not create another health vote
+
+Case D:
+
+Unused PVC is Pending
+
+Result:
+Application Health unchanged
+PVC = informational
+
+Case E:
+
+StatefulSet references PVC
+PVC is Pending/Lost
+Workload shows corresponding failure
+
+Result:
+Health comes from StatefulSet/workload
+PVC = diagnosis/evidence
+
+Case F:
+
+Deployment/Pod references missing ConfigMap
+Pod/workload is failing because of that missing reference
+
+Result:
+Health comes from workload
+ConfigMap = diagnosis
+
+Case G:
+
+ConfigMap is missing but workload is healthy
+
+Result:
+Do NOT automatically make Application unhealthy.
+
+Case H:
+
+Deployment -> ReplicaSet -> Pod
+
+Result:
+Deployment is the root health vote.
+Do not separately count ReplicaSet and Pod.
+
+Case I:
+
+Standalone Pod -> CrashLoopBackOff
+
+Result:
+Pod may directly vote unhealthy.
+
+Case J:
+
+Two unrelated Deployments exist in the same namespace
+
+Result:
+Do not redesign Application scoping in this task.
+Keep the existing namespace-scoped behavior and explicitly document it as a known limitation if necessary.
+
+==================================================
+14. SHARED CODE — STRICTLY DO NOT MODIFY
+==================================================
+
+Do NOT modify shared/cross-cutting implementations such as:
+
+- relations.tsx
+- GraphSources.tsx
+- KubeObjectStatus.tsx
+- useKubeLists.ts
+- projectUtils.ts
+- projectsSlice.ts
+- Workload.ts
+- ProjectDefinition
+- global relationship definitions
+- global resource-fetching primitives
+
+These are shared by other parts of the application.
+
+If Application Health needs selector matching for diagnosis, implement a small LOCAL read-only helper inside the health feature rather than modifying shared relationship definitions.
+
+It is acceptable to locally reproduce the small label-selector predicate needed for this feature if that avoids coupling Application Health to the resource graph.
+
+Do not change graph behavior.
+
+==================================================
+15. MINIMAL CHANGE REQUIREMENT
+==================================================
+
+This is NOT a request to redesign the entire Application Health architecture.
+
+Prefer:
+
+existing health evaluators
++
+existing owner-reference deduplication
++
+existing fetched data
++
+small health-local helpers
++
+focused tests
+
+Avoid:
+
+new global relationship systems
+new project architecture
+new Application identity
+new broad API fetching
+shared graph changes
+unrelated refactoring
+
+If something cannot be implemented safely within this boundary, STOP and tell me instead of expanding the scope.
+
+==================================================
+16. TESTING
+==================================================
+
+Add/update focused tests for:
+
+- Deployment health
+- StatefulSet health
+- DaemonSet health
+- standalone Pod health
+- standalone Job health
+- CronJob/Job ownership
+- Deployment/ReplicaSet/Pod deduplication
+- arbitrary-depth ownerReference deduplication
+- Service selector -> Pod correlation
+- zero ready endpoints diagnosis
+- referenced vs unreferenced ConfigMap
+- referenced vs unreferenced Secret
+- referenced vs unreferenced PVC
+- PVC Pending/Lost diagnosis
+- informational resources not affecting health
+- multiple independent root workloads
+- RBAC/fetch errors
+- existing behavior that must remain unchanged
+
+Run the relevant existing test suite and report failures clearly.
+
+==================================================
+17. IMPLEMENTATION SAFETY RULE
+==================================================
+
+Before changing any code, give me a concise but technically detailed plan containing:
+
+1. What you found in the current implementation.
+2. Which assumptions above are confirmed.
+3. Which assumptions are different from the actual repository.
+4. Exact files you intend to modify.
+5. Exact shared files you will leave untouched.
+6. How health, diagnosis and informational resources will be separated.
+7. How ownerReference deduplication will remain intact.
+8. How Service/ConfigMap/Secret/PVC correlation will be implemented without changing shared code.
+9. Tests you will add/change.
+10. Known limitations that will remain.
+
+Then STOP.
+
+Do not edit files until I explicitly approve the plan.
+
+The priority order is:
+
+1. Kubernetes semantic correctness
+2. No double counting
+3. Evidence-based diagnosis
+4. No false health degradation
+5. Minimal code changes
+6. No shared/cross-cutting changes
+7. Preserve existing behavior wherever it is already correct
