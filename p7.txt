@@ -1,0 +1,316 @@
+I want you to implement the Application Health improvements in this repository.
+
+IMPORTANT: Work in STRICT ITERATIVE APPROVAL MODE.
+
+The most important rule is:
+
+SHARED CODE MUST NOT BE MODIFIED.
+
+Treat all shared/common code as READ-ONLY unless I explicitly approve a specific shared-code change. Do not modify shared hooks, utilities, API/fetch logic, shared types, shared Kubernetes helpers, shared health/status logic, shared components, or any code used outside this feature.
+
+If you think shared code needs to change, STOP and ask me. Do not work around my rule by modifying another shared file.
+
+==================================================
+HOW YOU MUST WORK
+==================================================
+
+DO NOT implement the entire requirement at once.
+
+Work in small loops.
+
+For EVERY loop, follow this exact sequence:
+
+LOOP N — ANALYZE
+1. Inspect the existing repository/code.
+2. Trace the current behavior and data flow.
+3. Identify the exact files/functions involved.
+4. Identify whether each file is local to Application Health or shared.
+5. Check existing tests.
+6. Check for existing behavior that must be preserved.
+7. Identify Kubernetes semantic risks and edge cases.
+8. Determine the SMALLEST possible local change.
+
+Then STOP.
+
+Before making any code change, give me:
+
+A. WHAT YOU FOUND
+- Exact files/functions.
+- Current behavior.
+- How the current data flows.
+
+B. WHAT NEEDS TO CHANGE
+- Exact local file(s).
+- Exact function/logic to change.
+- Expected behavior after the change.
+
+C. WHAT WILL NOT CHANGE
+- Shared files/functions.
+- Existing health aggregation.
+- Existing owner-reference deduplication.
+- Existing API/fetch behavior unless explicitly approved.
+- Unrelated UI/functionality.
+
+D. RISKS
+- Regression risks.
+- Kubernetes semantic concerns.
+- Duplicate health-vote risks.
+- Test impact.
+
+E. PROPOSED SINGLE CHANGE
+Describe ONLY the next atomic change you want to make.
+
+Then STOP and wait for my response.
+
+==================================================
+WHAT MY "YES" MEANS
+==================================================
+
+When I say YES, it means:
+
+"Implement ONLY the single change you just proposed."
+
+It does NOT mean:
+"Implement the entire original task."
+
+After I say YES:
+
+1. Make ONLY that approved change.
+2. Do not sneak in additional improvements.
+3. Do not refactor unrelated code.
+4. Do not modify shared code.
+5. Run the relevant tests.
+6. Inspect the git diff.
+7. Verify exactly what changed.
+8. Verify that no shared code was modified.
+9. Report the result.
+
+Then STOP again.
+
+Start the next loop only after I give another YES.
+
+The process must always be:
+
+ANALYZE
+→ SHOW ME FINDINGS
+→ PROPOSE ONE CHANGE
+→ STOP
+→ I SAY YES
+→ IMPLEMENT ONE CHANGE
+→ TEST
+→ DIFF AUDIT
+→ REPORT
+→ STOP
+→ NEXT LOOP
+
+Never skip the STOP.
+
+==================================================
+SHARED CODE — ABSOLUTE PROTECTION
+==================================================
+
+Before modifying ANY file, determine whether it is shared.
+
+If it is shared:
+
+DO NOT MODIFY IT.
+
+Do not modify shared code just because:
+- it is cleaner;
+- it is easier;
+- it avoids duplication;
+- it would be a better architecture;
+- the feature would be simpler that way.
+
+Local feature-specific implementation is preferred over changing shared behavior.
+
+If a shared change is genuinely unavoidable:
+
+STOP and show me:
+- shared file;
+- function;
+- why it is required;
+- what other features could be affected;
+- possible local-only alternatives.
+
+Wait for explicit approval.
+
+==================================================
+APPLICATION HEALTH SEMANTICS
+==================================================
+
+Be extremely conservative with health.
+
+Separate:
+
+1. HEALTH
+Actual evidence that changes application health.
+
+2. DIAGNOSIS
+Evidence that helps explain a problem.
+Diagnosis MUST NOT itself change health.
+
+3. INFORMATIONAL
+Useful information that does not prove the application is unhealthy.
+
+Do not turn informational conditions into unhealthy/degraded states without explicit evidence.
+
+Do not create duplicate health votes.
+
+Do not change existing owner-reference deduplication.
+
+Do not change worst-of-roots aggregation unless explicitly approved.
+
+Do not make a diagnosis participate in health aggregation.
+
+If evidence is insufficient, prefer INFORMATIONAL rather than falsely degrading the application.
+
+==================================================
+KUBERNETES RULE
+==================================================
+
+Do not assume Kubernetes semantics.
+
+Verify the actual repository implementation before changing behavior.
+
+Do not assume:
+- missing resource = unhealthy;
+- pending resource = unhealthy application;
+- missing endpoint = unhealthy application;
+- API/RBAC error = unhealthy application;
+- referenced dependency failure = workload failure;
+- resource existence = health vote.
+
+Use concrete evidence and existing fetched Kubernetes objects.
+
+==================================================
+FETCH/API RULE
+==================================================
+
+Prefer data that is already fetched.
+
+Do not add new API calls unless absolutely necessary.
+
+Do not modify shared fetching infrastructure.
+
+If a new API call or shared fetch modification appears necessary:
+
+STOP and ask me first.
+
+==================================================
+TEST RULE
+==================================================
+
+For every approved implementation step:
+
+1. Find the relevant existing tests.
+2. Add/update only tests relevant to that change.
+3. Run the smallest relevant test set.
+4. Run broader validation when appropriate.
+5. Report exact results.
+
+Never claim a test passed unless you actually ran it.
+
+==================================================
+DIFF AUDIT
+==================================================
+
+After every approved change, inspect the diff.
+
+Report:
+
+Modified files:
+- ...
+
+Added files:
+- ...
+
+Deleted files:
+- ...
+
+Shared files modified:
+- NONE
+
+Only say "NONE" after actually verifying the diff.
+
+If you accidentally modify shared code:
+STOP immediately.
+Revert the shared-code change.
+Do not continue until the working tree is clean with respect to the shared-code rule.
+
+==================================================
+NO SCOPE CREEP
+==================================================
+
+Do not:
+- refactor unrelated code;
+- rename unrelated functions;
+- clean up unrelated files;
+- change formatting unnecessarily;
+- change shared architecture;
+- modify existing behavior that is not part of the requirement;
+- add APIs just for convenience;
+- change UI outside the approved feature;
+- implement future improvements.
+
+If you discover another improvement while working, record it as a possible follow-up and DO NOT implement it.
+
+==================================================
+IF THE REPOSITORY DIFFERS FROM EXPECTATIONS
+==================================================
+
+STOP.
+
+Tell me:
+1. What the plan expected.
+2. What actually exists.
+3. Why the difference matters.
+4. What options we have.
+5. Which option you recommend.
+
+Do not silently change the plan.
+
+==================================================
+FINAL COMPLETION
+==================================================
+
+Only after every individual step has been separately approved and implemented, perform a final audit.
+
+Verify:
+
+- Required Application Health behavior works.
+- Existing health behavior is preserved.
+- Shared code is untouched.
+- No duplicate health votes were introduced.
+- Diagnosis never changes health.
+- Informational conditions remain informational.
+- Owner-reference deduplication remains intact.
+- Worst-of-roots aggregation remains intact.
+- Existing API/fetch behavior remains intact unless explicitly approved.
+- Relevant tests pass.
+- No unrelated refactoring occurred.
+
+Then provide a final summary containing:
+
+1. Files changed.
+2. Files added.
+3. Files deleted.
+4. Behavior implemented.
+5. Tests run/results.
+6. Shared-code verification.
+7. Known limitations.
+8. Remaining risks.
+
+==================================================
+ABSOLUTE RULE
+==================================================
+
+NEVER proceed to the next implementation step without my approval.
+
+My YES authorizes ONLY the immediately preceding proposed step.
+
+Do not interpret one YES as approval for the whole task.
+
+Start now with LOOP 1 — repository analysis only.
+
+DO NOT WRITE OR MODIFY ANY CODE YET.
