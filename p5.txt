@@ -1,409 +1,99 @@
-We are now moving from audit-only validation to implementation + comprehensive testing.
+Before making ANY code changes, inspect the current Headlamp repository and verify the actual data flow for Application Health / Project Health.
 
-IMPORTANT:
-Do not make broad/unrelated changes.
-Do not redesign the evaluator.
-Preserve the existing architecture and existing correct behavior.
-Work only on the application health/evaluator/popover behavior discussed in the previous audit.
+I do NOT want a proposed implementation yet. I want a factual verification based on the current code.
 
-First inspect the current working tree and existing tests.
-Then implement the minimum required fixes below.
+Please trace the complete runtime flow and answer these questions with exact file names, functions/hooks, and relevant code references:
 
-==================================================
-1. REQUIRED HEALTH-BEARING STATUS DATA
-==================================================
+1. APPLICATION SCOPE
+- How does a Project/Application determine which clusters and namespaces belong to it?
+- Is namespace information already available/configured before resource fetching starts?
+- Can an application/project exist with a known namespace but without successful cluster-wide namespace discovery?
+- Are namespaces fetched dynamically, or are they already part of the application/project configuration?
 
-Health-bearing workload resources must distinguish:
+2. NAMESPACE AVAILABILITY
+- Find the exact code responsible for namespace discovery/listing.
+- What happens if namespace discovery succeeds?
+- What happens if namespace discovery fails?
+- Is a namespace object still available from another source/configuration when namespace listing fails?
+- Is there already any cached, persisted, configured, or last-known namespace information?
+- Do NOT assume it exists — verify from code.
 
-- valid observed zero
-- missing/absent status data
+3. RESOURCE API AVAILABILITY
+For the resources currently used by Application Health, verify for each:
+- Pods
+- Deployments
+- StatefulSets
+- DaemonSets
+- Jobs
+- PVCs
+- any supporting resources
 
-Never convert missing status fields into fabricated zero values.
+For each resource type:
+- Where is it fetched?
+- Is the request namespace-scoped or cluster-scoped?
+- What does the hook return on loading?
+- What does it return on success?
+- What does it return on error?
+- Can we distinguish "zero resources" from "API request failed"?
+- Is truncation/limit information available?
+- Is the cluster identity available with the observation?
 
-For Deployment:
-- if required status fields needed for health evaluation are absent -> Unknown
-- an actual observed value of 0 remains a valid value
+4. RBAC / PERMISSION SCENARIOS
+Verify what happens if:
+- the user can access a configured namespace but cannot list all namespaces;
+- the namespace exists but resource listing is forbidden;
+- namespace discovery is forbidden;
+- a resource API returns an error;
+- the resource list returns zero items.
 
-For StatefulSet:
-- same rule for required ready/replica status
+Do not infer. Trace the actual Headlamp/Kubernetes client behavior in this repository.
 
-For DaemonSet:
-- same rule for required desired/ready status
+5. CURRENT APPLICATION HEALTH IMPLEMENTATION
+Trace:
+Application/Project
+→ project resources hook
+→ resource observations
+→ health evaluator
+→ UI row
 
-Do not use `?? 0` or equivalent fallback where it turns missing required health evidence into a real zero.
-
-Add unit tests for:
-- complete status
-- actual zero
-- missing status
-- partially missing status
-
-Expected behavior:
-absence of required health evidence must not become evidence of health or degradation.
-
-==================================================
-2. SUPPORTING/NON-VOTING RESOURCE LOADING
-==================================================
-
-Supporting/non-health-bearing resources must NOT independently block the primary health verdict.
-
-Examples include:
-- Service
-- EndpointSlice
-- HPA
-- CronJob
-- ConfigMap
-- Secret
-- NetworkPolicy
-- other supporting resources already excluded from primary health evaluation
-
-If Pods/Deployments/etc. have complete health evidence and a supporting resource is still loading or returns a non-voting API error:
-
-Primary health must remain based on the health-bearing resources.
-
-Do NOT allow global `isLoading` to turn the whole application into blocking Unknown.
-
-Preserve supporting-resource failures/loading as non-blocking observability information where appropriate.
-
-Add tests for:
-- healthy workload + Service loading
-- healthy workload + HPA loading
-- healthy workload + multiple supporting kinds loading
-- healthy workload + supporting kind returns 403
-- all health-bearing resources complete while supporting resources remain loading
-
-Expected:
-primary health remains Healthy.
-
-==================================================
-3. JOB STATE PRECEDENCE
-==================================================
-
-Fix Job evaluation precedence.
-
-Required order:
-
-1. complete=True -> Healthy
-2. terminal failed=True / terminal failure -> Unhealthy
-3. active > 0 -> Progressing
-4. succeeded > 0 AND active == 0 -> Healthy
-5. otherwise Unknown/empty according to existing model
-
-CRITICAL CASE:
-
-spec.completions = 3
-status.succeeded = 1
-status.active = 2
-
-Expected:
-Progressing
-
-NOT Healthy.
-
-Also test:
-
-A. completions=3, succeeded=3, active=0 -> Healthy
-B. succeeded=1, active=2 -> Progressing
-C. failed=True / terminal failure -> Unhealthy
-D. retry history failed previously, then complete=True -> Healthy
-E. succeeded>0, active=0 without complete flag -> Healthy only if existing semantics explicitly support this
-F. missing required Job status -> Unknown where evidence is insufficient
-
-Do not allow `succeeded > 0` to override currently active work.
-
-==================================================
-4. NAMESPACE DISCOVERY FAILURE
-==================================================
-
-Review how Application rows are created.
-
-A cluster/namespace discovery failure must not silently make cluster-only applications disappear from the UI.
-
-Preserve enough cluster/namespace provenance to represent:
-
-- successful namespace discovery
-- failed namespace discovery
-- cluster reachable but namespace inventory unavailable
-
-Where the application can only be associated with a cluster and namespace inventory is unavailable, represent that limitation explicitly as Unknown/unavailable rather than pretending the application does not exist.
-
-Add unit tests for:
-- successful namespace discovery
-- namespace discovery failure on one cluster while another cluster succeeds
-- cluster-only application when namespace inventory is unavailable
-
-Do not redesign ApplicationHealth.
-
-==================================================
-5. PER-KIND / PER-CLUSTER LOADING + PROVENANCE
-==================================================
-
-Current implementation collapses resource loading into global state.
-
-Fix this minimally so the evaluator can distinguish:
-
-- which resource kind failed
-- which cluster failed
-- which resource kind is still loading
-- whether the failed/loading kind is health-bearing or supporting
-
-Preserve existing `clusterResults` / per-resource information if already available rather than introducing an unnecessary new architecture.
-
-A healthy cluster must not become globally Unknown because an unrelated supporting kind on another cluster is loading.
-
-Add tests for multi-cluster scenarios.
-
-==================================================
-6. TRUNCATION PROVENANCE
-==================================================
-
-Current truncation evidence loses cluster identity and hardcodes the limit.
-
-Do not generate generic:
-
-"all"
-or a hardcoded `1000`
-
-when the real source is a specific cluster/resource kind.
-
-Preserve:
-
+Identify exactly where the current implementation gets:
+- cluster
+- namespace
 - resource kind
-- cluster identity
-- actual configured/requested limit
+- loading
+- success
+- error
+- truncated
+- resource status
 
-Expected finding should be attributable to the actual source, e.g.:
+6. THE CURRENT P0 BLOCKER
+The current note says:
 
-Cluster A:
-Pods list truncated at configured limit
+"Namespace discovery failure for a cluster-only application still cannot render an Unknown row, because current application rows are created only from successfully fetched Namespace data."
 
-not:
+Verify whether this statement is actually true in the current code.
 
-all:
-Pods list truncated at 1000
+Specifically answer:
+A. Can a cluster-only application have enough authoritative information to render an Unknown row even when namespace discovery fails?
+B. If yes, where does that information come from?
+C. If no, what information is genuinely missing?
+D. Is a last-known/persisted namespace inventory actually necessary?
+E. Would a cluster-level Unknown row be semantically correct?
+F. Or is there a simpler solution using information that already exists in the application/project configuration?
 
-Add unit tests for:
-- one cluster truncated
-- another cluster not truncated
-- different resource kinds
-- configured limit different from 1000
+7. IMPORTANT
+Do NOT change any files.
+Do NOT implement a solution.
+Do NOT invent APIs or behavior.
 
-==================================================
-7. POD ROOT-CAUSE / DUPLICATE SUPPRESSION
-==================================================
+At the end provide:
 
-Preserve concrete Pod root-cause findings such as:
+- VERIFIED FACTS
+- CURRENT DATA FLOW
+- WHAT IS AVAILABLE WHEN NAMESPACE DISCOVERY FAILS
+- WHAT IS NOT AVAILABLE
+- WHETHER THE CURRENT P0 BLOCKER IS REAL
+- MINIMUM CHANGE NEEDED (only conceptually, no code)
+- Any assumptions that still need to be validated manually
 
-- CrashLoopBackOff
-- OOMKilled
-- ImagePullBackOff
-- ContainerCreating where applicable
-
-When a concrete Pod finding explains a parent Deployment/StatefulSet replica shortage:
-
-- keep the concrete Pod finding visible
-- suppress only the redundant generic parent shortage finding where the existing design requires it
-
-Do not accidentally suppress the actual root cause.
-
-Add tests for:
-- Deployment + failing Pod
-- StatefulSet + failing Pod
-- multiple Pods with same owner
-- independent parent shortage with no concrete Pod root cause
-
-Also decide whether parent summary counts should remain resource-state counts or be deduplicated. Prefer the existing data-model semantics; do not silently change summary meaning.
-
-==================================================
-8. OBSERVABILITY WORDING
-==================================================
-
-Review the current popover wording.
-
-If primary health evidence is complete but non-voting API errors/gaps exist, do not simultaneously claim:
-
-"Complete observation"
-
-and
-
-"Observability Gaps"
-
-unless those labels have clearly different meanings.
-
-Use the smallest wording change necessary.
-
-Preferred behavior:
-- primary health can remain Healthy
-- supporting API gaps can be shown as non-blocking observability notices
-
-Add/update tests for the returned observability state.
-
-==================================================
-9. HEALTH-BEARING API 403 VS SUPPORTING API 403
-==================================================
-
-This distinction must be explicitly tested.
-
-Health-bearing kind returns 403:
--> health cannot be established
--> Unknown (or existing required unknown behavior)
-
-Supporting/non-voting kind returns 403:
--> primary workload health is not blocked
--> Healthy can remain Healthy
--> expose non-blocking observability information if appropriate
-
-Test at least:
-- Pod 403
-- Deployment 403
-- StatefulSet 403
-- DaemonSet 403
-- PVC 403 if PVC participates in health
-- supporting Service 403
-- EndpointSlice 403
-- HPA 403
-- CronJob 403
-- ConfigMap 403
-- Secret 403
-
-The exact list should follow the existing health-bearing/non-voting classification in the code.
-
-==================================================
-10. OPTIONAL KIND 404
-==================================================
-
-An optional/non-health-bearing API returning 404 should not create a blocking health gap.
-
-Add regression test for an optional kind such as Route/OpenShift Route if that is already represented in the code.
-
-Expected:
-no false Unknown solely because the optional kind does not exist.
-
-==================================================
-11. LIVE / INTEGRATION FIXTURES
-==================================================
-
-After unit tests are implemented, create temporary Kubernetes test fixtures for live validation.
-
-Create only the minimum resources required.
-
-Test these real cluster scenarios:
-
-1. Healthy Deployment
-2. Deployment replica shortage
-3. CrashLoopBackOff Pod
-4. OOMKilled Pod
-5. ContainerCreating Pod
-6. Pod phase Unknown if safely reproducible
-7. Deployment progress deadline failure if safely reproducible
-8. StatefulSet replica shortage
-9. Job currently active with partial success
-10. Job terminal failure
-11. Job retry then successful completion
-12. PVC Pending
-13. PVC Lost, if safely reproducible
-14. Deployment replicas=0
-15. DaemonSet desired=0
-16. health-bearing API permission failure where safe/testable
-17. supporting/non-voting API permission failure
-18. Pod -> ReplicaSet -> Deployment ownership
-19. Pod -> Job -> CronJob ownership
-20. Pod root-cause duplicate suppression
-21. multi-cluster behavior if test environment supports it
-22. namespace discovery failure behavior
-23. per-cluster truncation if configurable/reproducible
-
-Do NOT perform destructive changes to existing user workloads.
-
-Use uniquely named temporary test resources, preferably under a dedicated temporary namespace.
-
-==================================================
-12. CLEANUP IS MANDATORY
-==================================================
-
-Every temporary Kubernetes resource created for live testing MUST be deleted after the test run.
-
-Use a cleanup/finally mechanism so cleanup happens even if a test fails.
-
-Before cleanup, record the resources created by the test.
-
-After cleanup, verify:
-- temporary namespace is gone
-- temporary Deployments/Pods/Jobs/StatefulSets/PVCs are gone
-- no test fixture remains in the cluster
-
-Do not delete pre-existing resources.
-
-==================================================
-13. TEST COVERAGE
-==================================================
-
-Do not stop after the existing 48 tests pass.
-
-Add regression tests for every bug identified in the audit.
-
-Minimum required new test groups:
-
-A. missing required health data -> Unknown
-B. supporting resource loading -> does not block Healthy
-C. supporting resource 403 -> does not block Healthy
-D. health-bearing resource 403 -> Unknown
-E. Job succeeded + active -> Progressing
-F. Job complete -> Healthy
-G. Job terminal failure -> Unhealthy
-H. Job retry then complete -> Healthy
-I. StatefulSet missing status -> Unknown
-J. DaemonSet missing status -> Unknown
-K. Deployment missing status -> Unknown
-L. namespace discovery failure
-M. per-kind/per-cluster provenance
-N. truncation cluster identity
-O. truncation configured limit
-P. Pod root-cause duplicate suppression
-Q. optional kind 404
-R. Pod -> Job -> CronJob ownership
-S. multi-cluster health precedence
-
-Run:
-- existing focused evaluator tests
-- all relevant frontend tests
-- TypeScript/typecheck
-- lint if configured
-- integration/live tests where environment permits
-
-==================================================
-14. IMPORTANT TEST DISCIPLINE
-==================================================
-
-Do not modify tests merely to make the implementation pass.
-
-For every changed behavior:
-- explain why the old behavior was incorrect
-- add a regression test
-- implement the smallest fix
-- run the test
-- verify unrelated tests still pass
-
-Do not weaken assertions.
-
-==================================================
-15. FINAL VALIDATION REPORT
-==================================================
-
-At the end report:
-
-1. Files changed
-2. Logic changes
-3. Number of tests before/after
-4. Unit tests passed/failed
-5. Integration/live tests passed/failed/not reproducible
-6. Which scenarios were verified live
-7. Which scenarios could not be reproduced live and why
-8. Temporary resources created
-9. Confirmation that all temporary resources were deleted
-10. Any remaining known issue
-11. Whether the Application health evaluator is now production-ready or what exact blocker remains
-
-Do not claim production-ready if any P0 correctness issue remains.
-
-Start by inspecting the current implementation and existing 48 tests, then implement the P0 fixes first.
+Include exact file paths and function/hook names for every important conclusion.
