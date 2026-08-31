@@ -1,0 +1,609 @@
+FINAL GATE → VERIFY ONLY WHAT IS STILL UNVERIFIED, THEN IMPLEMENT
+
+We have already performed a detailed dependency audit and reviewed its findings.
+
+I do NOT want another large audit or another loop of investigation.
+
+Your task now is to do ONE FINAL IMPLEMENTATION-GATE VERIFICATION.
+
+The purpose of this pass is ONLY to determine:
+
+1. What is already conclusively verified.
+2. What, if anything, is genuinely still unverified.
+3. Whether implementation can safely start now.
+4. If yes, START IMPLEMENTATION IN THE SAME RUN.
+5. If something is genuinely blocking, identify exactly what it is and do not modify code outside the allowed scope.
+
+Do not repeat previously verified investigation unless needed to resolve a direct contradiction.
+
+========================================================
+HARD SCOPE RULE — MOST IMPORTANT
+========================================================
+
+This feature is ONLY for the Applications tab Health column / Application Health behavior and its Health details popover.
+
+You MAY:
+
+- read shared code
+- inspect shared code
+- trace shared dependencies
+- inspect shared hooks
+- inspect shared resource definitions
+- call/reuse existing shared functions
+- use existing shared Kubernetes fetching mechanisms
+- use existing shared types
+- use existing shared UI patterns
+
+You MUST NOT:
+
+- modify shared code
+- modify shared function implementations
+- modify shared function signatures
+- modify shared return semantics
+- change behavior for other parts of Headlamp
+- change global resource registration just for this feature
+- change graph/resource-map behavior
+- change Cluster Health behavior
+- change ClusterStatusPopover
+- change shared plugin APIs
+- change generic Kubernetes fetching infrastructure
+
+In particular, DO NOT MODIFY:
+
+- getStatus
+- getPodStatus
+- getGraphNodeStatus
+- useKubeLists implementation/signature
+- useProjectItems implementation/signature
+- registerProjectApiResource
+- defaultApiResources
+- ClusterStatusPopover
+- ResourceMap / graph infrastructure
+- any shared component/API whose existing consumers could be affected
+
+SHARED CODE CAN BE READ AND REUSED.
+SHARED CODE CANNOT BE MODIFIED.
+
+========================================================
+PART 1 — FINAL VERIFICATION GATE
+========================================================
+
+Do ONE focused verification of the existing audit against the current repository.
+
+Do NOT produce another huge audit.
+
+Verify ONLY these implementation-critical questions:
+
+A. APPLICATION HEALTH DATA FLOW
+
+Confirm the current flow for:
+
+ProjectList
+ProjectDetails
+ProjectResourcesTab
+
+and identify the common/local place where Application Health can be evaluated.
+
+B. POD FETCHING
+
+This is the most important remaining architectural question.
+
+We need Pod information for Application Health.
+
+Find the cleanest APPLICATION-SCOPED way to obtain Pods using the existing Kubernetes fetching mechanisms.
+
+You are explicitly allowed to READ and REUSE shared fetching code.
+
+You are NOT allowed to MODIFY that shared fetching code.
+
+DO NOT add Pod to global/defaultApiResources.
+
+Determine whether Pods can be fetched by:
+
+- an existing Applications/project-scoped resource list
+- an existing hook called with an application-local resource list
+- an existing project-scoped extension point
+- an existing useKubeLists/useList mechanism called locally
+- another already-existing mechanism
+
+Use whichever existing mechanism fits the architecture.
+
+If an Applications-local Pod fetch is possible without modifying shared code:
+→ IMPLEMENT IT.
+
+If there is genuinely no way to fetch Pods without modifying shared infrastructure:
+→ STOP ONLY AT THAT POINT and report the exact blocker.
+
+Do NOT modify shared infrastructure to work around it.
+
+C. HEALTH-BEARING RESOURCE SET
+
+Verify only the final implementation set:
+
+Health-bearing:
+- Deployment
+- StatefulSet
+- DaemonSet
+- ReplicaSet
+- Pod
+- Job
+- CronJob
+- PersistentVolumeClaim
+
+Supporting:
+- Service
+- Endpoints
+- EndpointSlice
+- HPA
+
+Informational:
+- ConfigMap
+- Secret
+- Role
+- RoleBinding
+- Ingress
+- NetworkPolicy
+- ResourceQuota
+- LimitRange
+
+If repository evidence requires a small correction to this classification, make the correction based on actual code/Kubernetes semantics and document it.
+
+Do not invent health semantics for informational resources.
+
+D. CURRENT SHARED HEALTH HELPERS
+
+Verify that Applications Health must NOT depend on the unconditional-success fallback of shared getStatus() for unsupported kinds.
+
+Do NOT modify getStatus().
+
+Create/use an Applications-local evaluator where necessary.
+
+E. LOADING
+
+Confirm ProjectList can distinguish:
+
+isLoading === true
+from
+fetch completed + zero resources
+
+Implementation must show:
+
+CHECKING while data is loading.
+
+NO RESOURCES only after loading completes and there are genuinely zero relevant resources.
+
+Do this locally in Applications UI.
+
+Do NOT modify shared loading infrastructure.
+
+F. ERRORS / RBAC
+
+Confirm existing fetch errors can be consumed by Applications Health without modifying shared fetch code.
+
+For health-bearing resources:
+
+403 / meaningful API failure
+→ UNKNOWN
+
+Do not silently convert errors to HEALTHY.
+
+A missing/uninstalled optional resource kind must not automatically make the Application UNKNOWN.
+
+Do not invent error semantics where the repository already has an established representation.
+
+G. PARENT/CHILD DEDUPLICATION
+
+Confirm ownerReferences can be used from already-fetched objects.
+
+At minimum:
+
+Deployment → ReplicaSet → Pod
+StatefulSet → Pod
+DaemonSet → Pod
+Job → Pod
+CronJob → Job
+
+Do not double-count child resources when the parent is authoritative.
+
+A standalone ReplicaSet remains independently evaluable.
+
+Deduplication applies to Application Health aggregation, NOT to hiding resources from the Resources tab.
+
+H. INFORMATIONAL-ONLY APPLICATION
+
+If resources exist but none are health-bearing:
+
+Do NOT call it NO RESOURCES.
+
+Do NOT call it UNKNOWN simply because there is no health-bearing resource.
+
+Use an Applications-local representation appropriate to the existing UI.
+
+Do not introduce a global new status solely for this feature unless absolutely necessary.
+
+========================================================
+PART 2 — FINAL HEALTH CONTRACT
+========================================================
+
+Implement these states:
+
+CHECKING
+NO RESOURCES
+HEALTHY
+DEGRADED
+UNHEALTHY
+UNKNOWN
+
+CHECKING:
+Any required Application Health data is still loading.
+
+NO RESOURCES:
+Fetching is complete, no relevant Application resources exist, and there is no error that prevents evaluation.
+
+HEALTHY:
+At least one health-bearing resource exists and all evaluated health-bearing resources are healthy, with no relevant health-bearing fetch errors.
+
+DEGRADED:
+There is a partial/non-definitive health problem but no definitive UNHEALTHY condition.
+
+UNHEALTHY:
+At least one health-bearing resource has a definitive failure.
+
+UNKNOWN:
+A health-bearing resource cannot be reliably evaluated because of meaningful RBAC/API/status uncertainty.
+
+Do NOT classify a resource as UNKNOWN merely because our code does not support that resource's health semantics.
+
+Final severity:
+
+UNHEALTHY
+>
+DEGRADED
+>
+UNKNOWN
+>
+HEALTHY
+
+CHECKING overrides all while loading.
+
+NO RESOURCES is only valid after loading has completed.
+
+========================================================
+PART 3 — RESOURCE HEALTH RULES
+========================================================
+
+Implement actual health evaluation locally for Applications.
+
+DEPLOYMENT:
+
+Use actual desired/ready/available state and relevant Deployment conditions.
+
+Do not blindly call it healthy only because readyReplicas equals desired if a definitive rollout failure condition says otherwise.
+
+STATEFULSET:
+
+Use actual desired/ready state.
+
+DAEMONSET:
+
+Use DaemonSet-specific desired/current/ready scheduling fields.
+
+Do NOT use Deployment-specific replica assumptions.
+
+REPLICASET:
+
+Use actual desired/ready state.
+
+If owned by a fetched Deployment:
+do not independently count it in Application aggregation.
+
+POD:
+
+Fetch Pods through the Applications-local mechanism.
+
+Evaluate actual:
+
+- phase
+- Ready condition
+- container waiting/termination reasons
+
+Examples:
+
+Running + Ready → Healthy
+
+Running + Not Ready → Degraded unless actual state indicates definitive failure
+
+Failed → Unhealthy
+
+CrashLoopBackOff / ImagePullBackOff or equivalent definitive container failure → Unhealthy or appropriate degraded state based on actual severity
+
+Unknown/unavailable status → Unknown when health genuinely cannot be established
+
+JOB:
+
+Evaluate:
+
+- succeeded
+- failed
+- active
+- completion/failure conditions
+
+A Failed Job MUST NOT be Healthy.
+
+Do NOT use unconditional success.
+
+PVC:
+
+Evaluate status.phase.
+
+Bound → Healthy
+
+Pending → appropriate degraded/unknown state
+
+Lost → Unhealthy
+
+Do NOT use unconditional success.
+
+CRONJOB:
+
+Do not invent a fake health signal.
+
+Where an associated Job is available and relationship can be established, derive meaningful health from the Job.
+
+Avoid double-counting the same CronJob/Job workload.
+
+If the repository's current object relationship makes reliable derivation impossible, use a conservative supported result rather than fabricating health.
+
+========================================================
+PART 4 — ONE APPLICATION HEALTH ENGINE
+========================================================
+
+There must be ONE Applications-local health evaluator used by:
+
+- ProjectList
+- ProjectDetails
+- ProjectResourcesTab
+
+Do NOT implement three separate health algorithms.
+
+The evaluator should conceptually perform:
+
+1. loading/error evaluation
+2. resource classification
+3. health evaluation
+4. parent/child deduplication
+5. final aggregation
+6. explanation data generation
+
+Function/component names are up to repository conventions.
+
+Keep it local to Applications.
+
+Do NOT change shared getStatus().
+
+========================================================
+PART 5 — POPOVER
+========================================================
+
+Implement the Health popover for the Applications tab.
+
+Requirement:
+
+When the user hovers over the Health column, show the appropriate tooltip such as:
+
+"Click to see"
+
+The health indicator should be clickable/openable.
+
+The popover must explain WHY the Application has the current health.
+
+Use the existing ClusterStatusPopover/UI patterns as reference.
+
+DO NOT modify ClusterStatusPopover.
+
+Create an Applications-local popover/component if needed.
+
+The popover should show useful information available from already-fetched data, such as:
+
+- Application health
+- resource kind
+- resource name
+- namespace
+- reason
+- desired vs ready
+- Pod readiness/phase
+- container failure reason
+- Job succeeded/failed/active
+- PVC phase
+- relevant Kubernetes condition/reason/message
+- RBAC/API error explanation where applicable
+
+Do NOT make unnecessary per-resource API calls.
+
+Use already-fetched Application data wherever possible.
+
+========================================================
+PART 6 — DO NOT CHANGE UNRELATED UI
+========================================================
+
+Only modify the Applications Health-related UI.
+
+Do NOT modify:
+
+- Cluster tab behavior
+- other tabs
+- other health indicators
+- graph behavior
+- shared resource tables
+- unrelated application functionality
+- unrelated navigation
+- unrelated styling/components
+
+========================================================
+PART 7 — TESTS
+========================================================
+
+Add/update focused tests for the new Applications-local behavior.
+
+At minimum cover:
+
+- Checking
+- No Resources
+- informational-only resources
+- Healthy Deployment
+- Degraded Deployment
+- failed Deployment condition where applicable
+- StatefulSet
+- DaemonSet
+- ReplicaSet
+- Pod Ready
+- Pod Not Ready
+- Pod Failed
+- CrashLoopBackOff/ImagePullBackOff
+- successful Job
+- failed Job
+- active Job
+- Bound PVC
+- Pending/Lost PVC
+- CronJob/Job relationship where supported
+- Deployment/ReplicaSet deduplication
+- standalone ReplicaSet
+- RBAC 403 → Unknown
+- relevant API error → Unknown
+- unsupported/missing optional kind does not falsely produce Unknown
+- loading → Checking
+- settled empty → No Resources
+- List/Details consistency
+- ResourcesTab consistency
+- popover explanation
+
+Do not modify shared tests just to accommodate this feature.
+
+========================================================
+PART 8 — IMPLEMENTATION SAFETY CHECK
+========================================================
+
+Before finishing, inspect the actual git diff.
+
+The following MUST remain unchanged:
+
+- getStatus
+- getPodStatus
+- getGraphNodeStatus
+- useKubeLists implementation/signature
+- useProjectItems implementation/signature
+- registerProjectApiResource
+- defaultApiResources
+- ClusterStatusPopover
+- ResourceMap / graph infrastructure
+- shared plugin APIs
+- shared fetching implementation
+
+If any of these were modified accidentally, revert those changes.
+
+Do NOT simply rename or move shared code to disguise a modification.
+
+The goal is genuinely to leave shared behavior untouched.
+
+========================================================
+PART 9 — VALIDATION
+========================================================
+
+After implementation, run the relevant:
+
+- unit tests
+- typecheck
+- lint
+- build, if practical
+
+Then inspect the final diff.
+
+Verify that the Application Health implementation is isolated.
+
+Verify that no unrelated files/functions changed.
+
+Do not claim a test passed unless you actually ran it.
+
+========================================================
+PART 10 — FINAL DECISION RULE
+========================================================
+
+IMPORTANT:
+
+Do NOT stop after the verification phase merely to tell me what you found.
+
+If the required behavior can be implemented within the Applications-local boundary:
+
+→ IMPLEMENT IT NOW IN THIS SAME RUN.
+
+Do not ask me for another confirmation.
+
+Only stop without implementation if there is a genuine blocker where achieving the required behavior would require modifying shared code.
+
+If there is such a blocker, report:
+
+1. exact shared file
+2. exact function
+3. why it is unavoidable
+4. what Applications-local alternatives were checked
+5. smallest possible solution
+
+DO NOT modify the shared code yourself.
+
+========================================================
+FINAL RESPONSE
+========================================================
+
+When finished, give me a concise report:
+
+1. FINAL VERIFICATION:
+   - what was already verified
+   - what was the only remaining uncertainty, if any
+   - how it was resolved
+
+2. IMPLEMENTED:
+   - exact files changed
+   - exact functionality implemented
+
+3. POD:
+   - exactly how Pods are fetched
+   - confirm shared fetching infrastructure was NOT modified
+
+4. HEALTH:
+   - exact meaning of Checking
+   - No Resources
+   - Healthy
+   - Degraded
+   - Unhealthy
+   - Unknown
+
+5. DEDUP:
+   - how ownerReferences prevent double-counting
+
+6. ERRORS:
+   - RBAC/API error behavior
+
+7. POPOVER:
+   - what it explains
+   - whether it uses existing fetched data
+
+8. VALIDATION:
+   - tests
+   - typecheck
+   - lint
+   - build
+
+9. SHARED CODE SAFETY:
+   Explicitly confirm that shared code was READ/REUSED where needed but NOT MODIFIED.
+
+10. REMAINING LIMITATIONS:
+   Only genuine limitations discovered during implementation.
+   Do not invent limitations.
+
+MOST IMPORTANT:
+This is the FINAL GATE.
+
+Do not restart the audit.
+Do not create another dependency-audit loop.
+Do not modify shared code.
+If the implementation is possible within scope, implement it now.
