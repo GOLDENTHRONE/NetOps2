@@ -1,0 +1,1118 @@
+I want you to perform a COMPLETE, EXHAUSTIVE DEPENDENCY + IMPACT AUDIT before we make ANY further code changes.
+
+IMPORTANT:
+- DO NOT IMPLEMENT ANYTHING.
+- DO NOT MODIFY ANY SOURCE FILE.
+- DO NOT REFACTOR.
+- DO NOT "FIX" anything you discover.
+- DO NOT change existing behavior.
+- DO NOT create commits.
+- DO NOT modify the live cluster.
+- This is an investigation/audit only.
+- You have access to the complete repository and a live Kubernetes/OpenShift cluster. Use both rigorously.
+- Do not stop after finding the obvious direct references. I want the dependency chain and runtime impact traced as far as reasonably possible in one complete audit.
+- I do NOT want to go through repeated audit loops. Make this audit comprehensive enough that, after reading your report, we can make the implementation decision.
+
+==================================================
+CONTEXT
+==================================================
+
+I have cloned Headlamp Kubernetes GUI and modified the Project/Application tab.
+
+The Project tab is now called Applications.
+
+There is an existing Health column in the Applications tab.
+
+The planned work is:
+
+1. Improve/modify the existing Application Health calculation if required.
+2. Add a tooltip such as "Click to see".
+3. Add a popover explaining WHY the Application has its current health.
+4. Potentially add Application-specific health/diagnostic logic.
+5. Potentially classify resources as:
+   - health-bearing
+   - supporting/connectivity evidence
+   - informational
+6. Potentially change how Application Health is calculated.
+
+STRICT SCOPE:
+
+We ARE allowed to change the Applications tab's Health functionality, including:
+- health calculation used by Applications
+- health status displayed by Applications
+- health-cell UI
+- tooltip
+- popover
+- diagnosis/reason generation
+- resource classification used specifically for Application Health
+- helpers specifically required for Application Health
+
+We ARE NOT allowed to unintentionally change behavior anywhere outside the Applications Health functionality.
+
+Therefore, before implementation, we need to know exactly which existing code is shared and what could be impacted.
+
+==================================================
+PRIMARY OBJECTIVE
+==================================================
+
+Determine, with evidence, exactly what code can safely be modified for the Applications Health feature and exactly what code MUST NOT be modified because it is shared or has external consumers.
+
+I want a dependency audit, not a superficial reference search.
+
+Trace:
+
+Applications Health UI
+    ↓
+Health calculation
+    ↓
+Health/status helpers
+    ↓
+Resource classification
+    ↓
+Data acquisition/hooks/API calls
+    ↓
+Shared utilities
+    ↓
+Types/interfaces
+    ↓
+Tests
+    ↓
+Other consumers
+    ↓
+Runtime behavior
+
+Also trace the reverse direction:
+
+For every existing function/helper/type we might modify:
+    Who calls it?
+    Who imports it?
+    Who indirectly depends on it?
+    Where is its result consumed?
+    Does changing its semantics affect anything outside Applications Health?
+
+==================================================
+PHASE 1 — ESTABLISH CURRENT WORKING TREE
+==================================================
+
+First inspect the repository state.
+
+Run/read:
+- git status
+- current branch
+- recent relevant commits
+- git diff
+- git diff --stat
+
+Determine:
+- Which changes already exist before this audit?
+- Which files are currently modified?
+- Which of those changes are related to Applications/Project Health?
+- Are there unrelated existing user changes?
+
+DO NOT revert or modify anything.
+
+Clearly separate:
+A. pre-existing user changes
+B. changes related to this requested feature
+C. unrelated changes
+
+Do not assume every current modification was made by this task.
+
+==================================================
+PHASE 2 — IDENTIFY THE COMPLETE APPLICATIONS HEALTH PATH
+==================================================
+
+Start from the actual Applications tab implementation.
+
+Locate:
+- Applications/Project tab component
+- Applications table
+- Health column
+- health cell renderer
+- current health status calculation
+- current health icon/status/chip
+- current tooltip/status UI
+- resource list used by Applications
+- hooks involved
+- utility functions involved
+- type definitions involved
+
+Do not rely on filenames alone.
+
+Read the actual code.
+
+Construct the complete execution/data flow.
+
+For example, determine the REAL flow in this repository, not an assumed one:
+
+resource fetching
+    ↓
+items/resources
+    ↓
+Applications transformation/grouping
+    ↓
+health calculation
+    ↓
+health cell
+    ↓
+rendered status
+
+Document the exact functions, files, imports, and data structures involved.
+
+==================================================
+PHASE 3 — AUDIT EVERY HEALTH-RELATED SYMBOL
+==================================================
+
+Identify EVERY function, hook, constant, type, enum, utility, component, and exported symbol involved in Applications Health.
+
+This includes, but is NOT limited to, things named like:
+
+- getStatus
+- getResourcesHealth
+- getHealthIcon
+- getHealth*
+- health*
+- status*
+- project health helpers
+- resource health helpers
+- resource classification helpers
+- useProjectItems
+- useProject*
+- defaultApiResources
+- resourceMap
+- project utilities
+- table helpers
+- status label helpers
+- icon helpers
+
+Do not assume these names exist or are complete.
+
+Discover the actual symbols from the codebase.
+
+For EACH relevant symbol, record:
+
+1. Symbol name
+2. File
+3. Exported or local
+4. Function/type/component/hook/etc.
+5. Direct callers
+6. Direct importers
+7. Re-exports
+8. Indirect consumers
+9. Tests using it
+10. Whether it is Applications-specific
+11. Whether it is shared
+12. Whether changing its IMPLEMENTATION could change external behavior
+13. Whether changing its RETURN VALUE could change external behavior
+14. Whether changing its TYPE/SIGNATURE could break external code
+15. Whether it is safe to modify
+16. Recommended action
+
+==================================================
+PHASE 4 — DO NOT STOP AT "FIND ALL REFERENCES"
+==================================================
+
+A simple textual reference search is NOT sufficient.
+
+For each potentially modified function, inspect:
+
+- direct imports
+- barrel exports
+- re-exports
+- aliases
+- wrapper functions
+- higher-order functions
+- callbacks
+- object properties containing the function
+- function passed as an argument
+- function stored in maps/registries
+- dynamic imports where applicable
+- component props
+- hook return values
+- destructuring
+- type-level dependencies
+- tests
+- mocks
+- fixtures
+- snapshots
+- generated code if applicable
+
+Search semantically as well as textually.
+
+If a function is exported from a utility file, determine whether that utility file is shared by unrelated features.
+
+If a helper appears Applications-specific by filename, verify that assumption through actual imports.
+
+==================================================
+PHASE 5 — TRANSITIVE DEPENDENCY ANALYSIS
+==================================================
+
+For every existing function we may want to change, trace at least:
+
+Function A
+    ↓
+all callers
+    ↓
+their consumers
+    ↓
+their UI/features
+    ↓
+their tests
+
+Do this transitively until you reach:
+- Applications Health only
+OR
+- another feature/component/page/shared subsystem.
+
+If you find another consumer, mark the symbol as SHARED.
+
+Example:
+
+getStatus()
+    ↓
+ProjectList.tsx
+    ↓
+Health column
+
+BUT ALSO:
+
+getStatus()
+    ↓
+OtherComponent.tsx
+    ↓
+Different UI
+
+Then getStatus() MUST be treated as SHARED.
+
+Do not recommend modifying it merely because Applications Health uses it.
+
+==================================================
+PHASE 6 — DETERMINE WHETHER WE NEED A NEW APPLICATION-SPECIFIC PATH
+==================================================
+
+For every shared function currently involved in health:
+
+Determine whether the Applications Health requirement can be implemented WITHOUT changing that shared function.
+
+Prefer:
+
+existing shared behavior
+        ↓
+UNCHANGED
+
+Applications-specific helper/evaluator
+        ↓
+new behavior
+        ↓
+Applications Health only
+
+over:
+
+changing shared helper
+        ↓
+potential behavior change everywhere
+
+However, do NOT automatically create new code either.
+
+Determine the safest architecture based on the actual repository.
+
+For each candidate shared function, explicitly state:
+
+OPTION A:
+Modify existing shared function.
+
+Risk:
+...
+
+Potential external impact:
+...
+
+OPTION B:
+Create Applications-specific helper/path.
+
+Risk:
+...
+
+Benefits:
+...
+
+Recommended:
+...
+
+==================================================
+PHASE 7 — CHECK CURRENT HEALTH SEMANTICS
+==================================================
+
+Read the existing implementation carefully.
+
+Determine exactly how Application Health is calculated TODAY.
+
+Do not infer.
+
+Document:
+- what resource kinds are considered
+- what statuses are possible
+- what conditions are checked
+- what constitutes success
+- what constitutes warning
+- what constitutes error
+- what constitutes unknown
+- what happens when data is missing
+- what happens when a resource is not applicable
+- what happens when a resource cannot be fetched
+- how multiple resources are combined
+- whether resources are weighted equally
+- whether parent/child resources are counted independently
+- whether there is deduplication
+- whether there are hard-coded statuses
+- whether some resources are currently forced to success
+- whether any resources are currently ignored
+
+Identify any places where the existing logic could create a false "Healthy" result because something was not evaluated.
+
+==================================================
+PHASE 8 — PARENT/CHILD RESOURCE DOUBLE-COUNTING AUDIT
+==================================================
+
+This is critical.
+
+Determine whether Applications Health currently evaluates related resources independently.
+
+Inspect relationships such as:
+
+Deployment
+    ↓
+ReplicaSet
+    ↓
+Pod
+
+StatefulSet
+    ↓
+Pod
+
+DaemonSet
+    ↓
+Pod
+
+Job
+    ↓
+Pod
+
+CronJob
+    ↓
+Job
+    ↓
+Pod
+
+Determine whether the same underlying failure can produce multiple independent health votes.
+
+Example:
+
+Deployment = unhealthy
+ReplicaSet = unhealthy
+Pod = unhealthy
+
+Could one actual workload failure become three votes?
+
+Determine exactly how the current code behaves.
+
+Do NOT fix it.
+
+Just report:
+- whether double/triple counting exists
+- where it happens
+- whether changing it would alter current health semantics
+- whether it is safe to address inside Applications Health
+
+==================================================
+PHASE 9 — RESOURCE CLASSIFICATION AUDIT
+==================================================
+
+Determine the actual resources currently available to the Applications tab.
+
+Do not rely only on documentation or assumptions.
+
+Inspect:
+- resource maps
+- API resource definitions
+- discovery
+- default resource lists
+- grouping logic
+- project/application resource collection
+- live cluster data
+
+Create a complete table:
+
+RESOURCE
+--------------------------------
+Kind
+Currently fetched?
+Currently displayed?
+Currently health-evaluated?
+Currently contributes to health?
+Current health semantics
+Potential category:
+  Health-bearing
+  Supporting
+  Informational
+  Unknown
+Used elsewhere?
+Safe to change?
+Notes
+
+At minimum investigate:
+
+Pod
+Deployment
+StatefulSet
+DaemonSet
+ReplicaSet
+Job
+CronJob
+PVC
+Service
+Endpoints
+EndpointSlice
+Ingress
+OpenShift Route
+HPA
+ConfigMap
+Secret
+Role
+RoleBinding
+RBAC-related resources
+NetworkPolicy
+ResourceQuota
+LimitRange
+
+Also discover any additional resource kinds actually used by this Applications implementation.
+
+Do not assume the list above is exhaustive.
+
+==================================================
+PHASE 10 — LIVE CLUSTER VERIFICATION
+==================================================
+
+You have access to a live Kubernetes/OpenShift cluster.
+
+USE IT READ-ONLY.
+
+Do NOT:
+- create resources
+- delete resources
+- patch resources
+- scale resources
+- restart workloads
+- change configuration
+- modify RBAC
+- modify networking
+- modify namespaces
+
+Only inspect/read.
+
+Determine:
+- Kubernetes/OpenShift version if available
+- namespaces/projects relevant to Applications
+- actual resource kinds present
+- actual relationships between workloads
+- actual status/conditions
+- actual Deployment/StatefulSet/DaemonSet/ReplicaSet/Pod relationships
+- actual Service/Endpoint/EndpointSlice relationships
+- actual Job/CronJob relationships
+- actual PVC states
+- OpenShift Routes if present
+- HPA if present
+
+Use the live cluster to verify that the assumptions in the current code match real cluster objects.
+
+Pay particular attention to:
+- ownerReferences
+- labels/selectors
+- desired vs ready replicas
+- Pod phases
+- Pod conditions
+- container waiting reasons
+- CrashLoopBackOff
+- restart counts
+- Job completion/failure
+- PVC phase
+- Service endpoints
+- EndpointSlice ready/not-ready addresses
+- Route/Ingress status
+- HPA state
+
+Again: READ ONLY.
+
+==================================================
+PHASE 11 — RUNTIME/UI TRACE
+==================================================
+
+Determine what actually happens when the Applications page renders.
+
+Trace:
+
+page load
+    ↓
+hooks/API
+    ↓
+resource data
+    ↓
+table data
+    ↓
+health calculation
+    ↓
+health cell render
+
+Determine:
+- Is health calculated once per Application?
+- Once per resource?
+- During render?
+- Through a hook?
+- Through memoization?
+- Through shared state?
+- Through Redux?
+- Through local state?
+- Is there already a per-row closure?
+- Could adding Popover state cause state leakage between rows?
+- Could one row's popover state affect another row?
+- Could health evaluation trigger additional API calls?
+- Could a new helper accidentally cause N+1 requests?
+- Is resource data already available?
+- Would the proposed change introduce new watchers or polling?
+- Would it affect refresh behavior?
+
+==================================================
+PHASE 12 — API/FETCHING IMPACT
+==================================================
+
+Audit all API/resource fetching involved in Applications Health.
+
+Determine:
+
+- what is already fetched
+- why it is fetched
+- whether health uses existing data
+- whether new data would need to be fetched
+- whether a new API call would be introduced
+- whether existing hooks are shared
+- whether changing a hook would affect other consumers
+- whether adding a new watcher could affect performance
+- whether the Applications page currently watches these resources
+- whether health can be calculated entirely from existing `items`
+
+If additional data is needed, determine the narrowest Applications-only way to obtain it.
+
+Do NOT implement.
+
+==================================================
+PHASE 13 — TYPESCRIPT / TYPE DEPENDENCY AUDIT
+==================================================
+
+For every function/type we might modify, inspect:
+
+- interfaces
+- type aliases
+- enums
+- discriminated unions
+- generic parameters
+- function signatures
+- return types
+- component props
+- hook return values
+
+Determine whether changing a return type or adding fields would break other consumers.
+
+Especially identify cases like:
+
+Current:
+getStatus(): Status
+
+Potential:
+getStatus(): Status + diagnosis
+
+Do NOT recommend changing a shared return type unless you have verified all consumers.
+
+Prefer an additive Applications-specific structure when necessary.
+
+==================================================
+PHASE 14 — TEST DEPENDENCY AUDIT
+==================================================
+
+Find ALL relevant tests.
+
+Identify:
+- unit tests
+- component tests
+- integration tests
+- snapshots
+- mocks
+- fixtures
+- test utilities
+
+Determine:
+- which tests cover current health behavior
+- which tests cover shared functions
+- which tests would fail if shared behavior changes
+- what tests currently protect unrelated functionality
+- what tests are missing for Applications Health
+
+Do NOT modify tests.
+
+Produce a proposed test matrix for the eventual implementation.
+
+==================================================
+PHASE 15 — BUILD / STATIC ANALYSIS IMPACT
+==================================================
+
+Inspect project configuration to determine:
+
+- TypeScript
+- ESLint
+- Prettier
+- Jest/Vitest/etc.
+- build tooling
+- linting
+- type checking
+- test commands
+
+Determine the appropriate validation commands for this repository.
+
+Do not make changes.
+
+If safe, run read-only validation commands against the CURRENT repository state.
+
+If current failures exist before our work, distinguish:
+- pre-existing failure
+- failure related to current changes
+
+Do not "fix" anything.
+
+==================================================
+PHASE 16 — SEARCH FOR INDIRECT COUPLING
+==================================================
+
+Search for less obvious coupling.
+
+Look for:
+- shared status enums
+- shared health labels
+- shared icons
+- shared resource utilities
+- project utility modules
+- barrel files
+- index exports
+- plugin interfaces
+- extension points
+- common table components
+- common resource status components
+- global state
+- Redux selectors/actions
+- context providers
+- shared hooks
+- shared API wrappers
+
+Determine whether changing Applications Health could affect:
+- other tabs
+- resource detail pages
+- dashboards
+- plugins
+- other project views
+- other tables
+- navigation
+- global status displays
+
+Again, do not change anything.
+
+==================================================
+PHASE 17 — CURRENT CODE VS PROPOSED REQUIREMENT
+==================================================
+
+Compare the current implementation against the desired feature.
+
+Desired feature:
+
+A user sees a Health status in the Applications tab.
+
+Hover:
+"Click to see"
+
+Click:
+Popover explaining why the status is:
+
+Healthy
+Degraded
+Unhealthy
+Unknown / No health signal
+
+The popover should distinguish:
+
+1. Health-bearing resources
+   → actually determine Application Health
+
+2. Supporting/connectivity resources
+   → useful evidence but do not independently vote
+
+3. Informational resources
+   → do not affect health
+
+The diagnosis should never claim that a resource is healthy merely because it exists if that resource has no actual health evaluation.
+
+"Not evaluated" MUST NOT silently become "Healthy".
+
+Determine whether the current architecture supports this safely.
+
+==================================================
+PHASE 18 — SECURITY / PERMISSION EDGE CASE
+==================================================
+
+Audit what happens if the UI cannot read one of the resources because of:
+
+- Forbidden
+- Unauthorized
+- API error
+- timeout
+- missing discovery permission
+- partial resource availability
+
+Determine whether current health logic can incorrectly interpret:
+"could not evaluate"
+as:
+"healthy"
+
+Determine how this should be represented inside Applications Health without affecting unrelated code.
+
+Do not implement.
+
+==================================================
+PHASE 19 — PERFORMANCE IMPACT
+==================================================
+
+Estimate the impact of the proposed Applications Health work.
+
+Audit:
+- number of resources per Application
+- number of Applications
+- current API calls
+- current watchers
+- current renders
+- repeated health calculations
+- expensive loops
+- repeated filtering
+- repeated owner-reference traversal
+
+Determine whether a naive implementation could introduce:
+
+- N+1 API calls
+- excessive renders
+- repeated computation
+- unnecessary watchers
+- memory leaks
+- popover state leaks
+- stale health information
+
+The eventual implementation must reuse already available Application resource data wherever possible.
+
+==================================================
+PHASE 20 — EXACT FILE-LEVEL IMPACT
+==================================================
+
+Now produce an exact list of files.
+
+For every file, classify:
+
+A. MUST CHANGE
+B. MAY CHANGE
+C. MUST NOT CHANGE
+D. READ ONLY / REFERENCE ONLY
+
+For every A/B file explain:
+- exact symbol
+- exact reason
+- why it is inside Applications Health scope
+- whether it is shared
+- risk level
+
+For every C file explain why changing it could affect unrelated functionality.
+
+Do not simply say "probably shared".
+
+Provide evidence.
+
+==================================================
+PHASE 21 — SAFE ARCHITECTURE RECOMMENDATION
+==================================================
+
+Based on the entire audit, recommend the safest implementation architecture.
+
+The recommendation must answer:
+
+1. Should existing health methods be modified?
+2. If yes, which exact ones and why?
+3. If no, which new Applications-specific helper/evaluator should be introduced?
+4. Where should diagnosis data be generated?
+5. Should health calculation and health explanation share the same evaluation result?
+6. How should resource classification work?
+7. How should parent/child workloads be handled?
+8. How should unknown/unavailable data work?
+9. How should popover state be isolated per row?
+10. How can we guarantee no unintended behavior outside Applications Health?
+
+Prefer minimal, surgical changes.
+
+==================================================
+PHASE 22 — RISK MATRIX
+==================================================
+
+Produce a risk matrix like:
+
+| Symbol/File | Shared? | External Consumers | Risk | Can Modify? | Recommended Action |
+|-------------|---------|--------------------|------|-------------|--------------------|
+
+Risk must be:
+
+LOW
+MEDIUM
+HIGH
+CRITICAL
+
+Explain every HIGH/CRITICAL risk.
+
+==================================================
+PHASE 23 — FINAL DEPENDENCY GRAPH
+==================================================
+
+Produce a final dependency graph showing:
+
+Applications Health Cell
+        ↓
+        ↓
+        ↓
+
+and every important dependency beneath it.
+
+Also show branches that leave Applications Health and enter other functionality.
+
+Example format:
+
+Applications Health
+    |
+    +--> Function A
+    |      |
+    |      +--> Applications only       [SAFE]
+    |
+    +--> Function B
+           |
+           +--> Applications             [SAFE]
+           |
+           +--> Other Component          [SHARED - DO NOT CHANGE]
+
+Make this based on the ACTUAL repository.
+
+==================================================
+PHASE 24 — FINAL "DO NOT TOUCH" BOUNDARY
+==================================================
+
+Give me an explicit boundary:
+
+SAFE TO CHANGE:
+- ...
+- ...
+- ...
+
+SAFE ONLY IF ADDITIVE:
+- ...
+- ...
+
+DO NOT CHANGE:
+- ...
+- ...
+- ...
+
+OUTSIDE SCOPE:
+- ...
+- ...
+- ...
+
+This must be based on evidence from the repository, not assumptions.
+
+==================================================
+PHASE 25 — FINAL IMPLEMENTATION PLAN
+==================================================
+
+ONLY AFTER ALL AUDITING IS COMPLETE, provide a proposed implementation plan.
+
+The plan must include:
+
+1. Exact files
+2. Exact functions
+3. New functions if required
+4. Existing functions that must remain unchanged
+5. Data flow
+6. Health calculation flow
+7. Diagnosis flow
+8. Tooltip/popover flow
+9. Resource classification
+10. Parent/child deduplication
+11. Error/permission handling
+12. Performance considerations
+13. Tests to add/change
+14. Validation commands
+15. Expected git diff scope
+
+DO NOT IMPLEMENT THIS PLAN.
+
+==================================================
+MANDATORY FINAL REPORT FORMAT
+==================================================
+
+Return ONE comprehensive report with these sections:
+
+# 1. Executive Summary
+
+Give me the conclusion in plain language.
+
+Answer:
+"Can we safely modify the existing health code, or do we need an Applications-specific path?"
+
+# 2. Current Applications Health Architecture
+
+Actual code flow.
+
+# 3. Complete Symbol Inventory
+
+Table of all relevant symbols.
+
+# 4. Direct Dependency Audit
+
+All callers/importers.
+
+# 5. Transitive Dependency Audit
+
+Where dependencies eventually lead.
+
+# 6. Shared vs Applications-Only Classification
+
+Clearly identify shared code.
+
+# 7. Current Health Calculation
+
+Exactly how it works today.
+
+# 8. Resource Classification
+
+Complete resource matrix.
+
+# 9. Parent/Child and Double-Counting Analysis
+
+Actual findings.
+
+# 10. Live Cluster Verification
+
+What the real cluster confirms or contradicts.
+
+# 11. API/Hook/Data-Fetching Impact
+
+Actual findings.
+
+# 12. Runtime/UI Impact
+
+Actual rendering/data flow.
+
+# 13. Type/Test/Build Impact
+
+Actual findings.
+
+# 14. Performance Risks
+
+Actual findings.
+
+# 15. Edge Cases
+
+Especially:
+- no resources
+- no health-bearing resources
+- unavailable resources
+- RBAC Forbidden
+- API failures
+- pending pods
+- failed pods
+- CrashLoopBackOff
+- partial replicas
+- Jobs
+- PVCs
+- parent/child resources
+
+# 16. Risk Matrix
+
+Complete table.
+
+# 17. Exact Files To Touch
+
+MUST CHANGE / MAY CHANGE / MUST NOT CHANGE.
+
+# 18. Final Dependency Graph
+
+Actual repository graph.
+
+# 19. Safe Architecture Recommendation
+
+The recommended implementation approach.
+
+# 20. Final Scope Lock
+
+A precise statement of what the implementation may and may not touch.
+
+# 21. Proposed Test Matrix
+
+Tests required before considering the feature complete.
+
+# 22. Validation Plan
+
+Commands/checks to run after implementation.
+
+# 23. Remaining Unknowns
+
+There should be as few as possible.
+
+For every remaining unknown, explain exactly why it cannot be determined from the repository/live cluster.
+
+==================================================
+ABSOLUTE RULES
+==================================================
+
+1. DO NOT MODIFY CODE.
+2. DO NOT MODIFY TESTS.
+3. DO NOT MODIFY CONFIGURATION.
+4. DO NOT MODIFY THE LIVE CLUSTER.
+5. DO NOT COMMIT.
+6. DO NOT REFACTOR.
+7. DO NOT "CLEAN UP" unrelated code.
+8. DO NOT fix issues discovered during the audit.
+9. DO NOT assume a function is Applications-specific based on its filename.
+10. DO NOT assume Find All References is sufficient.
+11. Trace dependencies transitively.
+12. Inspect actual imports and consumers.
+13. Inspect tests and runtime paths.
+14. Verify assumptions against the live cluster using READ-ONLY operations.
+15. Separate pre-existing working-tree changes from findings.
+16. If a shared function must change to implement the feature, explicitly prove why an Applications-specific alternative is not safer.
+17. Prefer additive/local changes over modifying shared behavior.
+18. Do not recommend changing a shared return type without auditing every consumer.
+19. "Not evaluated" must never be silently classified as "Healthy".
+20. Do not declare something safe merely because current search results show one caller.
+21. If dynamic/runtime coupling cannot be statically proven, identify and investigate it.
+22. Do not stop at the first plausible architecture.
+23. Compare at least the safest viable alternatives and explain the trade-offs.
+24. The final report must be self-contained. I should NOT need to ask you to perform another dependency-audit loop to discover basic dependencies you could have checked now.
+
+MOST IMPORTANT:
+
+I want the answer to this question with evidence:
+
+"If we change the existing health calculation/helper used by the Applications tab, exactly what else in Headlamp could change?"
+
+And then:
+
+"If changing that shared code is unsafe, exactly how can we implement the new Applications Health behavior without changing anything outside the Applications Health scope?"
+
+Do the complete audit first. Do not implement anything.
