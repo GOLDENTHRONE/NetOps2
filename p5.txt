@@ -1,99 +1,305 @@
-Before making ANY code changes, inspect the current Headlamp repository and verify the actual data flow for Application Health / Project Health.
+We are investigating a potential blocker in the Applications tab around Namespace discovery failure.
 
-I do NOT want a proposed implementation yet. I want a factual verification based on the current code.
+IMPORTANT:
+Do NOT modify any code yet.
+Do NOT create a PR.
+Do NOT implement a solution.
+This task is ONLY to inspect, trace, and verify the existing implementation from the actual repository code.
 
-Please trace the complete runtime flow and answer these questions with exact file names, functions/hooks, and relevant code references:
+CONTEXT
 
-1. APPLICATION SCOPE
-- How does a Project/Application determine which clusters and namespaces belong to it?
-- Is namespace information already available/configured before resource fetching starts?
-- Can an application/project exist with a known namespace but without successful cluster-wide namespace discovery?
-- Are namespaces fetched dynamically, or are they already part of the application/project configuration?
+The current Applications/Projects flow appears to be:
 
-2. NAMESPACE AVAILABILITY
-- Find the exact code responsible for namespace discovery/listing.
-- What happens if namespace discovery succeeds?
-- What happens if namespace discovery fails?
-- Is a namespace object still available from another source/configuration when namespace listing fails?
-- Is there already any cached, persisted, configured, or last-known namespace information?
-- Do NOT assume it exists — verify from code.
+Cluster configuration
+  → Namespace discovery
+  → discoverProjectsFromNamespaces()
+  → ProjectDefinition
+  → useProjectResources()
+  → resource queries
+  → evaluateApplicationHealth()
+  → Applications/ProjectList UI
 
-3. RESOURCE API AVAILABILITY
-For the resources currently used by Application Health, verify for each:
-- Pods
-- Deployments
-- StatefulSets
-- DaemonSets
-- Jobs
-- PVCs
-- any supporting resources
+We need to determine exactly what happens when a cluster is reachable but Namespace discovery fails, for example because the user does not have permission to list namespaces (403), or because the namespace API returns another error.
 
-For each resource type:
-- Where is it fetched?
-- Is the request namespace-scoped or cluster-scoped?
-- What does the hook return on loading?
-- What does it return on success?
-- What does it return on error?
-- Can we distinguish "zero resources" from "API request failed"?
-- Is truncation/limit information available?
-- Is the cluster identity available with the observation?
+The previous investigation suggests that:
 
-4. RBAC / PERMISSION SCENARIOS
-Verify what happens if:
-- the user can access a configured namespace but cannot list all namespaces;
-- the namespace exists but resource listing is forbidden;
-- namespace discovery is forbidden;
-- a resource API returns an error;
-- the resource list returns zero items.
+- Applications are dynamically derived from successful Namespace discovery.
+- A failed Namespace list produces no namespace objects.
+- No ProjectDefinition/Application row is created for a namespace that is known only to exist on the failed cluster.
+- Health-resource queries therefore do not start for that missing Application.
+- Existing allowedNamespaces/localStorage data is not currently a general authoritative Application inventory.
+- A cluster-level "Namespace inventory unavailable" state may therefore be more semantically correct than fabricating an Application row.
 
-Do not infer. Trace the actual Headlamp/Kubernetes client behavior in this repository.
+I want you to independently verify all of this against the actual current repository code.
 
-5. CURRENT APPLICATION HEALTH IMPLEMENTATION
-Trace:
-Application/Project
-→ project resources hook
-→ resource observations
-→ health evaluator
-→ UI row
+==================================================
+1. TRACE NAMESPACE DISCOVERY END-TO-END
+==================================================
 
-Identify exactly where the current implementation gets:
-- cluster
-- namespace
-- resource kind
-- loading
-- success
-- error
-- truncated
-- resource status
+Find the exact implementation of:
 
-6. THE CURRENT P0 BLOCKER
-The current note says:
+- useProjects()
+- Namespace.useList()
+- discoverProjectsFromNamespaces()
+- ProjectDefinition
+- ProjectList / Applications tab
 
-"Namespace discovery failure for a cluster-only application still cannot render an Unknown row, because current application rows are created only from successfully fetched Namespace data."
-
-Verify whether this statement is actually true in the current code.
+Document the exact data flow.
 
 Specifically answer:
-A. Can a cluster-only application have enough authoritative information to render an Unknown row even when namespace discovery fails?
-B. If yes, where does that information come from?
-C. If no, what information is genuinely missing?
-D. Is a last-known/persisted namespace inventory actually necessary?
-E. Would a cluster-level Unknown row be semantically correct?
-F. Or is there a simpler solution using information that already exists in the application/project configuration?
 
-7. IMPORTANT
-Do NOT change any files.
-Do NOT implement a solution.
-Do NOT invent APIs or behavior.
+1. Where does the namespace list come from?
+2. What happens when Namespace.useList() succeeds?
+3. What happens when it returns an error?
+4. Does the returned object contain:
+   - items/namespaces
+   - error
+   - errors
+   - isError
+   - isLoading
+   - clusterResults
+   - any cached/previous result?
+5. Does useProjects() currently consume the namespace-query error state?
+6. Does useProjects() have any fallback namespace source?
+7. Can an Application/ProjectDefinition be constructed without a namespace?
+8. Can an Application/ProjectDefinition be constructed using only cluster identity?
+9. Is there any existing persisted Application inventory?
 
-At the end provide:
+Give exact file paths and relevant function/line references.
 
-- VERIFIED FACTS
-- CURRENT DATA FLOW
-- WHAT IS AVAILABLE WHEN NAMESPACE DISCOVERY FAILS
-- WHAT IS NOT AVAILABLE
-- WHETHER THE CURRENT P0 BLOCKER IS REAL
-- MINIMUM CHANGE NEEDED (only conceptually, no code)
-- Any assumptions that still need to be validated manually
+==================================================
+2. VERIFY THE "NAMESPACE IS ALWAYS AVAILABLE" ASSUMPTION
+==================================================
 
-Include exact file paths and function/hook names for every important conclusion.
+Do NOT assume Namespace is always available.
+
+Check the actual Kubernetes/API behavior and this application's implementation.
+
+Determine whether all of these are possible:
+
+A. Cluster reachable + namespace list succeeds
+B. Cluster reachable + namespace list returns 403
+C. Cluster reachable + namespace list returns 401
+D. Cluster reachable + namespace list returns 5xx
+E. Cluster reachable + namespace list returns another API error
+F. User can access a known namespace but cannot list all namespaces
+
+For each case, explain what the current Applications tab does.
+
+Especially verify whether:
+
+"cluster reachable" implies "namespace list available"
+
+or whether these are independent permissions/API operations.
+
+==================================================
+3. TRACE RESOURCE API / HEALTH DATA
+==================================================
+
+Inspect:
+
+- useProjectResources()
+- useKubeLists()
+- useKubeObjectList()
+- makeListRequests()
+- evaluateApplicationHealth()
+- ProjectList.tsx
+- ApplicationStatusPopover.tsx
+
+Verify exactly how resources are requested.
+
+For every relevant health-bearing resource, determine whether the request requires:
+
+cluster + namespace + resource kind
+
+or whether any resource can be queried without a namespace.
+
+Check at least:
+
+- Pod
+- Deployment
+- StatefulSet
+- DaemonSet
+- Job
+- PersistentVolumeClaim
+
+Also identify supporting/non-voting resources and whether they affect the final health verdict.
+
+Verify what happens when:
+
+- the resource list succeeds with zero items
+- the resource list returns an error
+- the resource list is forbidden
+- the resource list is truncated
+
+Important:
+Do not infer behavior from types or names. Trace the actual implementation.
+
+==================================================
+4. VERIFY RBAC / ALLOWED NAMESPACE BEHAVIOR
+==================================================
+
+Inspect the implementation around:
+
+- getAllowedNamespaces()
+- hasAllowedNamespacesRestriction()
+- allowedNamespaces
+- allowedNamespacesSelector
+- localStorage selector-derived namespace cache
+
+Determine:
+
+1. Can a user have access to a configured/known namespace without permission to list all namespaces?
+2. If yes, can the current Applications tab discover that namespace?
+3. Is allowedNamespaces an authoritative Application inventory?
+4. Is the localStorage selector cache an authoritative Application inventory?
+5. Does useProjects() consume either of these as a fallback when namespace discovery fails?
+6. If not, explicitly confirm that.
+
+==================================================
+5. CHECK FOR EXISTING ERROR / EMPTY / AVAILABILITY PATTERNS
+==================================================
+
+This is very important.
+
+Before proposing any new UI or state model, search the repository for existing patterns that handle:
+
+- cluster-level errors
+- API unavailable
+- forbidden/403
+- namespace discovery failure
+- resource discovery failure
+- empty states
+- unavailable inventory
+- partial cluster failure
+- React Query errors
+- resource-level error indicators
+
+Find whether the Applications tab or another Headlamp area already has a reusable component/pattern for this.
+
+We want to REUSE existing architecture wherever possible.
+
+Identify:
+
+- exact component/function
+- file path
+- how it receives error state
+- how it is rendered
+- whether it supports cluster-specific messages
+
+==================================================
+6. DETERMINE WHETHER A CLUSTER-LEVEL UNKNOWN STATE IS CORRECT
+==================================================
+
+Analyze this scenario:
+
+Cluster = reachable
+Namespace inventory = unavailable
+Application identity = unknown
+
+Would it be semantically correct to show:
+
+"Application X — Unknown"
+
+?
+
+Or is the correct representation:
+
+"Cluster X — Namespace inventory unavailable"
+
+?
+
+Explain based strictly on the current data model.
+
+Do NOT invent an Application ID if there is no authoritative namespace/application mapping.
+
+==================================================
+7. CHECK WHETHER LAST-KNOWN NAMESPACE INVENTORY EXISTS
+==================================================
+
+Search the repository thoroughly for any existing mechanism that stores:
+
+- last-known namespace names
+- namespace inventory
+- cluster → namespace mapping
+- Application → cluster mapping
+- persisted ProjectDefinition/Application data
+- cache timestamps
+- stale namespace data
+- server-provided Application inventory
+
+Check React Query cache, localStorage, Redux/state, config, APIs, and any persistence layer.
+
+If something exists, explain exactly what it contains and whether it is authoritative enough to create Application rows after namespace discovery fails.
+
+If nothing exists, explicitly state:
+
+"Current Applications flow has no authoritative persisted namespace/Application inventory fallback."
+
+==================================================
+8. PROPOSE THE SMALLEST SAFE SOLUTION — BUT DO NOT IMPLEMENT IT
+==================================================
+
+After all verification, compare these possible approaches:
+
+OPTION A:
+Show a cluster-level "Namespace inventory unavailable" state.
+
+OPTION B:
+Use configured allowedNamespaces as a fallback.
+
+OPTION C:
+Use selector-derived localStorage cache as a fallback.
+
+OPTION D:
+Persist last-known namespace inventory and show stale Applications.
+
+OPTION E:
+Some existing repository mechanism that we have not considered.
+
+For each option explain:
+
+- correctness
+- architectural complexity
+- risk of showing false/stale Applications
+- compatibility with RBAC
+- effect on Application health
+- amount of code change
+- testing requirements
+
+Then recommend ONE option for the current requirement.
+
+==================================================
+9. DO NOT IMPLEMENT YET
+==================================================
+
+Your final response must contain ONLY analysis and recommendation.
+
+Do not edit files.
+Do not generate a patch.
+Do not write implementation code.
+
+I want a final report structured exactly like this:
+
+1. VERIFIED CURRENT DATA FLOW
+2. NAMESPACE DISCOVERY FAILURE BEHAVIOR
+3. RESOURCE API / HEALTH FLOW
+4. RBAC / PERMISSION FINDINGS
+5. EXISTING ERROR/AVAILABILITY PATTERNS
+6. PERSISTED/LAST-KNOWN INVENTORY CHECK
+7. WHAT IS ACTUALLY MISSING
+8. OPTIONS A–E COMPARISON
+9. RECOMMENDED MINIMUM CHANGE
+10. EXACT FILES/FUNCTIONS THAT WOULD NEED TO CHANGE
+11. TEST CASES REQUIRED
+12. CONFIDENCE / REMAINING UNKNOWNS
+
+For every important conclusion, cite the exact repository file and line/function that proves it.
+
+Most importantly:
+
+DO NOT tell me that something is "probably" true.
+If the repository does not prove it, explicitly say:
+"Not verified from current source."
+
+The goal of this task is to establish the facts first. Only after this report will we decide whether and how to implement the fix.
