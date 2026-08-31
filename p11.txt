@@ -1,0 +1,762 @@
+I want you to perform ONE COMPLETE, CRITICAL, AUDIT-ONLY investigation of the Applications Health feature.
+
+IMPORTANT:
+- DO NOT MODIFY ANY FILE.
+- DO NOT IMPLEMENT ANY FIX.
+- DO NOT refactor.
+- DO NOT change signatures.
+- DO NOT create files.
+- DO NOT "fix" anything you discover.
+- DO NOT stop after finding the first issue.
+- DO NOT keep looping into implementation suggestions.
+- Do not assume that the previous audit is correct.
+- Verify everything against the ACTUAL CURRENT CODE and the LIVE CLUSTER available to you.
+- The purpose of this pass is to establish the FINAL, VERIFIED specification for health calculation before we implement anything.
+- If something is uncertain, prove it from code/cluster or explicitly mark it UNKNOWN.
+- Do not manufacture cluster evidence.
+
+I have already done a dependency audit and have an earlier audit report. Treat that report as a hypothesis, NOT as truth. Re-verify the important conclusions below.
+
+==================================================
+GOAL
+==================================================
+
+Before we touch the implementation, I need to know EXACTLY:
+
+1. What Kubernetes resource kinds currently exist in the Application health system?
+2. Which kinds are registered in code?
+3. Which kinds are actually fetched from the cluster?
+4. Which kinds are actually displayed in Application UI?
+5. Which kinds can genuinely provide an APPLICATION HEALTH signal?
+6. Which are only SUPPORTING resources?
+7. Which are purely INFORMATIONAL?
+8. Which health-bearing resources are currently missing from the fetch path?
+9. What exact fields/conditions/status values determine health for each health-bearing kind?
+10. What should make an Application HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN, NO RESOURCES, or CHECKING?
+11. How should RBAC/API/fetch errors affect the result?
+12. How should parent/child resources be handled so the same workload is not counted twice?
+13. What exact data is already available for a future popover?
+14. Whether any new API/fetching is actually necessary.
+15. Which existing shared code MUST NOT be touched.
+
+Do not implement any of this yet.
+
+==================================================
+PART 1 — RECONSTRUCT THE CURRENT RENDER/FETCH/STATUS PATH
+==================================================
+
+Trace the complete current path from:
+
+Application list page
+    -> Health cell
+    -> hook
+    -> resource fetching
+    -> status calculation
+    -> StatusLabel/icon
+
+Also trace:
+
+Application details/overview page
+    -> health display
+    -> fetching
+    -> status calculation
+
+Also trace:
+
+Application Resources tab
+    -> resource rows
+    -> resource health/status
+    -> fetching
+
+For each path, give exact file + line references.
+
+I need to know whether these three surfaces currently use the same health logic or different logic.
+
+Explicitly identify:
+- useProjectItems
+- useProjectResources
+- useKubeLists
+- getResourcesHealth
+- getHealthIcon
+- getStatus
+- getPodStatus
+- StatusLabel
+- any other function involved in determining the displayed Application health.
+
+DO NOT modify anything.
+
+==================================================
+PART 2 — COMPLETE RESOURCE INVENTORY
+==================================================
+
+Build ONE reconciled inventory of ALL resource kinds relevant to Application health.
+
+Do NOT only inspect defaultApiResources.
+
+Search the actual code paths that determine:
+- default resources
+- plugin-added resources
+- ResourceClasses
+- registered Application API resources
+- resources fetched by useProjectItems/useProjectResources
+- resources displayed in ProjectResourcesTab
+- resources considered by health calculation
+
+For EVERY kind, produce:
+
+Kind:
+Registered in Application resource list: YES/NO
+Actually fetched: YES/NO
+Actually displayed: YES/NO
+Health-bearing: YES/NO/UNCERTAIN
+Supporting: YES/NO/UNCERTAIN
+Informational: YES/NO
+Current health evaluation: exact behavior
+Important status fields:
+Missing from current fetch path: YES/NO
+Evidence: exact file + line
+
+At minimum explicitly verify:
+
+- Deployment
+- StatefulSet
+- DaemonSet
+- ReplicaSet
+- Pod
+- Job
+- CronJob
+- PersistentVolumeClaim
+- Service
+- Endpoints
+- EndpointSlice
+- Ingress
+- NetworkPolicy
+- HorizontalPodAutoscaler
+- ConfigMap
+- Secret
+- Role
+- RoleBinding
+- ResourceQuota
+- LimitRange
+
+Also identify any OTHER kinds currently registered/fetched through plugins or Application API registration.
+
+Do NOT assume the above list is complete.
+
+==================================================
+PART 3 — LIVE CLUSTER CROSS-CHECK
+==================================================
+
+Use the available live cluster.
+
+For the Applications currently visible in the live cluster, verify what resources actually exist.
+
+For representative Applications, inspect:
+
+- Deployments
+- StatefulSets
+- DaemonSets
+- ReplicaSets
+- Pods
+- Jobs
+- CronJobs
+- PVCs
+- Services
+- Endpoints/EndpointSlices
+- HPAs
+- Ingress
+- any plugin-provided Application resources
+
+I specifically want to know:
+
+A. Are Pods actually present for these Applications?
+B. Are Pods currently invisible to the Application health fetch?
+C. Are ReplicaSets present?
+D. Are Jobs/PVCs present?
+E. Are there examples of:
+   - Running Pod
+   - Pending Pod
+   - Failed Pod
+   - CrashLoopBackOff
+   - ImagePullBackOff
+   - Deployment with ready < desired
+   - Deployment progressing
+   - Failed Job
+   - Lost/Pending PVC
+   - HPA condition problems
+   - missing Service endpoints
+F. Are there RBAC permission errors for any of these resources?
+
+Use actual cluster evidence.
+
+Do NOT create or alter resources to manufacture unhealthy examples.
+
+If no unhealthy example exists in the current cluster, explicitly say so. Do not infer one.
+
+==================================================
+PART 4 — CLASSIFICATION MUST BE PROVEN
+==================================================
+
+Now critically evaluate the classification.
+
+The categories are:
+
+1. HEALTH-BEARING
+2. SUPPORTING
+3. INFORMATIONAL
+
+Do NOT classify something as health-bearing merely because it has a "status" field.
+
+For each candidate, answer:
+
+"What does this resource actually tell us about whether the APPLICATION is healthy?"
+
+For example:
+
+Deployment:
+Does replica readiness directly represent workload health?
+
+Pod:
+Does phase/Ready/container waiting reason directly represent workload health?
+
+Job:
+Does Complete/Failed/Active represent a health state?
+
+PVC:
+Does Bound/Pending/Lost represent application health or infrastructure state?
+
+Service:
+Does existence alone represent health?
+Would endpoint availability be a supporting signal?
+
+Endpoint/EndpointSlice:
+Does zero ready endpoints necessarily mean the Application is unhealthy?
+Could it be intentional?
+
+HPA:
+Do AbleToScale/ScalingActive conditions indicate application health or merely scaling capability?
+
+CronJob:
+Is the schedule itself health?
+Should the last Job be evaluated instead?
+
+ConfigMap/Secret:
+Do they have meaningful health semantics?
+
+Ingress:
+Is configuration/status health or informational?
+
+NetworkPolicy:
+Does it have application health semantics?
+
+ResourceQuota/LimitRange:
+Should quota usage affect application health?
+
+ReplicaSet:
+Is it independently health-bearing?
+Or is it normally a child of Deployment and therefore dangerous to count separately?
+
+Be critical. If a category is uncertain, explain why and what evidence would be required.
+
+==================================================
+PART 5 — EXACT HEALTH SIGNALS
+==================================================
+
+For EVERY resource that you conclude is HEALTH-BEARING, identify the exact Kubernetes fields used to determine:
+
+HEALTHY
+DEGRADED
+UNHEALTHY
+UNKNOWN
+
+Do not use vague statements like "check replicas".
+
+Give the actual fields and conditions.
+
+Example format:
+
+Deployment
+- desired:
+- ready:
+- available:
+- updated:
+- relevant conditions:
+- Healthy when:
+- Degraded when:
+- Unhealthy when:
+- Unknown when:
+- Current code behavior:
+- Gap:
+
+Do this separately for:
+
+Deployment
+StatefulSet
+DaemonSet
+Pod
+Job
+PVC
+ReplicaSet (only if you conclude it should be evaluated)
+
+Also verify whether Kubernetes has edge cases that our simplistic rules would mishandle.
+
+==================================================
+PART 6 — CURRENT getStatus() BUG AUDIT
+==================================================
+
+Audit getStatus() very carefully.
+
+I already suspect the current behavior silently returns "success" for resources that are not actually health-evaluated.
+
+Prove or disprove this.
+
+Specifically verify:
+
+- What happens for Deployment?
+- StatefulSet?
+- DaemonSet?
+- ReplicaSet?
+- Pod?
+- Job?
+- PVC?
+- CronJob?
+- Service?
+- Endpoint/EndpointSlice?
+- Ingress?
+- NetworkPolicy?
+- HPA?
+- ConfigMap?
+- Secret?
+- Role?
+- RoleBinding?
+- ResourceQuota?
+- LimitRange?
+- unknown/custom kind?
+
+Find every default/fallback branch.
+
+Tell me whether an unevaluated resource can currently appear as HEALTHY because of a default "success".
+
+If yes, explain precisely why that is dangerous.
+
+DO NOT modify getStatus().
+
+==================================================
+PART 7 — RBAC / FETCH ERROR SEMANTICS
+==================================================
+
+This is critical.
+
+Verify how fetch errors are represented by:
+
+useKubeLists
+useProjectItems
+useProjectResources
+and any lower-level fetch mechanism.
+
+Determine the difference between:
+
+1. Data is still loading.
+2. Fetch completed successfully with zero resources.
+3. Fetch completed successfully with resources.
+4. Fetch failed because of RBAC/403.
+5. Fetch failed because of another API error.
+6. Resource kind is unsupported.
+7. Resource exists but status information is missing.
+8. A resource was intentionally excluded from health calculation.
+
+For each case, determine the correct semantic state:
+
+CHECKING
+NO RESOURCES
+HEALTHY
+DEGRADED
+UNHEALTHY
+UNKNOWN
+INFORMATIONAL
+
+Especially verify:
+
+403/RBAC must NOT become Healthy.
+
+API/fetch errors must NOT become Healthy.
+
+Missing status on a health-bearing resource must NOT silently become Healthy.
+
+Also determine whether existing `errors` and `isLoading` data are already available to the Application health layer.
+
+==================================================
+PART 8 — CHECKING VS NO RESOURCES
+==================================================
+
+Audit the current loading behavior.
+
+Verify whether the current Health cell can distinguish:
+
+isLoading === true
+
+from:
+
+fetch completed + items.length === 0
+
+I suspect the Health cell currently destructures only `items` and therefore may display "No Resources" while the request is still loading.
+
+Prove this from the actual code.
+
+Then establish the correct semantics:
+
+CHECKING:
+fetch still pending.
+
+NO RESOURCES:
+all relevant Application resource fetches completed successfully and zero resources exist.
+
+Do NOT implement the fix yet.
+
+==================================================
+PART 9 — PARENT/CHILD DUPLICATION
+==================================================
+
+This must be verified against actual Kubernetes metadata.
+
+Inspect ownerReferences.
+
+At minimum verify:
+
+Deployment -> ReplicaSet -> Pod
+
+StatefulSet -> Pod
+
+DaemonSet -> Pod
+
+Job -> Pod
+
+CronJob -> Job -> Pod
+
+Determine which resources are fetched today and which are not.
+
+Then determine:
+
+- Which are independent health signals?
+- Which are children of another health-bearing resource?
+- Which would double-count the same workload?
+- How should ownerReferences.uid be used to deduplicate?
+- What happens if ownerReference is absent?
+- What happens with standalone ReplicaSets?
+- What happens with standalone Pods?
+- What happens with Jobs created by CronJobs?
+
+This must result in a clear rule, NOT an implementation.
+
+==================================================
+PART 10 — APPLICATION-LEVEL AGGREGATION
+==================================================
+
+Based ONLY on the verified evidence above, propose the final aggregation model.
+
+Verify whether this precedence is correct:
+
+CHECKING
+    -> short-circuit while data is pending
+
+then:
+
+UNHEALTHY
+    >
+DEGRADED
+    >
+UNKNOWN
+    >
+HEALTHY
+    >
+NO RESOURCES
+
+But do not blindly accept it.
+
+Critically evaluate whether NO RESOURCES should really be lower than HEALTHY, and whether UNKNOWN should outrank HEALTHY.
+
+Define exact conditions.
+
+For example:
+
+CHECKING =
+any required Application resource fetch is still loading.
+
+NO RESOURCES =
+all required fetches completed successfully AND zero resources exist.
+
+UNHEALTHY =
+at least one health-bearing resource is definitively failed.
+
+DEGRADED =
+at least one health-bearing resource is partially/not fully ready AND no UNHEALTHY exists.
+
+UNKNOWN =
+health cannot be trusted because of RBAC/API/status uncertainty AND no higher-severity definitive failure exists.
+
+HEALTHY =
+at least one health-bearing resource was successfully evaluated AND all evaluated health-bearing resources are healthy AND there are no relevant fetch errors.
+
+But verify these definitions against the actual code and Kubernetes semantics before accepting them.
+
+Also answer an important edge case:
+
+What if an Application contains ONLY informational resources such as ConfigMap/Secret/Ingress?
+
+That must NOT accidentally become "UNKNOWN" simply because there is no health-bearing resource.
+
+Determine whether this should be:
+
+"known, nothing health-bearing to evaluate"
+
+versus:
+
+"NO RESOURCES"
+
+and explain the distinction.
+
+==================================================
+PART 11 — POPOVER DATA AUDIT
+==================================================
+
+DO NOT implement a popover.
+
+First determine exactly what data is already available for it.
+
+For an unhealthy/degraded/unknown Application, determine whether the existing fetched items contain enough information to show:
+
+- final Application status
+- failing resource kind
+- resource name
+- namespace
+- reason
+- relevant status field
+- desired vs ready replicas
+- Pod phase
+- container waiting reason
+- Job failure
+- PVC phase
+- RBAC/API error
+- loading/checking state
+
+Determine whether any new API request would be necessary.
+
+I expect the popover to consume already-fetched data and NOT perform another fetch.
+
+Prove whether that is possible.
+
+Also inspect the existing ClusterStatusPopover pattern only for reusable UI behavior.
+
+Do NOT modify ClusterStatusPopover or Home/Cluster code.
+
+==================================================
+PART 12 — EXISTING UI AUDIT
+==================================================
+
+Verify exactly what the current Health cell renders.
+
+Determine:
+
+- Does it have tooltip/popover?
+- Is it clickable?
+- Does it expose why an Application is unhealthy?
+- Does it distinguish Checking?
+- Does it distinguish Unknown?
+- Does it distinguish No Resources?
+- Does it show the actual failing resource?
+
+Also verify ProjectDetails and ProjectResourcesTab.
+
+Identify whether there is already a safe reusable popover pattern that can be copied into the project/Application scope WITHOUT changing shared Cluster behavior.
+
+==================================================
+PART 13 — DEPENDENCY / FILE SAFETY
+==================================================
+
+Re-check dependency impact.
+
+For each of these, verify callers/usages before suggesting any change:
+
+- getStatus
+- getGraphNodeStatus
+- useKubeLists
+- useProjectItems
+- getResourcesHealth
+- getHealthIcon
+- defaultApiResources
+- StatusLabel
+- registerProjectApiResource
+- ClusterStatusPopover
+
+For every shared function, explicitly say:
+
+SAFE TO MODIFY?
+YES / NO
+
+If NO:
+explain why and identify callers.
+
+If YES:
+explain whether modification is additive or breaking.
+
+Pay special attention to shared ResourceMap/graph code.
+
+DO NOT modify shared code during this audit.
+
+==================================================
+PART 14 — TEST COVERAGE AUDIT
+==================================================
+
+Find existing tests.
+
+Verify what is already covered for:
+
+- getResourcesHealth
+- projectUtils
+- ProjectList
+- ProjectDetails
+- ProjectResourcesTab
+- useProjectItems
+- existing status utilities
+
+Identify exact missing test cases.
+
+Do not write tests yet.
+
+Create a final test matrix covering:
+
+- Checking
+- No Resources
+- Healthy
+- Degraded
+- Unhealthy
+- Unknown
+- RBAC 403
+- generic API error
+- missing status
+- empty resource list
+- loading -> loaded transition
+- Deployment
+- StatefulSet
+- DaemonSet
+- Pod
+- Job
+- PVC
+- ReplicaSet deduplication
+- Deployment + ReplicaSet
+- CronJob + Job
+- informational-only Application
+- supporting resources
+- popover open/close
+- multiple Applications rendered independently
+
+==================================================
+PART 15 — FINAL RECONCILIATION
+==================================================
+
+Now compare:
+
+A. Previous audit conclusions
+B. Current source code
+C. Live cluster evidence
+D. Kubernetes semantics
+
+Create three sections:
+
+CONFIRMED
+What we have proven.
+
+INCORRECT / OUTDATED
+What the previous audit got wrong or what current code contradicts.
+
+OPEN QUESTIONS
+Only things that genuinely cannot be established from the available code/cluster.
+
+Do NOT call something an open question if it can be answered by inspecting the repository or live cluster.
+
+==================================================
+PART 16 — FINAL DECISION TABLE
+==================================================
+
+End with ONE final table like:
+
+| Kind | Registered | Fetched | Displayed | Health-bearing | Supporting | Informational | Exact signal | Current bug/gap | Required change |
+|------|------------|---------|-----------|----------------|-----------|---------------|--------------|-----------------|----------------|
+
+Then provide:
+
+FINAL HEALTH MODEL
+
+- CHECKING =
+- NO RESOURCES =
+- HEALTHY =
+- DEGRADED =
+- UNHEALTHY =
+- UNKNOWN =
+
+FINAL PRECEDENCE
+
+FINAL RESOURCE CLASSIFICATION
+
+FINAL DEDUPLICATION RULE
+
+FINAL RBAC/ERROR RULE
+
+FINAL POPOVER DATA SOURCE
+
+FINAL API/FETCH REQUIREMENT
+
+==================================================
+PART 17 — IMPLEMENTATION BOUNDARY
+==================================================
+
+At the very end, give me:
+
+1. Files that MUST NOT be touched.
+2. Files that MAY be changed.
+3. Files likely to be changed.
+4. Exact functions that need modification.
+5. New functions that would be needed.
+6. Whether any API/fetch signature needs changing.
+7. Whether shared code needs changing.
+8. Whether new API calls are needed.
+9. Tests that need to be added/changed.
+
+IMPORTANT:
+This is still an AUDIT.
+
+DO NOT implement any of those changes.
+
+==================================================
+REPORT QUALITY REQUIREMENTS
+==================================================
+
+Every important conclusion must have evidence:
+
+- file path
+- line number/range where possible
+- actual code behavior
+- live cluster evidence where applicable
+
+Do not say:
+"probably"
+"likely"
+"I think"
+"should be fine"
+
+unless the evidence genuinely cannot establish the answer.
+
+When something is uncertain, explicitly state:
+"UNVERIFIED — reason: ..."
+
+Do not optimize for brevity. Optimize for correctness and completeness.
+
+MOST IMPORTANT:
+
+I do NOT want another partial audit followed by implementation.
+
+I want ONE FINAL, RECONCILED AUDIT that tells me exactly what exists, what is missing, what is actually health-bearing, what is supporting, what is informational, what exact signals define each status, what RBAC/errors mean, how parent/child resources are handled, and exactly what we need to implement.
+
+DO NOT MODIFY THE CODE.
+DO NOT IMPLEMENT ANYTHING.
+AUDIT ONLY.
