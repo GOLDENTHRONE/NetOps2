@@ -1,0 +1,344 @@
+You are implementing the Application Health improvements in this repository.
+
+IMPORTANT: Follow this workflow strictly. Do NOT rush into coding.
+
+==================================================
+1. CORE RULE — SHARED CODE IS READ-ONLY
+==================================================
+
+The most important constraint:
+
+DO NOT MODIFY SHARED CODE.
+
+Shared code means any file/function/component that is used outside the health-local implementation, unless I explicitly approve that exact shared-file change.
+
+Treat shared files as READ-ONLY for this entire task.
+
+Before modifying ANY file:
+1. Determine whether it is health-local or shared.
+2. If shared, DO NOT modify it.
+3. If a requirement appears to require a shared-file modification, STOP and explain:
+   - which shared file would need modification
+   - why you think it is required
+   - what the alternative health-local implementation would be
+   - what behavior/risk each option has
+4. Wait for my explicit approval before touching shared code.
+
+Do not "clean up" shared code.
+Do not refactor shared code.
+Do not rename shared functions.
+Do not move shared logic.
+Do not change shared types merely because it makes implementation easier.
+Do not change APIs/fetching infrastructure.
+Do not modify shared UI components.
+
+If the feature can be implemented without touching shared code, that is ALWAYS the preferred solution.
+
+==================================================
+2. WORK ONE LOOP AT A TIME
+==================================================
+
+The Application Health work is divided into independent loops.
+
+You MUST NOT implement multiple loops together.
+
+For each loop, use this exact process:
+
+STEP A — UNDERSTAND
+Inspect the repository and understand the current implementation relevant to ONLY this loop.
+
+STEP B — VERIFY
+Verify the actual current behavior from the code and existing tests.
+
+Do not assume the implementation matches the plan.
+
+STEP C — PROPOSE
+Tell me exactly:
+- what currently happens
+- what needs to change
+- why the change is required
+- exact files you intend to modify
+- exact functions/sections you intend to modify
+- files that must remain untouched
+- expected health-state impact
+- expected informational impact
+- expected diagnosis impact
+- API/fetch impact
+- aggregation impact
+- deduplication impact
+- UI impact
+- test impact
+- risks/regressions
+- what will explicitly NOT change
+
+STEP D — STOP
+After presenting the loop plan, STOP.
+
+Do NOT write code.
+
+Wait for my explicit approval.
+
+==================================================
+3. APPROVAL GATE
+==================================================
+
+I will say "YES" when I approve that specific loop.
+
+Only after I say YES may you implement that loop.
+
+If I have NOT said YES:
+- do not edit files
+- do not generate patches
+- do not refactor
+- do not implement
+- do not silently proceed
+
+If I say NO or request changes:
+revise ONLY that loop's plan and wait again.
+
+==================================================
+4. AFTER I SAY YES
+==================================================
+
+Implement ONLY the approved loop.
+
+Do not sneak in changes belonging to later loops.
+
+Do not proactively implement diagnosis, correlation, UI, service readiness, quota logic, etc. if they belong to another loop.
+
+Keep the diff as small as reasonably possible.
+
+Prefer existing health-local helpers and existing architecture.
+
+Do not create new shared abstractions merely to make this loop easier.
+
+==================================================
+5. AFTER CODING
+==================================================
+
+Once the approved loop is implemented:
+
+1. Inspect the final diff.
+2. Verify that ONLY approved files changed.
+3. Verify that NO shared file was modified.
+4. Run the most relevant tests.
+5. Run typecheck/lint/build if appropriate and available.
+6. Check for unintended behavioral changes.
+7. Compare the implementation against the approved loop requirements.
+
+Then report:
+
+IMPLEMENTED:
+- exact files changed
+- exact behavior changed
+
+UNCHANGED:
+- shared files
+- health behavior outside this loop
+- aggregation
+- deduplication
+- API/fetching
+- UI
+- other loops
+
+TEST RESULTS:
+- tests run
+- passed/failed
+- relevant assertions
+
+RISKS:
+- any remaining concern
+
+Then STOP.
+
+Do NOT automatically start Loop 2.
+
+Wait for my approval/instruction to continue.
+
+==================================================
+6. HEALTH SEMANTICS
+==================================================
+
+Be extremely careful about the distinction between:
+
+HEALTH VOTE
+- Can affect application health/state.
+
+INFORMATIONAL
+- Can be displayed/countable but must not affect application health.
+
+DIAGNOSIS
+- Explains a likely correlation/evidence.
+- Must NEVER itself vote on application health.
+- Must NEVER alter application state.
+- Must NEVER affect worst-of-roots aggregation.
+
+Do not convert an informational resource into a health vote unless that exact behavior is explicitly approved.
+
+Do not make a diagnosis merely because a resource is unhealthy.
+
+A diagnosis requires the agreed correlation/evidence rules for that loop.
+
+==================================================
+7. PRESERVE EXISTING HEALTH BEHAVIOR
+==================================================
+
+Existing health-bearing workloads must remain unchanged unless the current loop explicitly says otherwise.
+
+In particular, be careful with:
+- Deployment
+- StatefulSet
+- DaemonSet
+- ReplicaSet
+- Pod
+- Job
+- CronJob
+
+Do not accidentally alter their existing health evaluation.
+
+Do not alter worst-of-roots behavior.
+
+Do not alter owner-reference deduplication.
+
+Do not introduce duplicate health votes.
+
+==================================================
+8. API/FETCH RULE
+==================================================
+
+Do not introduce new API calls/fetches unless explicitly approved.
+
+Prefer working with objects already fetched by the existing Application Health flow.
+
+If required data is not already available:
+STOP and explain exactly what data is missing and why.
+
+Do not modify shared API/fetch infrastructure just to obtain the data.
+
+==================================================
+9. TESTING RULE
+==================================================
+
+Tests must prove the intended behavior AND protect existing behavior.
+
+For every loop, identify:
+
+- existing tests affected
+- tests that need to change because the intended behavior changed
+- new regression tests required
+- behavior that must remain unchanged
+
+Never change a test merely to make it pass if the implementation is wrong.
+
+If an existing test contradicts the newly approved requirement, explain why the assertion must change.
+
+==================================================
+10. NO SCOPE CREEP
+==================================================
+
+If while implementing the loop you discover another problem:
+
+DO NOT FIX IT automatically.
+
+Classify it as:
+
+A. Required for this loop
+B. Required for a later loop
+C. Existing unrelated issue
+D. Shared-code issue requiring approval
+
+Only A may be implemented during the current loop.
+
+==================================================
+11. CRITICAL REVIEW BEFORE EACH CHANGE
+==================================================
+
+Before changing code, ask yourself:
+
+- Am I modifying shared code?
+- Can this be done health-locally?
+- Am I changing application health state?
+- Am I accidentally changing an informational resource into a health vote?
+- Am I changing aggregation?
+- Am I changing deduplication?
+- Am I adding an API call?
+- Am I changing existing workload health?
+- Am I implementing something belonging to another loop?
+- Am I changing UI unnecessarily?
+- Am I changing tests because behavior is actually wrong, or because the test is exposing a regression?
+
+If any answer is concerning, STOP and explain before coding.
+
+==================================================
+12. COMMUNICATION STYLE
+==================================================
+
+Be explicit and critical.
+
+Do not simply say "looks good."
+
+If my proposed approach is technically risky, tell me.
+
+If there is a simpler health-local solution, recommend it.
+
+If the requirement is ambiguous, identify the ambiguity and ask before coding.
+
+Always distinguish:
+
+CURRENT BEHAVIOR
+EXPECTED BEHAVIOR
+FILES TO CHANGE
+FILES FORBIDDEN TO CHANGE
+RISKS
+TEST PLAN
+
+==================================================
+13. MOST IMPORTANT WORKFLOW
+==================================================
+
+LOOP 1
+→ inspect
+→ verify
+→ explain
+→ STOP
+→ wait for YES
+→ implement
+→ test
+→ report
+→ STOP
+
+LOOP 2
+→ inspect
+→ verify
+→ explain
+→ STOP
+→ wait for YES
+→ implement
+→ test
+→ report
+→ STOP
+
+Repeat this process for every loop.
+
+NEVER implement the next loop automatically.
+
+My "YES" means:
+"Yes, implement exactly the loop you just proposed."
+
+It does NOT mean:
+"Continue with all remaining work."
+
+==================================================
+FINAL RULE
+==================================================
+
+When in doubt, DO NOT MODIFY.
+
+Ask first.
+
+Shared code is READ-ONLY unless I explicitly approve a specific shared-code change.
+
+One loop at a time.
+One approval at a time.
+One implementation at a time.
+One validation at a time.
