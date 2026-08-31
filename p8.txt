@@ -1,0 +1,636 @@
+You are working on the Application Health improvements in this repository.
+
+IMPORTANT: Follow these instructions STRICTLY for the entire task.
+
+## 1. ABSOLUTE RULE — SHARED CODE IS READ-ONLY
+
+The highest-priority constraint is:
+
+DO NOT MODIFY SHARED CODE.
+
+Treat every shared/common file as READ-ONLY unless I explicitly and separately approve a change to that exact file.
+
+Before making ANY code change:
+1. Identify whether the file is health-local or shared.
+2. If shared, DO NOT edit it.
+3. Do not refactor it.
+4. Do not "clean it up."
+5. Do not rename functions in it.
+6. Do not move logic into it.
+7. Do not add helpers to it.
+8. Do not change its types/interfaces for convenience.
+9. Do not change exports/imports merely to make the health feature easier.
+10. Do not modify shared tests.
+11. Do not modify shared API/fetch infrastructure.
+12. Do not modify shared aggregation/deduplication logic.
+
+If the correct implementation appears to require a shared-code change:
+STOP and tell me exactly:
+- which shared file would need modification,
+- which function/line/logic would need to change,
+- why the health-local implementation cannot achieve the requirement,
+- what the smallest possible shared change would be,
+- what behavior could be affected.
+
+Then WAIT FOR MY EXPLICIT APPROVAL.
+
+Do NOT work around this rule by indirectly changing shared behavior.
+
+The default assumption is:
+SHARED CODE = IMMUTABLE.
+
+---
+
+# 2. WORK IN SMALL, INDEPENDENT LOOPS
+
+Do NOT implement the entire Application Health improvement plan in one shot.
+
+We will work LOOP BY LOOP.
+
+For every loop, follow this exact lifecycle:
+
+PHASE A — INSPECT
+PHASE B — VERIFY CURRENT BEHAVIOR
+PHASE C — DEFINE ONE SMALL CHANGE
+PHASE D — IDENTIFY FILES AND IMPACT
+PHASE E — IDENTIFY RISKS
+PHASE F — STOP AND ASK FOR APPROVAL
+PHASE G — AFTER I SAY YES, IMPLEMENT ONLY THAT LOOP
+PHASE H — VERIFY DIFF
+PHASE I — RUN RELEVANT TESTS
+PHASE J — REPORT EXACTLY WHAT CHANGED
+PHASE K — STOP AGAIN BEFORE STARTING THE NEXT LOOP
+
+Never silently proceed from one loop to the next.
+
+When a loop is complete, WAIT for me to say YES before proposing/implementing the next implementation loop.
+
+---
+
+# 3. BEFORE EVERY LOOP — UNDERSTAND THE REPOSITORY
+
+Do not assume the architecture.
+
+Inspect the actual repository.
+
+Find:
+- health-local files,
+- shared files,
+- application health orchestration,
+- resource classification,
+- per-resource health evaluators,
+- aggregation,
+- deduplication,
+- workload/root relationships,
+- existing tests,
+- existing UI/popover behavior,
+- API/fetch sources.
+
+Trace the real data flow.
+
+For example, determine:
+
+useApplicationHealth
+    ↓
+fetched Kubernetes resources
+    ↓
+evaluateApplicationHealth
+    ↓
+resource classification
+    ↓
+per-resource health evaluation
+    ↓
+deduplication/root resolution
+    ↓
+aggregation
+    ↓
+summary/counts
+    ↓
+popover/UI
+
+Do not rely only on filenames or my description.
+
+Verify the actual implementation.
+
+---
+
+# 4. DISTINGUISH HEALTH, SUPPORTING, INFORMATIONAL AND DIAGNOSTIC DATA
+
+Be extremely strict about semantic classification.
+
+For every resource involved, explicitly determine:
+
+1. Is it HEALTH-BEARING?
+   - Can it vote on application health?
+   - Can it make the application Healthy/Degraded/Unhealthy?
+
+2. Is it SUPPORTING?
+   - Is it displayed as supporting context?
+   - Does it participate in health voting?
+
+3. Is it INFORMATIONAL?
+   - Is it merely an existence/status/count?
+   - Must it never affect application health?
+
+4. Is it DIAGNOSTIC?
+   - Is it evidence that helps explain a problem?
+   - Does it explicitly vote on health?
+   - By default: NO.
+
+Diagnostic evidence must NEVER accidentally become a health vote.
+
+---
+
+# 5. HEALTH STATE MUST REMAIN SEPARATE FROM DIAGNOSIS
+
+Never mix these concepts.
+
+HEALTH:
+- Healthy
+- Degraded
+- Unhealthy
+- Unknown
+- existing health states/counts
+
+DIAGNOSIS:
+- explanatory/correlational evidence,
+- suspected dependency relationship,
+- missing dependency,
+- service readiness evidence,
+- correlated Pod failure,
+- PVC-related evidence,
+- quota-related evidence, etc.
+
+A diagnosis:
+- MUST NOT vote,
+- MUST NOT change application state,
+- MUST NOT participate in worst-of-roots,
+- MUST NOT be counted as another health failure,
+- MUST NOT cause duplicate health votes.
+
+Diagnosis is evidence, not health state.
+
+---
+
+# 6. PRESERVE EXISTING HEALTH-BEARING BEHAVIOR
+
+For every loop, explicitly verify that existing health-bearing resources remain unchanged unless that loop specifically intends otherwise.
+
+Examples include:
+- Deployment
+- StatefulSet
+- DaemonSet
+- ReplicaSet
+- Pod
+- Job
+- CronJob
+
+If a loop is intended to change PVC behavior, then ONLY PVC behavior should change.
+
+Do not "improve" unrelated workload health logic during that loop.
+
+No opportunistic refactoring.
+
+---
+
+# 7. NO UNREQUESTED API/FETCH CHANGES
+
+Prefer using resources that are ALREADY fetched.
+
+Do not introduce:
+- new API calls,
+- new Kubernetes resources,
+- new fetches,
+- new hooks,
+- new shared fetch infrastructure,
+
+unless I explicitly approve it.
+
+If the required information is unavailable from the existing fetched set, STOP and explain that limitation.
+
+Do not invent data.
+
+Do not use Events or Logs unless they are already available.
+
+---
+
+# 8. NO SHARED ARCHITECTURE CHANGES
+
+Do not change:
+- shared hooks,
+- shared utility functions,
+- shared API resource definitions,
+- shared types,
+- shared Kubernetes helpers,
+- shared aggregation,
+- shared deduplication,
+- shared workload logic,
+- shared project utilities,
+- shared UI components.
+
+If health-local code can implement the behavior, implement it there.
+
+If it cannot, STOP and ask.
+
+---
+
+# 9. NO "HELPFUL" REFACTORING
+
+This is critical.
+
+Do NOT:
+- rename unrelated variables,
+- reformat unrelated files,
+- reorganize imports unnecessarily,
+- extract unrelated helpers,
+- consolidate existing functions,
+- change existing architecture,
+- modernize code,
+- improve unrelated tests,
+- fix unrelated bugs,
+- alter shared abstractions.
+
+A small feature must result in a small diff.
+
+If the diff is becoming larger than expected, STOP and investigate why.
+
+---
+
+# 10. EVERY LOOP MUST HAVE A CLEAR BOUNDARY
+
+Before asking for approval, state:
+
+### LOOP N
+**Goal:**
+What exact behavior this loop changes.
+
+**Files allowed to change:**
+List exact files.
+
+**Files explicitly forbidden to change:**
+List shared/out-of-scope files.
+
+**Current behavior:**
+What happens today.
+
+**New behavior:**
+What will happen after this loop.
+
+**Health impact:**
+What can/cannot vote on application health.
+
+**Informational impact:**
+What becomes informational or remains informational.
+
+**Diagnosis impact:**
+Whether diagnosis is involved.
+
+**API/fetch impact:**
+Expected to be zero unless explicitly approved.
+
+**Aggregation impact:**
+Expected unchanged unless explicitly approved.
+
+**Deduplication impact:**
+Expected unchanged unless explicitly approved.
+
+**UI impact:**
+Whether UI changes are required.
+
+**Tests to change/add:**
+Exact test cases.
+
+**Risks:**
+Potential regressions.
+
+**Out of scope:**
+Everything deliberately not being changed.
+
+Then STOP.
+
+Do not code yet.
+
+---
+
+# 11. WAIT FOR MY YES
+
+After presenting the loop plan, write:
+
+"STOP — I will not modify code until you approve this loop."
+
+Only proceed when I explicitly say YES.
+
+If I say:
+- "yes"
+- "go"
+- "implement"
+- "do it"
+
+then implement ONLY the approved loop.
+
+Do not interpret YES as approval for future loops.
+
+YES = approval for THIS loop only.
+
+---
+
+# 12. AFTER YES — IMPLEMENT MINIMAL DIFF
+
+Once approved:
+
+1. Modify ONLY approved files.
+2. Implement ONLY approved behavior.
+3. Do not modify shared files.
+4. Do not modify unrelated health behavior.
+5. Do not add future-loop functionality.
+6. Do not refactor.
+7. Keep the implementation local to health-local code wherever possible.
+
+If implementation unexpectedly requires a forbidden/shared file:
+STOP immediately.
+
+Do not continue by making the shared change.
+
+---
+
+# 13. AFTER IMPLEMENTATION — VERIFY THE DIFF
+
+Before reporting completion, inspect the actual diff.
+
+Confirm:
+
+- Only approved files changed.
+- No shared files changed.
+- No unrelated lines changed.
+- No accidental formatting changes.
+- No generated files changed.
+- No API/fetch changes occurred.
+- No aggregation changes occurred.
+- No deduplication changes occurred.
+- No unrelated UI changes occurred.
+
+If anything outside the approved scope changed:
+STOP and fix/revert that before continuing.
+
+---
+
+# 14. TESTING MUST PROVE BOTH NEW AND PRESERVED BEHAVIOR
+
+For every loop, test:
+
+A. New intended behavior.
+
+B. Existing behavior that MUST remain unchanged.
+
+C. Negative cases.
+
+D. Regression cases.
+
+For health changes specifically, verify:
+- correct health vote,
+- correct informational classification,
+- no duplicate vote,
+- no accidental diagnosis vote,
+- root/child behavior,
+- dedup behavior,
+- aggregation behavior,
+- existing workload health behavior.
+
+Do not only test the happy path.
+
+---
+
+# 15. BE VERY CRITICAL ABOUT SEMANTICS
+
+Do not accept an implementation merely because TypeScript compiles or tests pass.
+
+Challenge assumptions.
+
+For every proposed condition ask:
+
+"Does this represent actual Kubernetes/application health, or merely evidence/information?"
+
+Examples:
+
+A missing ConfigMap alone does NOT automatically mean application unhealthy.
+
+A missing Secret alone does NOT automatically mean application unhealthy.
+
+A Pending PVC alone does NOT automatically mean application unhealthy if PVC is informational under the agreed model.
+
+A quota existing alone does NOT mean application unhealthy.
+
+A Service having zero ready endpoints can be diagnostic only when there is a valid selector → in-scope Pod relationship and authoritative readiness evidence.
+
+A diagnosis must not create a second health vote.
+
+Do not infer causality when we only have correlation.
+
+Use wording such as:
+"correlated with"
+"referenced by"
+"associated with"
+"evidence indicates"
+
+rather than claiming:
+"caused by"
+
+unless the repository actually provides enough evidence to establish causality.
+
+---
+
+# 16. DEPENDENCY DIAGNOSIS MUST BE CONSERVATIVE
+
+If dependency diagnosis is implemented:
+
+Require BOTH:
+
+1. The dependency reference exists and is found in the in-scope workload/Pod template.
+
+AND
+
+2. There is a concrete failure signal from an already-fetched in-scope Pod.
+
+Do not diagnose based merely on:
+- missing dependency,
+- object existence,
+- object age,
+- metadata,
+- assumptions,
+- Events,
+- Logs,
+- external API calls.
+
+Allowed concrete Pod signals must be explicitly defined and tested.
+
+If there is no concrete Pod-level signal:
+return informational/no diagnosis.
+
+Do not manufacture a diagnosis.
+
+---
+
+# 17. SERVICE READINESS DIAGNOSIS MUST BE CONSERVATIVE
+
+Use selector semantics.
+
+Only consider a Service when:
+- Service selector matches in-scope Pod labels,
+- matching Pods exist,
+- authoritative endpoint data is already fetched,
+- ready endpoints are zero.
+
+Prefer EndpointSlice readiness if already available.
+
+Use Endpoints only as the agreed fallback if EndpointSlice is unavailable.
+
+Do not diagnose a Service merely because:
+- it exists,
+- it has no selector,
+- no matching Pods exist,
+- endpoint data was not fetched.
+
+No matching Pod = unrelated/informational, not a health failure.
+
+---
+
+# 18. PVC / CONFIGMAP / SECRET / QUOTA CLASSIFICATION
+
+When changing classification:
+
+Be explicit about the difference between:
+
+"not health-bearing"
+
+and
+
+"irrelevant."
+
+A resource can remain visible and countable as informational while no longer voting on application health.
+
+Do not remove existing informational visibility simply because the resource stops voting.
+
+Preserve existing counts unless the approved loop explicitly changes them.
+
+---
+
+# 19. TEST MATRIX
+
+For each loop, build a small test matrix.
+
+At minimum include:
+
+- positive case,
+- negative case,
+- unrelated-resource case,
+- missing dependency case,
+- healthy dependency case,
+- failing dependency case,
+- duplicate/root case where relevant,
+- existing health regression case.
+
+For every test, state:
+
+INPUT
+→ EXPECTED HEALTH VOTE
+→ EXPECTED INFORMATIONAL RESULT
+→ EXPECTED DIAGNOSIS
+→ EXPECTED APPLICATION STATE
+
+This prevents accidental coupling.
+
+---
+
+# 20. IF SOMETHING IS UNCLEAR, STOP
+
+Do not guess.
+
+If you encounter:
+- ambiguous Kubernetes semantics,
+- missing data,
+- conflicting existing behavior,
+- shared-code dependency,
+- unclear ownership,
+- unclear test expectation,
+- uncertain API availability,
+
+STOP and explain the ambiguity.
+
+Give me the smallest set of options.
+
+Then wait for my decision.
+
+---
+
+# 21. FINAL REPORT AFTER EACH LOOP
+
+After implementation and verification, report:
+
+### LOOP N COMPLETE
+
+**Changed**
+- exact file
+- exact behavior
+
+**Not changed**
+- shared code
+- aggregation
+- deduplication
+- API/fetch
+- unrelated health logic
+
+**Health behavior**
+- what votes
+- what does not vote
+
+**Informational behavior**
+- what remains informational
+
+**Diagnosis behavior**
+- what was added/changed
+
+**Tests**
+- tests added/changed
+- tests executed
+- results
+
+**Diff safety**
+- confirm only approved files changed
+
+**Remaining work**
+- list the next possible loop(s)
+
+Then STOP.
+
+Do NOT automatically start the next loop.
+
+---
+
+# 22. THE CORE RULE
+
+Always remember:
+
+SMALL LOOP → REVIEW → MY YES → IMPLEMENT → VERIFY → TEST → REPORT → STOP.
+
+Never:
+
+PLAN EVERYTHING → CODE EVERYTHING → EXPLAIN AFTERWARD.
+
+And especially never:
+
+"Shared code needs a small change, so I'll modify it."
+
+NO.
+
+Shared code is READ-ONLY by default.
+
+If a shared change becomes necessary:
+STOP → EXPLAIN → ASK → WAIT.
+
+Your job is not to maximize code changes.
+
+Your job is to make the smallest correct health-local change while preserving the existing repository architecture and behavior.
+
+Be conservative, skeptical, and critical.
+
+DO NOT CODE UNTIL I APPROVE THE CURRENT LOOP.
