@@ -1,0 +1,270 @@
+Before you write or modify any code, resolve the two remaining Kubernetes-semantic concerns below. Do not make assumptions and do not change shared code.
+
+1. POD-SIGNAL GATING FOR DEPENDENCY DIAGNOSIS
+
+For ConfigMap/Secret/PVC/ResourceQuota/LimitRange diagnosis, do NOT infer that the dependency caused application failure merely because:
+- the dependency is missing/pending/etc., AND
+- some Pod exists in the Application.
+
+The dependency must have a concrete, already-observed relationship to an affected Pod/workload using only data already fetched by the Application Health feature.
+
+Use the following conservative rule:
+
+A dependency may produce a Diagnosis only when:
+a) the dependency is actually referenced by an in-scope Pod/workload template, AND
+b) the referenced dependency is missing/unusable/failed, AND
+c) there is concrete evidence that the affected Pod is actually failing/waiting/pending because of that dependency.
+
+For the Pod evidence, use only signals already available in the fetched objects, such as:
+- Pod phase
+- container waiting reasons
+- CreateContainerConfigError
+- CreateContainerError
+- ImagePullBackOff / ErrImagePull where applicable
+- CrashLoopBackOff where applicable
+- other existing, authoritative Pod status fields already available in this repository
+
+Do NOT fetch Events.
+Do NOT introduce a new Kubernetes API call.
+Do NOT inspect logs.
+Do NOT invent causal relationships from resource existence alone.
+
+If the dependency is missing but the workload/Pod is healthy/running, keep it Informational and do not create a Diagnosis.
+
+If the dependency is missing and the Pod has a concrete matching failure signal, create a Diagnosis describing the correlation.
+
+The Diagnosis must clearly communicate that this is evidence-based correlation, not absolute causal proof.
+
+2. SERVICE BACKEND READINESS
+
+For Service diagnosis, use Kubernetes selector semantics rather than name matching or namespace matching.
+
+A Service should produce a Diagnosis such as "Service X has no ready backends" only when:
+
+a) the Service belongs to the current Application scope,
+b) its selector actually matches one or more in-scope Pods, and
+c) the corresponding already-fetched EndpointSlice/Endpoints data shows zero ready/usable addresses.
+
+Do NOT diagnose a Service merely because:
+- it exists in the namespace,
+- it has zero endpoints but no matching Pods,
+- another unrelated workload exists in the namespace,
+- its name resembles a Deployment name.
+
+Prefer EndpointSlice conditions.ready as the authoritative readiness signal when EndpointSlice data is available.
+
+If EndpointSlice is not available but Endpoints is already present in the fetched data, use its existing ready-address representation as the fallback.
+
+Do not add a new API fetch solely for this feature.
+
+3. IMPORTANT SCOPE RULE
+
+Do not "fix" the known Application = namespace limitation.
+
+Do NOT modify:
+- ProjectDefinition
+- projectsSlice
+- projectUtils
+- relations.tsx
+- GraphSources.tsx
+- Workload.ts
+- shared getHealth()
+- useKubeLists.ts
+- defaultApiResources
+- healthApiResources.ts
+- any other shared resource-discovery mechanism
+
+The Application scope remains whatever the existing implementation currently provides.
+
+Document this as a known limitation rather than silently changing the meaning of Application.
+
+4. IMPORTANT HEALTH-VS-DIAGNOSIS CONTRACT
+
+Keep these concepts strictly separate:
+
+HEALTH:
+Only authoritative workload/runtime resources vote on Application Health.
+
+The existing ownerReference deduplication and root-resource aggregation MUST remain unchanged.
+
+Diagnosis:
+Evidence-based correlation only.
+A Diagnosis MUST NEVER add another health vote, change the health state, or participate in worst-of-root aggregation.
+
+Informational:
+Resources that are merely present, configured, or potentially relevant but have no concrete failure correlation.
+
+Therefore:
+
+- healthy workload + unused/missing ConfigMap = Informational
+- healthy workload + unused/missing Secret = Informational
+- unused Pending PVC = Informational
+- unrelated Service with zero endpoints = Informational / no diagnosis
+- Service selector matches application Pods + zero ready endpoints = Diagnosis, but health remains unchanged
+- referenced missing ConfigMap/Secret + affected Pod has matching failure signal = Diagnosis, but health remains unchanged
+- referenced Pending/Lost PVC + affected Pod/workload is actually impacted = Diagnosis, but do not create a second health vote
+- quota exists but no affected Pending Pod with an explicit quota-related reason = Informational
+- Pending Pod with explicit quota-related reason = Diagnosis
+- RBAC/NetworkPolicy/HPA remain non-health-voting as they are today
+
+5. PVC IS A SPECIAL CASE
+
+The repo inspection confirmed that PVC currently participates directly in health.
+
+That must be changed because it conflicts with the intended semantic model.
+
+Remove PVC from the health-bearing set and remove its direct health evaluator from the Application Health voting path.
+
+PVC should instead be:
+- Informational when merely present/Pending/Lost without concrete workload impact.
+- Diagnostic only when an already-fetched in-scope Pod/workload actually references that PVC and there is concrete evidence of an affected/failing workload.
+
+Do not create a second health vote through the diagnosis mechanism.
+
+6. OWNER-REFERENCE DEDUPLICATION
+
+This is already correct and MUST NOT be rewritten.
+
+Continue using the existing getAggregationRootIds() / owner-reference based mechanism.
+
+Examples that must remain correctly deduplicated:
+
+Deployment -> ReplicaSet -> Pod
+CronJob -> Job -> Pod
+and arbitrary owner-reference depth.
+
+Do not count Deployment + ReplicaSet + Pod as three independent application health votes when they represent one workload root.
+
+Do not replace this with name-prefix matching, namespace grouping, or heuristic deduplication.
+
+7. MINIMAL CHANGE BOUNDARY
+
+Only modify health-local code required for this feature.
+
+Expected health-local changes may include:
+
+- resourceKinds.ts
+- resourceHealth.ts
+- types.ts
+- evaluateApplicationHealth.ts
+- ApplicationHealthPopover.tsx
+- evaluateApplicationHealth.test.ts
+
+A new local diagnosis helper/test file is acceptable if necessary.
+
+Do NOT modify shared files simply to make the implementation easier.
+
+If selector matching is required, implement a small local read-only helper inside the health feature rather than changing relations.tsx or graph relationship definitions.
+
+The same applies to ConfigMap/Secret/PVC reference detection.
+
+8. NO NEW API FETCHES
+
+All diagnosis logic must operate on the objects already fetched by Application Health.
+
+Do not expand API discovery merely to support diagnosis.
+
+If some diagnosis cannot be made reliably because the required object is not already fetched, do not guess. Keep it Informational and document the limitation.
+
+9. UI REQUIREMENT
+
+The Application Health UI must preserve the existing health presentation.
+
+Add a separate "Diagnosis" section.
+
+Diagnosis should communicate:
+- what resource was detected,
+- what concrete evidence was found,
+- which workload/Pod it correlates with,
+- why it is being surfaced.
+
+Use wording such as "correlated with", "referenced by", or "no ready backends" rather than claiming absolute causation.
+
+Do not make Diagnosis look like another health vote.
+
+10. TEST REQUIREMENTS
+
+Before coding, update/extend the test plan to explicitly cover at least:
+
+A. Deployment healthy
+   -> healthy
+
+B. Deployment unhealthy
+   -> existing health behavior unchanged
+
+C. Deployment -> ReplicaSet -> Pod
+   -> no double counting
+
+D. CronJob -> Job -> Pod
+   -> no double counting
+
+E. Multiple independent workload roots
+   -> worst-of-roots aggregation unchanged
+
+F. Service selector matches application Pod + zero ready endpoints
+   -> Diagnosis
+   -> health unchanged
+
+G. Service selector does not match application Pods
+   -> no Diagnosis
+
+H. Service has zero endpoints but no matching workload
+   -> no Diagnosis
+
+I. Missing ConfigMap referenced by failing Pod
+   -> Diagnosis
+   -> no additional health vote
+
+J. Missing ConfigMap not referenced by workload
+   -> Informational only
+
+K. Missing Secret referenced by failing Pod
+   -> Diagnosis
+   -> no additional health vote
+
+L. Pending/Lost PVC referenced by affected workload
+   -> Diagnosis
+   -> no additional health vote
+
+M. Pending/Lost PVC not referenced by any in-scope workload
+   -> Informational only
+   -> does not degrade Application Health
+
+N. Pending Pod with explicit quota-related reason
+   -> quota Diagnosis
+
+O. Quota exists but no affected Pending Pod
+   -> Informational only
+
+P. HPA / NetworkPolicy / RBAC
+   -> preserve existing non-health-voting behavior
+
+Q. RBAC/API fetch error
+   -> preserve existing errorDetails behavior
+
+R. Standalone Pod/Job/CronJob
+   -> preserve existing health semantics
+
+S. Multiple applications/workloads in one namespace
+   -> do NOT attempt to solve the known namespace-scoping limitation in this change.
+
+11. BEFORE IMPLEMENTATION
+
+First give me a final implementation checklist containing:
+
+- exact files to modify
+- exact files that will remain untouched
+- health-bearing resource changes
+- diagnosis rules
+- informational rules
+- API/fetch impact
+- aggregation/dedup impact
+- UI impact
+- test cases
+- known limitations
+
+Then STOP.
+
+Do not write code yet.
+
+I will review the checklist before implementation.
