@@ -1,0 +1,717 @@
+You are acting as a senior software engineer AND Kubernetes architect reviewing this repository.
+
+I am working on the Application Health feature in this codebase.
+
+IMPORTANT:
+- Do NOT modify any code.
+- Do NOT refactor anything.
+- Do NOT create commits.
+- Do NOT change shared/common utilities, APIs, components, types, hooks, or existing health logic.
+- Do NOT implement your proposed solution yet.
+- This is an architecture/design investigation only.
+- I want an honest assessment of the current implementation before we decide what to change.
+- You must inspect the repository deeply rather than making assumptions from resource names.
+
+Context
+-------
+
+The goal is to calculate/display the health of a Kubernetes "Application".
+
+The important problem is that an Application is NOT necessarily:
+
+    Deployment -> Service
+
+and we must NOT assume that every application has a Service.
+
+A workload can exist without a Service.
+A Service can exist without a healthy workload.
+An application can be exposed through Ingress/Route, Gateway, etc.
+A workload may be created by different controllers.
+There can be multiple workloads and supporting resources.
+Some resources are evidence of connectivity/configuration rather than application runtime health.
+Some resources should never directly contribute to application health.
+
+I want a robust Kubernetes-semantic model rather than a hardcoded scenario.
+
+What I need from you
+--------------------
+
+FIRST: deeply inspect the existing repository and determine how Application Health currently works.
+
+Trace the complete flow:
+
+1. Where the Application entity/model is defined.
+2. How an Application is discovered/constructed.
+3. How resources are associated with an Application.
+4. How health is currently calculated.
+5. Which resource types currently contribute to health.
+6. Whether health is calculated from resource status, conditions, counts, or some other mechanism.
+7. Where diagnosis/problem information is generated.
+8. Where informational/non-blocking information is generated.
+9. How resources are grouped/related.
+10. Whether ownerReferences, labels, selectors, namespaces, workload relationships, or other Kubernetes relationships are already being used.
+11. Identify all shared/common code involved in this path.
+12. Identify the smallest possible feature-specific boundary where this behavior could eventually be changed.
+
+Do not stop after finding one obvious function. Follow the call chain and understand the architecture.
+
+--------------------------------------------------
+CORE ARCHITECTURAL QUESTION
+--------------------------------------------------
+
+We need to answer:
+
+"What does it actually mean for a Kubernetes Application to be healthy?"
+
+Do NOT answer this by simply creating a fixed list such as:
+
+Health-bearing:
+- Pod
+- Deployment
+- StatefulSet
+- DaemonSet
+- Job
+- PVC
+
+Supporting:
+- Service
+- EndpointSlice
+- Endpoints
+- Ingress
+- Route
+
+Never health:
+- ConfigMap
+- Secret
+- RBAC
+- NetworkPolicy
+- ResourceQuota
+- LimitRange
+
+That classification may be useful as a starting hypothesis, but it is NOT sufficient.
+
+Instead, determine whether the health model should be based on the semantic role and relationship of a resource.
+
+For example:
+
+A Service is not inherently "healthy" or "unhealthy" as an application.
+It is evidence about connectivity/discovery.
+
+An EndpointSlice is not itself the application.
+It may provide evidence that traffic has usable backends.
+
+An Ingress/Route is not the application.
+It provides evidence about external exposure/routing.
+
+A ConfigMap may be essential to a workload, but its existence alone does not mean the application is healthy.
+
+A Secret may be essential, but its mere existence should not become an application-health vote.
+
+A PVC may be critical for a StatefulSet, but should not automatically be treated the same way for every application.
+
+Therefore, investigate whether we should model:
+
+    Application
+       |
+       +-- Workload / execution resources
+       |
+       +-- Supporting resources
+       |
+       +-- Configuration/dependency resources
+       |
+       +-- Connectivity/exposure resources
+
+but derive these relationships from actual Kubernetes semantics rather than blindly hardcoding one topology.
+
+--------------------------------------------------
+HEALTH-BEARING RESOURCES
+--------------------------------------------------
+
+Investigate which resources represent actual execution/runtime state.
+
+At minimum investigate:
+
+- Pod
+- Deployment
+- StatefulSet
+- DaemonSet
+- Job
+- CronJob
+- ReplicaSet
+- PVC
+
+But do NOT automatically classify every one of these as a direct health vote.
+
+For each resource type, answer:
+
+1. Does this resource represent application execution?
+2. Is it a controller or an actual runtime instance?
+3. Is its status authoritative or merely derivative?
+4. Can it cause duplicate health voting?
+5. Is it normally owned by another resource?
+6. Should the parent and child both contribute?
+7. Under what conditions should it contribute?
+8. Can it exist without representing a running application?
+9. Can its failure be diagnosed without declaring the entire application unhealthy?
+10. Is its relevance conditional?
+
+For example, explicitly investigate the relationship:
+
+Deployment
+   -> ReplicaSet
+      -> Pod
+
+and determine whether counting all three would incorrectly count the same failure multiple times.
+
+Likewise investigate:
+
+StatefulSet -> Pod
+DaemonSet -> Pod
+Job -> Pod
+CronJob -> Job -> Pod
+
+Do NOT assume the correct answer. Explain the Kubernetes semantics and recommend what should actually count.
+
+--------------------------------------------------
+RELATIONSHIP / OWNERSHIP MODEL
+--------------------------------------------------
+
+This is extremely important.
+
+Investigate whether health should be calculated using Kubernetes relationships such as:
+
+- ownerReferences
+- labels
+- selectors
+- controller references
+- namespace
+- workload-to-pod relationships
+- Service selectors
+- EndpointSlice relationships
+- Ingress/Route backend references
+
+The system should ideally understand:
+
+"Which resources actually belong to or support this Application?"
+
+rather than:
+
+"There is a Service in the same namespace, therefore it belongs to this Application."
+
+Explicitly investigate false associations.
+
+Examples:
+
+- Multiple applications in the same namespace.
+- Multiple Services.
+- Multiple Deployments.
+- A Service selecting Pods from a different workload.
+- A Deployment with no Service.
+- A Service with no matching Pods.
+- A workload with multiple Services.
+- A workload exposed through Ingress.
+- A workload exposed through OpenShift Route.
+- An internal-only workload with no external exposure.
+- A background worker with no Service at all.
+- A Job/CronJob that intentionally terminates successfully.
+- A StatefulSet whose storage is critical.
+- Multiple workloads forming one logical application.
+
+Explain what relationship evidence is trustworthy and what is not.
+
+--------------------------------------------------
+NO SERVICE ASSUMPTION
+--------------------------------------------------
+
+This is a hard requirement.
+
+Do NOT design the health model around the assumption that:
+
+    Application -> Service -> EndpointSlice
+
+is the normal application topology.
+
+Instead, explicitly model applications that have:
+
+A. Workload only
+
+    Deployment -> Pods
+
+B. Workload + Service
+
+    Deployment -> Pods
+             \
+              -> Service -> EndpointSlice
+
+C. Workload + external exposure
+
+    Deployment -> Pods
+             \
+              -> Service
+                    \
+                     -> Ingress / Route
+
+D. Stateful application
+
+    StatefulSet -> Pods -> PVC
+
+E. Batch application
+
+    CronJob -> Job -> Pods
+
+F. Daemon-based workload
+
+    DaemonSet -> Pods
+
+G. Multiple workloads
+
+    Application
+       -> Deployment
+       -> StatefulSet
+       -> Job
+       -> etc.
+
+H. Applications with supporting resources but no Service.
+
+These are examples only.
+
+Find additional realistic Kubernetes topologies that the implementation must handle.
+
+--------------------------------------------------
+HEALTH VS CONNECTIVITY VS CONFIGURATION
+--------------------------------------------------
+
+Separate these concepts.
+
+I want three conceptual categories:
+
+1. PRIMARY APPLICATION HEALTH
+
+Evidence that the application workload itself is functioning.
+
+Examples may include:
+- desired vs available replicas
+- Pod readiness
+- Pod phase
+- container readiness
+- controller conditions
+- Job completion/failure
+- StatefulSet readiness
+- DaemonSet availability
+- other workload-specific runtime state
+
+But determine the correct Kubernetes semantics for each resource.
+
+2. SUPPORTING / CONNECTIVITY EVIDENCE
+
+Evidence that the application can be reached or exposed correctly.
+
+Potential examples:
+- Service
+- EndpointSlice
+- Endpoints
+- Ingress
+- OpenShift Route
+- Gateway/API resources if relevant
+
+These should NOT automatically receive an independent "health vote" just because they exist or have a particular status.
+
+Instead determine when they should:
+- contribute to diagnosis,
+- provide supporting evidence,
+- become a health-affecting dependency,
+- or remain informational.
+
+For example:
+
+A healthy Deployment with a missing/empty Service backend is different from an unhealthy Deployment.
+
+Do not collapse those cases into the same condition.
+
+3. CONFIGURATION / POLICY / ENVIRONMENT
+
+Potential examples:
+- ConfigMap
+- Secret
+- RBAC
+- NetworkPolicy
+- ResourceQuota
+- LimitRange
+- other policy/configuration objects
+
+Determine whether these should:
+- never directly vote on application health,
+- produce diagnosis,
+- produce informational messages,
+- or become health-affecting only when there is concrete evidence that the workload is impacted.
+
+The key distinction is:
+
+RESOURCE STATE != APPLICATION HEALTH
+
+A resource can be unhealthy without the application itself being unhealthy.
+
+--------------------------------------------------
+DIAGNOSIS VS INFORMATIONAL
+--------------------------------------------------
+
+We need a very clear boundary.
+
+For every condition/resource you identify, classify its result as one of:
+
+A. HEALTH-AFFECTING
+B. DIAGNOSTIC EVIDENCE
+C. INFORMATIONAL
+D. IRRELEVANT
+
+Do not assume every warning/error condition should lower the application health.
+
+Examples to investigate:
+
+- Deployment unavailable replicas
+- Pod CrashLoopBackOff
+- Pod NotReady
+- Failed Job
+- Pending Pod
+- Service exists but has no endpoints
+- EndpointSlice exists but has no ready addresses
+- Ingress configuration problem
+- Route problem
+- Missing ConfigMap
+- Missing Secret
+- RBAC issue
+- NetworkPolicy
+- ResourceQuota exceeded
+- PVC Pending
+- PVC Lost
+- Failed mount
+- ImagePullBackOff
+- scheduling failure
+
+For every case, explain:
+
+1. Should Application Health change?
+2. If yes, why?
+3. If no, should it appear under diagnosis?
+4. If not diagnosis, should it be informational?
+5. Is the answer conditional on whether the resource is actually required by the workload?
+
+This distinction is one of the most important parts of the design.
+
+--------------------------------------------------
+AVOID DOUBLE COUNTING
+--------------------------------------------------
+
+Investigate whether the current implementation counts derived resources independently.
+
+For example:
+
+Deployment unhealthy
++
+ReplicaSet unhealthy
++
+Pod unhealthy
+
+could produce three negative votes for one underlying failure.
+
+That would make the health score misleading.
+
+Similarly:
+
+CronJob
++
+Job
++
+Pod
+
+may represent one execution chain.
+
+Determine whether the health algorithm should operate on:
+
+- raw resource counts,
+- resource states,
+- root workload states,
+- normalized application conditions,
+- or a dependency graph.
+
+Recommend the most correct approach.
+
+If multiple resources describe the same underlying condition, determine which resource should be authoritative and which should only provide diagnostic evidence.
+
+--------------------------------------------------
+HEALTH SCORE / AGGREGATION
+--------------------------------------------------
+
+Inspect how the current health score is calculated.
+
+Do NOT immediately recommend "count healthy resources / total resources".
+
+Determine whether a better model is:
+
+- condition-based,
+- severity-based,
+- weighted,
+- hierarchical,
+- dependency-aware,
+- or a combination.
+
+For example, investigate whether:
+
+    Application
+       |
+       +-- Primary workload health
+       |
+       +-- Required dependency health
+       |
+       +-- Connectivity evidence
+       |
+       +-- Configuration evidence
+
+would be more correct than treating every Kubernetes object equally.
+
+Explain what should happen when:
+
+- 1 of 10 Pods is unhealthy
+- all Pods are unhealthy
+- Deployment says available but one Pod is restarting
+- Service has zero endpoints but workload is healthy
+- Service does not exist
+- EndpointSlice is absent because no Service exists
+- PVC is pending but the workload does not use it
+- PVC is pending and the workload cannot start without it
+- ConfigMap is missing but Pod is running
+- ConfigMap is missing and Pods are failing because of it
+- Ingress is broken but the application is internally healthy
+- Route is broken but the application is internally healthy
+- Job completed successfully
+- Job failed
+- CronJob has no currently active Job
+- application contains multiple independent workloads
+
+The result should not be based on one happy-path example.
+
+--------------------------------------------------
+KUBERNETES SEMANTICS
+--------------------------------------------------
+
+For every proposed rule, think like a Kubernetes architect.
+
+Prefer Kubernetes-native semantics over UI assumptions.
+
+Consider:
+
+- desired state vs observed state
+- conditions
+- ready/available/current replicas
+- ownerReferences
+- controller hierarchy
+- selectors
+- readiness
+- liveness
+- Pod phase
+- container state
+- restart counts
+- Job completion
+- Job failure
+- CronJob semantics
+- PVC binding
+- Service endpoints
+- EndpointSlice ready/serving/terminating states
+- ingress/routing status
+- OpenShift Route semantics if supported
+- optional vs required dependencies
+
+Do not invent Kubernetes behavior.
+
+If repository behavior and Kubernetes semantics conflict, explicitly call it out.
+
+--------------------------------------------------
+RESOURCE DISCOVERY
+--------------------------------------------------
+
+Inspect how the application currently discovers resources.
+
+Determine whether the current implementation:
+
+- fetches resources independently,
+- uses labels,
+- uses ownerReferences,
+- uses selectors,
+- uses a backend API,
+- uses Headlamp's existing resource relationships,
+- or uses some other mechanism.
+
+Find out whether the required relationship information is already available.
+
+If it is already available, prefer using the existing mechanism rather than introducing another shared abstraction.
+
+If it is NOT available, explain exactly what minimum information would be required.
+
+Do not implement it.
+
+--------------------------------------------------
+SHARED CODE CONSTRAINT
+--------------------------------------------------
+
+This feature must not unnecessarily modify shared code.
+
+Identify:
+
+1. Shared utilities currently used.
+2. Shared types currently used.
+3. Shared resource-fetching mechanisms.
+4. Common health components.
+5. Common hooks.
+6. Common Kubernetes abstractions.
+
+For each possible implementation approach, explicitly state:
+
+- files that would need modification,
+- whether they are feature-specific or shared,
+- whether the change could have side effects elsewhere,
+- whether the change can be isolated inside the Application Health feature.
+
+Prefer a solution that can be implemented entirely within the feature-specific boundary.
+
+If you believe a shared-code modification is genuinely unavoidable, DO NOT modify it. Explain why it would be necessary and what the risk would be.
+
+--------------------------------------------------
+EDGE CASES
+--------------------------------------------------
+
+You must investigate at least these cases:
+
+1. Deployment with no Service.
+2. Service with no Deployment.
+3. Service with zero endpoints.
+4. Deployment healthy but Service broken.
+5. Deployment unhealthy but Service healthy.
+6. Multiple Services pointing to one workload.
+7. Multiple workloads in one Application.
+8. Multiple applications in one namespace.
+9. StatefulSet with PVC.
+10. StatefulSet without PVC.
+11. DaemonSet.
+12. Job.
+13. CronJob.
+14. Failed Job.
+15. Successfully completed Job.
+16. Pending Pod.
+17. CrashLoopBackOff.
+18. ImagePullBackOff.
+19. Pod NotReady.
+20. Deployment with unavailable replicas.
+21. ReplicaSet failure caused by Deployment failure.
+22. EndpointSlice with no ready endpoints.
+23. Ingress/Route failure while Pods are healthy.
+24. Missing ConfigMap.
+25. Missing Secret.
+26. RBAC problem.
+27. NetworkPolicy.
+28. ResourceQuota/LimitRange issue.
+29. PVC Pending.
+30. PVC failure that actually prevents the workload from becoming ready.
+31. Optional dependency failure.
+32. Required dependency failure.
+33. Application containing only supporting resources.
+34. Application containing only a batch workload.
+35. Application containing multiple independent workloads.
+
+For every edge case, describe expected:
+
+- Application Health
+- Diagnosis
+- Informational evidence
+
+--------------------------------------------------
+WHAT I WANT AS YOUR OUTPUT
+--------------------------------------------------
+
+Do NOT modify the repository.
+
+Produce a detailed architecture/design report in your response.
+
+Structure it exactly like this:
+
+1. CURRENT IMPLEMENTATION
+   - Where health is calculated
+   - Current algorithm
+   - Current resource classification
+   - Current relationship model
+   - Current diagnosis model
+   - Current informational model
+
+2. PROBLEMS IN CURRENT IMPLEMENTATION
+   - Incorrect assumptions
+   - Double counting
+   - Missing Kubernetes relationships
+   - Service assumptions
+   - False health votes
+   - Other architectural issues
+
+3. PROPOSED HEALTH MODEL
+   Explain the model conceptually before discussing implementation.
+
+4. RESOURCE SEMANTIC CLASSIFICATION
+   Create a table:
+
+   Resource | Semantic role | Direct health vote? | Conditional? | Diagnostic? | Informational? | Reason
+
+5. RELATIONSHIP MODEL
+   Explain how the system should determine which resources actually belong to/support an Application.
+
+6. HEALTH AGGREGATION
+   Explain exactly how multiple workloads/resources should be aggregated without double counting.
+
+7. DIAGNOSIS MODEL
+   Explain what should be shown as diagnosis and why.
+
+8. INFORMATIONAL MODEL
+   Explain what should be shown as informational and why.
+
+9. EDGE CASE BEHAVIOR
+   Provide the expected result for all important cases listed above.
+
+10. IMPLEMENTATION BOUNDARY
+    Identify the exact feature-specific files/functions where this could eventually be implemented.
+
+    Explicitly identify shared code that should NOT be touched.
+
+11. MINIMAL CHANGE STRATEGY
+    Give the smallest safe implementation approach.
+
+12. RISKS
+    Explain possible regressions and architectural risks.
+
+13. OPEN QUESTIONS / ASSUMPTIONS
+    List anything that cannot be determined from the repository and Kubernetes semantics.
+
+14. RECOMMENDATION
+    Give your final recommendation as a senior Kubernetes architect.
+
+--------------------------------------------------
+IMPORTANT FINAL RULE
+--------------------------------------------------
+
+Do not give me a solution based on one example.
+
+I specifically want you to determine the GENERAL MODEL that works across different Kubernetes application topologies.
+
+Do not say:
+
+"Service is supporting, therefore Service should not count."
+
+Instead explain the deeper rule:
+
+"What semantic evidence is authoritative for application health, what is merely supporting evidence, how are dependencies determined, and how do we prevent one underlying failure from being counted multiple times?"
+
+Think about this as designing a production-grade Kubernetes Application Health system, not as changing a UI counter.
+
+Again:
+
+NO CODE CHANGES.
+NO REFACTORING.
+NO SHARED CODE MODIFICATIONS.
+NO COMMIT.
+
+Only repository investigation + Kubernetes architectural analysis + proposed design.
