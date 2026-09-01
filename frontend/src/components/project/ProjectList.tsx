@@ -35,6 +35,7 @@ import {
   getUnavailableHealth,
   LocalHealthEvidence,
   LocalHealthResult,
+  LocalHealthStat,
 } from './localHealth';
 // NOTE (p17): if you restore the upstream 'health' column below, re-add
 // `getHealthIcon, getResourcesHealth` to the import list on the next line.
@@ -210,8 +211,6 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
       : health.status === 'passive' || health.status === 'empty'
       ? ''
       : 'error';
-  const contextLine = `${project.namespaces.join(', ')} @ ${project.clusters.join(', ')}`;
-
   return (
     <>
       <Tooltip title={t('Click to see why')}>
@@ -259,42 +258,26 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
           },
         }}
       >
-        <Box px={2} pt={1.5} pb={1.25}>
-          <Box display="flex" alignItems="center" gap={1}>
-            <Icon icon={health.icon} width={20} color={color} />
-            <Typography variant="subtitle1" sx={{ color, fontWeight: 700, flexGrow: 1 }}>
-              {t(health.label)}
-            </Typography>
-            <IconButton size="small" aria-label={t('Close')} onClick={closePopover}>
-              <Icon icon="mdi:close" width={16} />
-            </IconButton>
-          </Box>
-          <Box display="flex" alignItems="baseline" gap={0.75} mt={0.75}>
-            <Typography variant="body2" color="text.secondary">
-              {t('Application:')}
-            </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
-              {contextLine}
-            </Typography>
-          </Box>
+        <Box px={2} pt={1.5} pb={1.25} display="flex" alignItems="center" gap={1}>
+          <Icon icon={health.icon} width={20} color={color} />
+          <Typography variant="subtitle1" sx={{ color, fontWeight: 700, flexGrow: 1 }}>
+            {t(health.label)}
+          </Typography>
+          <IconButton size="small" aria-label={t('Close')} onClick={closePopover}>
+            <Icon icon="mdi:close" width={16} />
+          </IconButton>
         </Box>
         <Divider />
         <Box px={2} py={1.25}>
           {health.status === 'unavailable' ? (
             <UnavailableBody health={health as any} color={color} t={t} />
           ) : health.status === 'passive' ? (
-            <Typography variant="body2" color="text.secondary">
-              {t(
-                'This application has {{count}} supporting resource(s) but no runnable workload (no Deployment, StatefulSet, DaemonSet, ReplicaSet, Pod, Job or CronJob). Health is undetermined.',
-                { count: totalItems }
-              )}
-            </Typography>
-          ) : errors.length === 0 && warnings.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              {t('Healthy — no issues detected across {{count}} resources.', {
-                count: totalItems,
-              })}
-            </Typography>
+            <>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                {t('No workloads are running here, so health cannot be determined.')}
+              </Typography>
+              <StatsSection stats={health.stats} t={t} />
+            </>
           ) : (
             <>
               {errors.length > 0 && (
@@ -310,6 +293,8 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                   />
                 </>
               )}
+              {(errors.length > 0 || warnings.length > 0) && <Divider sx={{ my: 1 }} />}
+              <StatsSection stats={health.stats} t={t} totalItems={totalItems} />
             </>
           )}
         </Box>
@@ -422,6 +407,78 @@ function EvidenceRow({ evidence }: { evidence: LocalHealthEvidence }) {
         {evidence.message}
       </Typography>
     </Box>
+  );
+}
+
+function StatsSection({
+  stats,
+  totalItems,
+  t,
+}: {
+  stats: LocalHealthStat[];
+  totalItems?: number;
+  t: (k: string, opts?: any) => string;
+}) {
+  const theme = useTheme();
+  if (!stats || stats.length === 0) return null;
+
+  const toneColor = (tone: LocalHealthStat['tone']) => {
+    switch (tone) {
+      case 'error':
+        return theme.palette.error.main;
+      case 'warning':
+        return theme.palette.warning.main;
+      case 'success':
+        return theme.palette.success.main;
+      default:
+        return theme.palette.text.secondary;
+    }
+  };
+
+  return (
+    <>
+      <Typography
+        variant="overline"
+        sx={{
+          color: theme.palette.text.secondary,
+          fontWeight: 700,
+          display: 'block',
+          lineHeight: 1.6,
+        }}
+      >
+        {totalItems !== undefined
+          ? t('Inventory ({{count}} resources)', { count: totalItems })
+          : t('Inventory')}
+      </Typography>
+      <Box
+        component="table"
+        sx={{
+          width: '100%',
+          borderCollapse: 'collapse',
+          '& td': { py: 0.35, verticalAlign: 'baseline' },
+          '& td:first-of-type': { fontWeight: 500, pr: 1.5, whiteSpace: 'nowrap' },
+          '& td:nth-of-type(2)': { color: theme.palette.text.secondary, pr: 1 },
+        }}
+      >
+        <tbody>
+          {stats.map(s => (
+            <tr key={s.kind}>
+              <td>
+                <Typography component="span" variant="body2">
+                  {s.total} {s.kind}
+                  {s.total > 1 ? 's' : ''}
+                </Typography>
+              </td>
+              <td>
+                <Typography component="span" variant="body2" sx={{ color: toneColor(s.tone) }}>
+                  {s.state}
+                </Typography>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Box>
+    </>
   );
 }
 

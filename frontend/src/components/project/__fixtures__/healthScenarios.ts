@@ -567,10 +567,20 @@ export const endpointsSelectorlessSvc: Scenario = {
 };
 
 export const endpointsPairedRealSvc: Scenario = {
-  // Real selector-based Service + empty Endpoints → genuine "no backends".
+  // Real selector-based Service pointing at a Deployment whose pod template
+  // matches the selector — with empty Endpoints. Genuine "no backends" case.
   name: 'endpointsPairedRealSvc',
   items: [
-    deployment('web', 1, 1),
+    {
+      kind: 'Deployment',
+      metadata: { name: 'web', namespace: 'demo', creationTimestamp: OLD },
+      spec: {
+        replicas: 1,
+        selector: { matchLabels: { app: 'web' } },
+        template: { metadata: { labels: { app: 'web' } } },
+      },
+      status: { replicas: 1, readyReplicas: 1 },
+    },
     {
       kind: 'Service',
       metadata: { name: 'web-svc', namespace: 'demo', creationTimestamp: OLD },
@@ -582,8 +592,44 @@ export const endpointsPairedRealSvc: Scenario = {
     status: 'warning',
     label: 'Degraded',
     rank: 2,
-    reasonsIncludes: ['no endpoints'],
+    reasonsIncludes: ['no ready pods behind this Service'],
   },
+};
+
+export const endpointsOrphanServiceWithSelector: Scenario = {
+  // Real selector-based Service but NO workload with matching labels exists
+  // in items. Service is unused/dormant. Empty Endpoints → silent.
+  name: 'endpointsOrphanServiceWithSelector',
+  items: [
+    deployment('web', 1, 1),
+    {
+      kind: 'Service',
+      metadata: { name: 'unused-svc', namespace: 'demo', creationTimestamp: OLD },
+      spec: { type: 'ClusterIP', selector: { app: 'nothing-here' } },
+    },
+    endpoints('unused-svc', 0),
+  ],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const endpointsStatefulSetPerPod: Scenario = {
+  // Per-pod StatefulSet governing service — selector pins to a specific
+  // pod ordinal via statefulset.kubernetes.io/pod-name. Legitimately
+  // empty when that ordinal isn't running. Never warn.
+  name: 'endpointsStatefulSetPerPod',
+  items: [
+    deployment('web', 1, 1),
+    {
+      kind: 'Service',
+      metadata: { name: 'esymacservice-9', namespace: 'demo', creationTimestamp: OLD },
+      spec: {
+        type: 'ClusterIP',
+        selector: { 'statefulset.kubernetes.io/pod-name': 'esymacservice-9' },
+      },
+    },
+    endpoints('esymacservice-9', 0),
+  ],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
 export const endpointsWithAddresses: Scenario = {
@@ -645,7 +691,7 @@ export const serviceHealthy: Scenario = {
   // Service alone is not a workload — should be Passive, not Healthy.
   name: 'serviceHealthy',
   items: [svc('web')],
-  expected: { status: 'passive', label: 'Passive', rank: 0 },
+  expected: { status: 'passive', label: 'No Workloads', rank: 0 },
 };
 
 export const passiveConfigOnly: Scenario = {
@@ -664,7 +710,7 @@ export const passiveConfigOnly: Scenario = {
     { kind: 'RoleBinding', metadata: { name: 'rb', namespace: 'demo', creationTimestamp: OLD } },
     { kind: 'LimitRange', metadata: { name: 'lr', namespace: 'demo', creationTimestamp: OLD } },
   ],
-  expected: { status: 'passive', label: 'Passive', rank: 0 },
+  expected: { status: 'passive', label: 'No Workloads', rank: 0 },
 };
 
 export const passiveWakesUpWithWorkload: Scenario = {

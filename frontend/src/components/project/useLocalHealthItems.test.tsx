@@ -124,10 +124,14 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     );
   });
 
-  it('popover on a Healthy row shows the "no issues detected" message', async () => {
+  it('popover on a Healthy row shows the resource inventory / stats', async () => {
     const u = userEvent.setup();
     mountWith(F.allHealthySingleCluster.items);
     await u.click(screen.getByRole('button', { name: /Healthy/i }));
-    expect(await screen.findByText(/no issues detected/i)).toBeInTheDocument();
+    // Inventory heading is present
+    expect(await screen.findByText(/Inventory/i)).toBeInTheDocument();
+    // Real stats appear — the fixture has one Deployment 3/3 ready.
+    expect(screen.getByText(/1 Deployment/i)).toBeInTheDocument();
+    expect(screen.getByText(/3\/3 ready/)).toBeInTheDocument();
   });
 });
