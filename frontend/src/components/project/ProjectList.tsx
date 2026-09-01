@@ -15,7 +15,18 @@
  */
 
 import { Icon } from '@iconify/react';
-import { Box, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  Divider,
+  IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  Popover,
+  Tooltip,
+  Typography,
+} from '@mui/material';
 import { groupBy, uniq } from 'lodash';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -29,7 +40,11 @@ import { StatusLabel } from '../common';
 import Link from '../common/Link';
 import { PureNamespacesAutocomplete } from '../common/NamespacesAutocomplete';
 import Table, { TableColumn } from '../common/Table/Table';
-import { getHealthIcon, getResourcesHealth, isSystemNamespace } from './projectUtils';
+import { getLocalHealth, LocalHealthEvidence } from './localHealth';
+// NOTE (p17): if you restore the upstream 'health' column below, re-add
+// `getHealthIcon, getResourcesHealth` to the import list on the next line.
+import { isSystemNamespace } from './projectUtils';
+import { useLocalHealthItems } from './useLocalHealthItems';
 import { useProjectItems } from './useProjectResources';
 
 // Applications are auto-discovered: every namespace the user's token can see
@@ -108,6 +123,121 @@ export const useProject = (name: string) => {
     [namespaces, name, isLoading]
   );
 };
+
+// ===== BEGIN p17 local health Cell (with p18 evidence popover) =====
+// Renders the new "Status" column body. Extracted as a standalone component
+// so useLocalHealthItems.test.tsx can mount it directly. See p17.txt +
+// p18.txt on branch GT_D_V1.
+export interface LocalHealthCellProps {
+  project: ProjectDefinition;
+  onRank?: (id: string, rank: number) => void;
+}
+
+export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
+  const { t } = useTranslation();
+  const { items } = useLocalHealthItems(project);
+  const health = useMemo(() => getLocalHealth(items), [items]);
+
+  useEffect(() => {
+    onRank?.(project.id, health.rank);
+  }, [project.id, health.rank, onRank]);
+
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const open = Boolean(anchor);
+  const closePopover = useCallback(() => setAnchor(null), []);
+  const openPopover = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => setAnchor(e.currentTarget),
+    []
+  );
+
+  if (health.status === 'empty') {
+    return <span>{t('No Resources')}</span>;
+  }
+
+  const errors = health.evidence.filter(e => e.severity === 'error');
+  const warnings = health.evidence.filter(e => e.severity === 'warning');
+  const totalItems = items?.length ?? 0;
+  const contextLine = `${project.namespaces.join(', ')} @ ${project.clusters.join(', ')}`;
+
+  return (
+    <>
+      <Tooltip title={t('Click for evidence')}>
+        <IconButton
+          size="small"
+          onClick={openPopover}
+          aria-label={`${health.label} — ${t('Click for evidence')}`}
+          sx={{ p: 0.5, borderRadius: 1 }}
+        >
+          <StatusLabel status={health.status}>
+            <Icon icon={health.icon} style={{ fontSize: 24 }} />
+            {health.status === 'error'
+              ? t('Unhealthy')
+              : health.status === 'warning'
+              ? t('Degraded')
+              : t('Healthy')}
+          </StatusLabel>
+        </IconButton>
+      </Tooltip>
+      <Popover
+        open={open}
+        anchorEl={anchor}
+        onClose={closePopover}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { maxWidth: 480, minWidth: 320, p: 1.5 } } }}
+      >
+        <Typography variant="subtitle2" gutterBottom>
+          {health.label} — {contextLine}
+        </Typography>
+        {errors.length === 0 && warnings.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            {t('Healthy — no issues detected across {{count}} resources.', {
+              count: totalItems,
+            })}
+          </Typography>
+        ) : (
+          <>
+            {errors.length > 0 && <EvidenceSection title={t('Errors')} evidence={errors} />}
+            {warnings.length > 0 && (
+              <>
+                {errors.length > 0 && <Divider sx={{ my: 1 }} />}
+                <EvidenceSection title={t('Warnings')} evidence={warnings} />
+              </>
+            )}
+          </>
+        )}
+        <Box mt={1.5} display="flex" justifyContent="flex-end">
+          <Button size="small" onClick={closePopover}>
+            {t('OK')}
+          </Button>
+        </Box>
+      </Popover>
+    </>
+  );
+}
+
+function EvidenceSection({ title, evidence }: { title: string; evidence: LocalHealthEvidence[] }) {
+  return (
+    <>
+      <Typography variant="overline" color="text.secondary">
+        {title}
+      </Typography>
+      <List dense disablePadding>
+        {evidence.map((e, i) => (
+          <ListItem key={`${e.kind}/${e.namespace}/${e.name}/${i}`} sx={{ py: 0.25 }}>
+            <ListItemText
+              primary={`${e.kind}/${e.namespace || '-'}/${e.name}`}
+              secondary={e.message}
+              primaryTypographyProps={{ variant: 'body2' }}
+              secondaryTypographyProps={{ variant: 'caption' }}
+            />
+          </ListItem>
+        ))}
+      </List>
+    </>
+  );
+}
+// ===== END p17 local health Cell =====
 
 function ProjectListContent() {
   const { t } = useTranslation();
@@ -189,6 +319,12 @@ function ProjectListContent() {
         },
         gridTemplate: 'min-content',
       },
+      // ===== BEGIN p17 disabled upstream 'health' column — DO NOT DELETE =====
+      // Restore by removing this BEGIN/END wrapper. Kept in place so an
+      // upstream sync merges cleanly and so the original logic is one
+      // uncomment away. Local replacement is the { id: 'localHealth', ... }
+      // object immediately below. See p17.txt on branch GT_D_V1.
+      /*
       {
         id: 'health',
         header: t('Health'),
@@ -241,6 +377,19 @@ function ProjectListContent() {
             </StatusLabel>
           );
         },
+        gridTemplate: 'min-content',
+      },
+      */
+      // ===== END p17 disabled upstream 'health' column =====
+      {
+        id: 'localHealth',
+        header: t('Status'),
+        // Rank used for sorting: 0 = no resources, 1 = healthy, 2 = degraded, 3 = unhealthy.
+        // Same reason as the old column: computed lazily per visible row.
+        accessorFn: it => it.healthRank,
+        Cell: ({ row: { original } }) => (
+          <LocalHealthCell project={original} onRank={reportHealthRank} />
+        ),
         gridTemplate: 'min-content',
       },
       {
