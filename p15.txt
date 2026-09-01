@@ -1,0 +1,287 @@
+================================================================================
+p15 — LOCAL-ONLY CUSTOM HEALTH COLUMN FOR APPLICATIONS TAB
+Target branch: GT_D_V1  (do NOT push upstream; do NOT open a PR to kubernetes-sigs/headlamp)
+Scope:        Applications tab -> "Status/Health" column only. Nothing else.
+================================================================================
+
+WHY THIS EXISTS
+--------------------------------------------------------------------------------
+The existing "health" column in the Applications tab (frontend/src/components/
+project/ProjectList.tsx) is misleading. Full analysis of the gap was captured
+earlier in health.txt on this same branch. Summary of the problem:
+
+  - Pod is NOT in defaultApiResources, so Pod-level failures are invisible.
+  - getStatus() in KubeObjectStatus.tsx returns hard-coded 'success' for Job,
+    PVC, Endpoints, EndpointSlice, HPA, ResourceQuota, Ingress, etc.
+  - Deployment/RS/SS/DS can only return 'warning', never 'error'.
+  - Consequence: the "Unhealthy" (error) branch of ProjectList's health column
+    is effectively dead code; the badge shows "Healthy" while real failures
+    (failed Jobs, Pending PVCs, empty Endpoints, quota exhaustion, bare Pod
+    crashloops) are silently ignored.
+
+This p15 task fixes that FOR THIS FORK ONLY, without touching upstream logic.
+
+
+HARD CONSTRAINTS (do NOT violate)
+--------------------------------------------------------------------------------
+1. LOCAL ONLY. This change lives on branch GT_D_V1. Do not open a PR to
+   kubernetes-sigs/headlamp. Do not modify any shared code path other than
+   what is listed below.
+2. DO NOT DELETE THE EXISTING HEALTH COLUMN. Comment it out in place with a
+   clear marker block. It must be trivially restorable by uncommenting.
+3. DO NOT MODIFY:
+   - frontend/src/components/resourceMap/nodes/KubeObjectStatus.tsx
+     (shared getStatus / getPodStatus stay exactly as they are — other parts
+      of Headlamp still use them)
+   - frontend/src/components/project/projectUtils.ts
+     (getResourcesHealth, getHealthIcon, defaultApiResources, isSystemNamespace
+      stay exactly as they are)
+   - frontend/src/components/project/useProjectResources.ts
+   - frontend/src/components/advancedSearch/utils/useKubeLists.ts
+   - Any backend Go code
+   - Any plugin registry / plugin lib code
+4. DO NOT change existing behavior anywhere else in the UI. ResourceMap,
+   Cluster overview, project details tabs, etc. keep the upstream health
+   calculation.
+5. DO NOT add or change i18n keys other than the ones the new column itself
+   needs. Keep default (English) strings inline if unsure.
+
+
+FILES TOUCHED (exhaustive list — nothing else may change)
+--------------------------------------------------------------------------------
+A. NEW FILE  : frontend/src/components/project/localHealth.ts
+               -> holds the custom health computation for the new column only.
+B. EDIT      : frontend/src/components/project/ProjectList.tsx
+               -> (i)  wrap the existing `{ id: 'health', ... }` column
+                       definition in a block comment marked with the exact
+                       markers below. Do NOT delete a single line inside it.
+                  (ii) insert a NEW column definition immediately after the
+                       commented block, importing the helper from
+                       localHealth.ts.
+
+Exact comment markers to use around the old column so it is grep-able and
+restorable in one step:
+
+    // ===== BEGIN local-p15 disabled upstream 'health' column — DO NOT DELETE =====
+    // (restore by removing this BEGIN/END wrapper)
+    /*
+       ... entire { id: 'health', ... } column object here, unchanged ...
+    */
+    // ===== END local-p15 disabled upstream 'health' column =====
+
+New column MUST use id: 'localHealth' (do not reuse id 'health').
+
+
+NEW-COLUMN CONTRACT
+--------------------------------------------------------------------------------
+The new column has the same shape as the current 'health' column (label,
+gridTemplate, getValue for sort, Cell for rendering) but its status/label/icon
+is computed by the new helper.
+
+Signature:
+
+  // frontend/src/components/project/localHealth.ts
+  import type { KubeObject } from '../../lib/k8s/KubeObject';
+
+  export type LocalHealthStatus = 'success' | 'warning' | 'error';
+
+  export interface LocalHealthResult {
+    status: LocalHealthStatus | 'empty';   // 'empty' when items.length === 0
+    label: string;                          // "Healthy" | "Degraded" | "Unhealthy" | "No Resources"
+    rank: 0 | 1 | 2 | 3;                    // for column sorting: 0 empty, 1 healthy, 2 degraded, 3 unhealthy
+    icon: string;                           // mdi:* icon name (same set as getHealthIcon uses)
+    reasons: string[];                      // human-readable failure reasons; empty when Healthy
+  }
+
+  export function getLocalHealth(resources: KubeObject[]): LocalHealthResult;
+
+The Cell in ProjectList should render the label via <StatusLabel status=...>
+(mapping 'empty' -> no chip / "No Resources" text, same as today), and the
+`reasons[]` should be attached as a tooltip on the chip so an on-call engineer
+can see WHY the app is Degraded/Unhealthy without leaving the list.
+
+
+INITIAL HEALTH RULES (v1 — tune later, do not over-engineer now)
+--------------------------------------------------------------------------------
+Evaluate every fetched object in the resources array. Aggregate to one badge:
+
+  error   > 0                                 -> Unhealthy  (rank 3)
+  warning > 0                                 -> Degraded   (rank 2)
+  else, items.length > 0                      -> Healthy    (rank 1)
+  items.length === 0                          -> empty      (rank 0)
+
+Per-kind rules (short-circuit at the first matching bullet):
+
+  1. Pod  (kind === 'Pod')
+       - status.phase === 'Failed'                                 -> error
+       - status.phase === 'Running' AND Ready condition != 'True'  -> error
+         (this catches CrashLoopBackOff / OOMKilled / probe fail /
+          container Waiting on the running pod)
+       - any containerStatus.state.waiting.reason in
+         { 'CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull',
+           'CreateContainerConfigError', 'InvalidImageName' }        -> error
+       - status.phase === 'Pending' AND
+         creationTimestamp older than 5 minutes                     -> error
+         (unschedulable / stuck pending)
+       - status.phase === 'Pending' (younger than 5 min)            -> warning
+       - status.phase === 'Succeeded'                               -> success
+       - else                                                       -> success
+
+  2. Deployment / ReplicaSet / StatefulSet / DaemonSet
+       - spec.replicas === 0                                        -> success
+         (intentionally scaled to zero — not a failure)
+       - status.replicas === 0 AND spec.replicas > 0                -> error
+         (no pods created at all — controller stuck)
+       - readyReplicas < desired (spec.replicas)                    -> warning
+       - readyReplicas === desired                                  -> success
+       Use frontend/src/lib/util getReadyReplicas / getTotalReplicas
+       (READ-ONLY — do not import a private helper, use the public one).
+
+  3. Job  (kind === 'Job')
+       - status.failed > 0 AND (status.succeeded ?? 0) === 0
+         AND no more retries left (status.failed >= spec.backoffLimit+1
+         when backoffLimit is defined, else >= 1)                   -> error
+       - status.active > 0 AND running longer than
+         spec.activeDeadlineSeconds (if set)                        -> warning
+       - status.succeeded > 0                                       -> success
+       - else                                                       -> success
+
+  4. CronJob  (kind === 'CronJob')
+       - status.active.length > (spec.concurrencyPolicy === 'Forbid'
+         ? 1 : 5)                                                   -> warning
+         (rare pile-up — soft signal only, don't hard-fail)
+       - else                                                       -> success
+
+  5. PersistentVolumeClaim  (kind === 'PersistentVolumeClaim')
+       - status.phase === 'Lost'                                    -> error
+       - status.phase === 'Pending' AND older than 2 minutes        -> error
+       - status.phase === 'Pending' (younger)                       -> warning
+       - status.phase === 'Bound'                                   -> success
+
+  6. Endpoints  (kind === 'Endpoints')
+       - subsets is missing/empty
+         AND a Service of the same name exists in resources
+         AND that Service.spec.type !== 'ExternalName'
+         AND that Service has selectors                             -> warning
+         (Service exists but no backing pods routable)
+       - else                                                       -> success
+       (EndpointSlice: skip in v1 — Endpoints covers the common case.
+        Add later if we start disabling Endpoints on newer clusters.)
+
+  7. HorizontalPodAutoscaler  (kind === 'HorizontalPodAutoscaler')
+       - status.conditions has ScalingActive with status='False'
+         AND reason !== 'ScalingDisabled'                           -> warning
+       - else                                                       -> success
+
+  8. ResourceQuota  (kind === 'ResourceQuota')
+       - For any hard/used pair where hard is a positive quantity:
+           usedRatio = parse(used) / parse(hard)
+           usedRatio >= 1.0                                         -> error
+           usedRatio >= 0.9                                         -> warning
+       - else                                                       -> success
+
+  9. Ingress  (kind === 'Ingress')
+       - status.loadBalancer.ingress missing or empty
+         AND creationTimestamp older than 5 minutes                 -> warning
+       - else                                                       -> success
+
+  10. Everything else (ConfigMap, Secret, Service, NetworkPolicy, Role,
+      RoleBinding, LimitRange, ...)                                 -> success
+
+Aggregation uses lodash countBy of the per-kind result, same style as the
+existing getResourcesHealth — but the new file must have its OWN copy of the
+tally so it never imports or mutates the shared getResourcesHealth.
+
+Reasons string format (populate `reasons[]` only for warning/error items,
+one line per item):
+    "<kind>/<namespace>/<name>: <short human reason>"
+  Cap at 10 entries in the array; suffix "…and N more" if more.
+
+
+IMPORTANT: PODS ARE NOT FETCHED BY THE APPLICATIONS TABLE
+--------------------------------------------------------------------------------
+defaultApiResources in projectUtils.ts does not include Pod. Because rule #4
+of the HARD CONSTRAINTS forbids editing projectUtils.ts, the new column runs
+with the SAME data set the existing column receives (19 default kinds + any
+kinds registered by plugins via registerProjectApiResource).
+
+Two consequences to accept honestly in v1:
+  a) Bare pods with no owning workload will still be invisible.
+  b) Pod-level rules above will fire only when a plugin has registered Pod as
+     a project API resource, OR when readyReplicas < desired lets us infer
+     the failure via Deployment/RS/SS/DS.
+
+This is a deliberate scope choice for p15 to keep the change minimal. A
+follow-up p16 can add a plugin that calls registerProjectApiResource for Pod
+so Pod-level rules become live without editing projectUtils.ts.
+
+
+PROJECTLIST.TSX EDIT — SHAPE OF THE NEW COLUMN
+--------------------------------------------------------------------------------
+Add immediately after the commented-out old column, inside the same columns
+array:
+
+  {
+    id: 'localHealth',
+    label: t('Status'),                    // keep the on-screen label "Status"
+    gridTemplate: 'min-content',
+    getValue: (project) =>
+      getLocalHealth(useProjectItemsSelector(project)).rank,
+    Cell: ({ row: project }) => {
+      const items = useProjectItems(project);
+      const h = getLocalHealth(items);
+      if (h.status === 'empty') {
+        return <span>{t('No Resources')}</span>;
+      }
+      return (
+        <Tooltip title={h.reasons.join('\n') || h.label}>
+          <StatusLabel status={h.status}>
+            <Icon icon={h.icon} />
+            {h.label}
+          </StatusLabel>
+        </Tooltip>
+      );
+    },
+  }
+
+Notes:
+- Reuse the SAME `useProjectItems(project)` hook the old column used — no new
+  fetch, no extra network cost. All numbers are computed client-side from the
+  data already in memory.
+- Reuse the SAME <StatusLabel> and mdi icon set — no design change.
+- Only text that appears on screen: "Status", "Healthy" / "Degraded" /
+  "Unhealthy" / "No Resources". Keep them inside t() so i18n still picks
+  them up.
+
+
+VERIFICATION (must pass before commit)
+--------------------------------------------------------------------------------
+1. `git grep -n "id: 'health'"  frontend/src/components/project/ProjectList.tsx`
+   -> must appear ONLY inside the /* ... */ block delimited by the BEGIN/END
+      p15 markers.
+2. `git diff --stat` shows exactly two files changed:
+     frontend/src/components/project/ProjectList.tsx
+     frontend/src/components/project/localHealth.ts   (new)
+   Nothing else — especially not projectUtils.ts or KubeObjectStatus.tsx.
+3. Applications tab renders. For a namespace with a known failed Job or a
+   PVC stuck in Pending, the new "Status" column shows "Unhealthy" and the
+   tooltip lists the reasons.
+4. For a namespace where all workloads are Ready and there is no failed Job /
+   pending PVC, the new column shows "Healthy".
+5. Empty namespace still shows "No Resources".
+
+
+OUT OF SCOPE (do not touch in p15)
+--------------------------------------------------------------------------------
+- Real-time health (currently a 60 s poll; do not switch to a watch here).
+- Adding Pod to defaultApiResources.
+- Any change to the Resources column.
+- Any change to project details tabs, overview sections, or header actions.
+- Any change to the ResourceMap / graph health colors.
+- Any change to backend/Go code.
+- Any change to plugin API.
+- Any upstream PR.
+
+================================================================================
+END p15
+================================================================================
