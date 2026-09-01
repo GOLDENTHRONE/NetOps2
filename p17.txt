@@ -1,0 +1,476 @@
+================================================================================
+p17 — SELF-CONTAINED SPEC: LOCAL CUSTOM HEALTH COLUMN + LOCAL POD FETCH
+Target branch: GT_D_V1  (do NOT push upstream; do NOT open a PR to kubernetes-sigs/headlamp)
+Scope:        Applications tab -> "Status" column only. One-shot spec.
+Supersedes:   p15.txt (health column) and p16.txt (plugin Pod fetch).
+              Read this file alone; do not follow p15 or p16 in parallel.
+================================================================================
+
+WHY THIS EXISTS (one paragraph)
+--------------------------------------------------------------------------------
+The existing "health" column in the Applications tab is misleading. Full
+technical review is in health.txt on this same branch. Short version: only
+Deployment-family objects can produce non-'success' status, Pod is not even
+fetched, and 14 other kinds always return 'success'. "Unhealthy" is
+effectively dead code, and real failures (failed Jobs, Pending PVCs, empty
+Endpoints, quota exhaustion, bare-pod CrashLoopBackOff) all show as
+"Healthy". p17 fixes this fork-locally with the smallest possible touch and
+with zero change in what other parts of Headlamp (Resources column,
+ProjectDetails, ResourceMap, backend, plugins) render or fetch.
+
+Approach: comment out (do NOT delete) the upstream "health" column, add a
+new "Status" column driven by a new local helper `getLocalHealth`, and
+fetch Pods LOCALLY inside the new column's Cell — never touching the shared
+`defaultApiResources` list, never registering Pod globally via any plugin,
+never mutating Redux `state.projects.apiResources`. As a result, the extra
+Pod data exists only in-memory of that one Cell; every other consumer of
+shared project data behaves exactly as before.
+
+
+HARD CONSTRAINTS (do NOT violate)
+--------------------------------------------------------------------------------
+1. LOCAL ONLY. Branch GT_D_V1. No upstream PR, no plugin publish.
+2. NO EDITS to any file except the two listed under "FILES TOUCHED" below.
+   Verified untouched:
+     - frontend/src/components/project/projectUtils.ts
+       (defaultApiResources / getResourcesHealth / getHealthIcon /
+        isSystemNamespace all remain byte-for-byte identical)
+     - frontend/src/components/project/useProjectResources.ts
+     - frontend/src/components/project/ProjectDetails.tsx (and every other
+       ProjectDetails*/ProjectResourcesTab* file)
+     - frontend/src/components/resourceMap/nodes/KubeObjectStatus.tsx
+       (shared getStatus / getPodStatus stay exactly as they are)
+     - frontend/src/components/advancedSearch/utils/useKubeLists.ts
+     - Any file under backend/ or plugins/
+     - Any file under frontend/src/plugin/registry.tsx (no new hook)
+     - Any i18n file (new visible strings reuse existing t() keys where
+       possible; new keys are added inline in ProjectList.tsx only if
+       strictly needed and are OK because that file is already in our
+       change set)
+3. NO PLUGIN. p16's plugin approach is explicitly rejected because
+   `registerProjectApiResource` mutates a shared Redux slice that
+   ProjectList's Resources column, ProjectDetails, and ResourceMap all
+   read. That would change what those shared consumers render, which
+   violates constraint #2 in spirit even if no file is edited.
+4. NO WATCH FLIP. Applications LIST already polls (disableWatch:true,
+   REFETCH_INTERVAL_MS ≈ 60 s). p17 keeps the same cadence for its new
+   Pod fetch.
+5. NO NEW BACKEND CODE. Every request goes through the existing
+   `/clusters/<name>/api/...` reverse proxy path.
+6. NO DELETE of the old column. Comment it out in place with the exact
+   markers below so it is trivially restorable and grep-able.
+
+
+FILES TOUCHED (exhaustive — nothing else may change)
+--------------------------------------------------------------------------------
+A. NEW  : frontend/src/components/project/localHealth.ts
+          - Pure helper: `getLocalHealth(items): LocalHealthResult`.
+          - No React, no fetch. Just a function over an array.
+
+B. NEW  : frontend/src/components/project/useLocalHealthItems.ts
+          - React hook that composes the two data sources:
+              const { items } = useProjectItems(project, { disableWatch: true })
+              const pods       = useLocalPodsForProject(project)   // internal
+              return { items: [...items, ...pods], isLoading, errors }
+          - Uses `useKubeLists` from
+            frontend/src/components/advancedSearch/utils/useKubeLists.ts
+            (READ-ONLY import; that file is not edited) to fetch Pods
+            scoped to (project.clusters, project.namespaces).
+          - Refetch interval: 60000 ms (match project table's polling).
+          - Max items per list: 1000 (match useProjectItems' MAX_ITEMS).
+
+C. EDIT : frontend/src/components/project/ProjectList.tsx
+          - Wrap the existing `{ id: 'health', ... }` column object in
+            the p17 comment block (see markers).
+          - Insert a new `{ id: 'localHealth', ... }` column immediately
+            after that block, using useLocalHealthItems + getLocalHealth.
+          - No other change to this file.
+
+
+STEP-BY-STEP INSTRUCTIONS (in order — do not reorder)
+--------------------------------------------------------------------------------
+STEP 0. Prep
+   0.1  Ensure you're on branch GT_D_V1:   `git checkout GT_D_V1`
+   0.2  `git pull origin GT_D_V1`
+   0.3  `git status` must be clean before starting.
+
+STEP 1. Add localHealth.ts (pure logic, no I/O)
+   Path: frontend/src/components/project/localHealth.ts
+   Contents:
+
+     import { countBy } from 'lodash';
+     import type { KubeObject } from '../../lib/k8s/KubeObject';
+     import { getReadyReplicas, getTotalReplicas } from '../../lib/util';
+
+     export type LocalHealthStatus = 'success' | 'warning' | 'error';
+     export type LocalHealthBadge  = LocalHealthStatus | 'empty';
+
+     export interface LocalHealthResult {
+       status: LocalHealthBadge;   // 'empty' when items.length === 0
+       label: 'Healthy' | 'Degraded' | 'Unhealthy' | 'No Resources';
+       rank: 0 | 1 | 2 | 3;        // 0 empty, 1 healthy, 2 degraded, 3 unhealthy
+       icon: string;               // mdi:* icon id
+       reasons: string[];          // ≤ 10 items; suffix "...and N more" if capped
+     }
+
+     const REASON_CAP = 10;
+
+     function localGetItemStatus(o: KubeObject): {
+       s: LocalHealthStatus;
+       reason?: string;
+     } {
+       const kind = o.kind;
+       const now  = Date.now();
+       const ageMs = (ts?: string) => (ts ? now - new Date(ts).getTime() : 0);
+       const olderThan = (ts: string | undefined, ms: number) => ageMs(ts) > ms;
+
+       if (kind === 'Pod') {
+         const s: any = (o as any).status ?? {};
+         const phase: string | undefined = s.phase;
+         const conds: any[] = s.conditions ?? [];
+         const ready = conds.find(c => c.type === 'Ready')?.status === 'True';
+         const waitReasons = new Set([
+           'CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull',
+           'CreateContainerConfigError', 'InvalidImageName',
+         ]);
+         const cs: any[] = s.containerStatuses ?? [];
+         const hitWait = cs.some(c => waitReasons.has(c.state?.waiting?.reason));
+         if (phase === 'Failed')  return { s: 'error', reason: `Pod/${o.metadata.namespace}/${o.metadata.name}: Failed` };
+         if (hitWait)             return { s: 'error', reason: `Pod/${o.metadata.namespace}/${o.metadata.name}: ${cs.find(c => waitReasons.has(c.state?.waiting?.reason))!.state.waiting.reason}` };
+         if (phase === 'Running' && !ready)
+                                  return { s: 'error', reason: `Pod/${o.metadata.namespace}/${o.metadata.name}: Running but NotReady` };
+         if (phase === 'Pending' && olderThan(o.metadata.creationTimestamp, 5 * 60_000))
+                                  return { s: 'error', reason: `Pod/${o.metadata.namespace}/${o.metadata.name}: Pending > 5m` };
+         if (phase === 'Pending') return { s: 'warning', reason: `Pod/${o.metadata.namespace}/${o.metadata.name}: Pending` };
+         return { s: 'success' };
+       }
+
+       if (['Deployment', 'ReplicaSet', 'StatefulSet', 'DaemonSet'].includes(kind)) {
+         const spec: any = (o as any).spec ?? {};
+         const desired = spec.replicas ?? getTotalReplicas(o as any);
+         const ready   = getReadyReplicas(o as any) ?? 0;
+         const statusReplicas: number = (o as any).status?.replicas ?? 0;
+         if (desired === 0)                       return { s: 'success' };
+         if (statusReplicas === 0 && desired > 0) return { s: 'error',   reason: `${kind}/${o.metadata.namespace}/${o.metadata.name}: 0/${desired} pods created` };
+         if (ready < desired)                     return { s: 'warning', reason: `${kind}/${o.metadata.namespace}/${o.metadata.name}: ${ready}/${desired} ready` };
+         return { s: 'success' };
+       }
+
+       if (kind === 'Job') {
+         const st: any = (o as any).status ?? {};
+         const sp: any = (o as any).spec ?? {};
+         const failed    = st.failed    ?? 0;
+         const succeeded = st.succeeded ?? 0;
+         const backoff   = (sp.backoffLimit ?? 6) + 1;
+         if (failed >= backoff && succeeded === 0)
+           return { s: 'error', reason: `Job/${o.metadata.namespace}/${o.metadata.name}: failed (${failed}/${backoff})` };
+         return { s: 'success' };
+       }
+
+       if (kind === 'CronJob') {
+         const st: any = (o as any).status ?? {};
+         const sp: any = (o as any).spec ?? {};
+         const active = st.active?.length ?? 0;
+         const cap    = sp.concurrencyPolicy === 'Forbid' ? 1 : 5;
+         if (active > cap)
+           return { s: 'warning', reason: `CronJob/${o.metadata.namespace}/${o.metadata.name}: ${active} active runs` };
+         return { s: 'success' };
+       }
+
+       if (kind === 'PersistentVolumeClaim') {
+         const phase = (o as any).status?.phase;
+         if (phase === 'Lost')
+           return { s: 'error',   reason: `PVC/${o.metadata.namespace}/${o.metadata.name}: Lost` };
+         if (phase === 'Pending' && olderThan(o.metadata.creationTimestamp, 2 * 60_000))
+           return { s: 'error',   reason: `PVC/${o.metadata.namespace}/${o.metadata.name}: Pending > 2m` };
+         if (phase === 'Pending')
+           return { s: 'warning', reason: `PVC/${o.metadata.namespace}/${o.metadata.name}: Pending` };
+         return { s: 'success' };
+       }
+
+       if (kind === 'Endpoints') {
+         const subsets = (o as any).subsets ?? [];
+         const hasAddr = subsets.some((sub: any) => (sub.addresses?.length ?? 0) > 0);
+         if (subsets.length === 0 || !hasAddr)
+           return { s: 'warning', reason: `Endpoints/${o.metadata.namespace}/${o.metadata.name}: no endpoints` };
+         return { s: 'success' };
+       }
+
+       if (kind === 'HorizontalPodAutoscaler') {
+         const conds: any[] = (o as any).status?.conditions ?? [];
+         const bad = conds.find(c => c.type === 'ScalingActive' && c.status === 'False' && c.reason !== 'ScalingDisabled');
+         if (bad)
+           return { s: 'warning', reason: `HPA/${o.metadata.namespace}/${o.metadata.name}: ${bad.reason}` };
+         return { s: 'success' };
+       }
+
+       if (kind === 'Ingress') {
+         const lb = (o as any).status?.loadBalancer?.ingress ?? [];
+         if (lb.length === 0 && olderThan(o.metadata.creationTimestamp, 5 * 60_000))
+           return { s: 'warning', reason: `Ingress/${o.metadata.namespace}/${o.metadata.name}: no address` };
+         return { s: 'success' };
+       }
+
+       // ResourceQuota omitted from v1 — quantity parsing has enough edge cases
+       // (Ki/Mi/m/decimal) that a wrong impl gives false positives. Add later
+       // once we've picked a quantity parser.
+
+       return { s: 'success' };
+     }
+
+     export function getLocalHealth(items: KubeObject[]): LocalHealthResult {
+       if (!items || items.length === 0) {
+         return { status: 'empty', label: 'No Resources', rank: 0, icon: 'mdi:help-circle', reasons: [] };
+       }
+
+       const perItem = items.map(localGetItemStatus);
+       const tally = countBy(perItem, x => x.s) as Record<LocalHealthStatus, number>;
+       const reasons = perItem
+         .filter(x => x.s !== 'success' && x.reason)
+         .map(x => x.reason!) as string[];
+       const capped = reasons.slice(0, REASON_CAP);
+       if (reasons.length > REASON_CAP) {
+         capped.push(`…and ${reasons.length - REASON_CAP} more`);
+       }
+
+       if ((tally.error ?? 0) > 0) {
+         return { status: 'error',   label: 'Unhealthy', rank: 3, icon: 'mdi:alert-circle', reasons: capped };
+       }
+       if ((tally.warning ?? 0) > 0) {
+         return { status: 'warning', label: 'Degraded',  rank: 2, icon: 'mdi:alert',        reasons: capped };
+       }
+       return {   status: 'success', label: 'Healthy',   rank: 1, icon: 'mdi:check-circle', reasons: [] };
+     }
+
+STEP 2. Add useLocalHealthItems.ts (React hook that composes data)
+   Path: frontend/src/components/project/useLocalHealthItems.ts
+   Contents:
+
+     import { useMemo } from 'react';
+     import { useKubeLists } from '../advancedSearch/utils/useKubeLists';
+     import type { ApiResource } from '../../lib/k8s/api/v2/ApiResource';
+     import type { KubeObject } from '../../lib/k8s/KubeObject';
+     import { useProjectItems } from './useProjectResources';
+     import type { Project } from './projectUtils';   // if a public Project type is exported;
+                                                       // otherwise import from wherever
+                                                       // useProjectItems' signature declares it
+
+     const POD_RESOURCE: ApiResource = {
+       apiVersion: 'v1',
+       version: 'v1',
+       pluralName: 'pods',
+       singularName: 'pod',
+       kind: 'Pod',
+       isNamespaced: true,
+     };
+
+     const MAX_ITEMS       = 1000;
+     const REFETCH_INTERVAL_MS = 60_000;
+
+     export function useLocalHealthItems(project: Project) {
+       // 1. shared 19-kind data — same call the Resources & health columns use
+       const projectItems = useProjectItems(project, { disableWatch: true });
+
+       // 2. LOCAL Pod fetch — scoped to this project only; NOT written to any
+       //    global state; only this hook's caller ever sees these Pods.
+       const localPods = useKubeLists(
+         [POD_RESOURCE],
+         project.clusters,
+         MAX_ITEMS,
+         REFETCH_INTERVAL_MS,
+         project.namespaces
+       );
+
+       const items: KubeObject[] = useMemo(
+         () => [...(projectItems.items ?? []), ...((localPods as any).items ?? [])],
+         [projectItems.items, (localPods as any).items]
+       );
+
+       const isLoading = projectItems.isLoading || (localPods as any).isLoading;
+       const errors    = [...(projectItems.errors ?? []), ...((localPods as any).errors ?? [])];
+       return { items, isLoading, errors };
+     }
+
+   Note on the `as any` casts: exact shape of `useKubeLists`'s return varies
+   between Headlamp versions. Adjust the destructure to whatever fields it
+   actually exposes (items, isLoading, errors are the common trio). This is
+   the ONLY file where such adjustment is allowed; do not push casts into
+   shared code.
+
+STEP 3. Edit ProjectList.tsx (one column commented, one column added)
+   Path: frontend/src/components/project/ProjectList.tsx
+
+   3.1  ADD IMPORTS at the top of the file (near existing imports; do NOT
+        reorder existing lines):
+          import { useLocalHealthItems } from './useLocalHealthItems';
+          import { getLocalHealth }      from './localHealth';
+          import Tooltip                 from '@mui/material/Tooltip';   // if not already imported
+          import Icon                    from '@iconify/react';          // adjust to whatever the file already uses
+
+   3.2  FIND the existing column definition object that starts with
+          { id: 'health', ...
+        Wrap the entire object (from the opening `{` to the closing `},`)
+        with these EXACT markers:
+
+          // ===== BEGIN p17 disabled upstream 'health' column — DO NOT DELETE =====
+          // (restore by removing this BEGIN/END wrapper.)
+          /*
+          { id: 'health',
+             ...entire original object here, unchanged...
+          },
+          */
+          // ===== END p17 disabled upstream 'health' column =====
+
+        NOTHING inside the /* */ block is edited or removed. Trailing commas
+        and comments stay as they were.
+
+   3.3  IMMEDIATELY AFTER the END marker, insert the new column object:
+
+          {
+            id: 'localHealth',
+            label: t('translation|Status'),   // use existing 'Status' key if available; new key OK
+            gridTemplate: 'min-content',
+            getValue: ({ original }) => {
+              // sort helper — used for column sort; runs once per row
+              const { items } = useLocalHealthItems(original);
+              return getLocalHealth(items).rank;
+            },
+            Cell: ({ row: { original } }) => {
+              const { items } = useLocalHealthItems(original);
+              const h = getLocalHealth(items);
+              if (h.status === 'empty') {
+                return <span>{t('translation|No Resources')}</span>;
+              }
+              return (
+                <Tooltip title={h.reasons.length ? h.reasons.join('\n') : h.label}>
+                  <StatusLabel status={h.status}>
+                    <Icon icon={h.icon} />
+                    {t(`translation|${h.label}`)}
+                  </StatusLabel>
+                </Tooltip>
+              );
+            },
+          },
+
+        Use whatever i18n namespace + t() convention the surrounding
+        columns in ProjectList already use — do not invent a new one.
+
+   3.4  DO NOT touch any other line in the file.
+
+
+HEALTH RULES v1 (already inlined in localHealth.ts above — recap)
+--------------------------------------------------------------------------------
+Aggregation:
+  error > 0                 -> Unhealthy  (rank 3)
+  warning > 0               -> Degraded   (rank 2)
+  else, items.length > 0    -> Healthy    (rank 1)
+  items.length === 0        -> empty ("No Resources", rank 0)
+
+Per-kind (short-circuit at first matching rule):
+  Pod             : Failed OR CrashLoopBackOff/ImagePullBackOff/etc. OR
+                    Running-but-NotReady OR Pending>5min → error;
+                    Pending<5min → warning; else success.
+  Dep/RS/SS/DS    : desired 0 → success; created 0 with desired>0 → error;
+                    ready < desired → warning; else success.
+  Job             : failed >= backoffLimit+1 AND succeeded === 0 → error;
+                    else success.
+  CronJob         : active > cap → warning; else success.
+                    (cap = 1 for Forbid, 5 otherwise)
+  PVC             : Lost → error; Pending>2min → error; Pending<2min → warning;
+                    else success.
+  Endpoints       : no subsets or no addresses → warning; else success.
+  HPA             : ScalingActive=False (not ScalingDisabled) → warning;
+                    else success.
+  Ingress         : no LB address AND older than 5min → warning; else success.
+  Everything else : success.
+
+
+VERIFICATION (must all pass before commit)
+--------------------------------------------------------------------------------
+V1. `git diff --stat` shows EXACTLY three files:
+      frontend/src/components/project/localHealth.ts           (new)
+      frontend/src/components/project/useLocalHealthItems.ts   (new)
+      frontend/src/components/project/ProjectList.tsx          (edited)
+    Nothing else. Especially not projectUtils.ts,
+    useProjectResources.ts, KubeObjectStatus.tsx, useKubeLists.ts,
+    ProjectDetails.tsx, or any Redux/store file.
+
+V2. `git grep -n "id: 'health'" frontend/src/components/project/ProjectList.tsx`
+    finds ONE hit, and that hit sits inside the BEGIN/END p17 comment block.
+
+V3. `git grep -n "registerProjectApiResource" .` finds hits only in the
+    upstream examples/registry (already there). NO new hit anywhere else —
+    we did not go the plugin route.
+
+V4. `git grep -n "state.projects.apiResources" .` finds only the upstream
+    shared-code hits (useProjectResources, ProjectDetails, ProjectList).
+    NO new writer to that slice. NO new reader either from our new files.
+
+V5. Type-check + build pass:
+      cd frontend && npm run build
+    Build must succeed with no new TypeScript errors.
+
+V6. Runtime — happy path.
+    Namespace "wnv7a0vbgw0013c" (or any namespace fully green today):
+    Applications tab still shows the row as "Healthy" in the new "Status"
+    column. Hover tooltip shows the label.
+
+V7. Runtime — negative path A (workload).
+    In a test namespace, scale a Deployment so readyReplicas < desired.
+    New column must show "Degraded" and the tooltip must list
+    "Deployment/<ns>/<name>: X/Y ready".
+
+V8. Runtime — negative path B (Pod-only, no owning workload).
+    `kubectl run crasher --image=busybox --command -- sh -c 'exit 1'`
+    (creates a bare Pod that CrashLoops). Wait ~30 s.
+    New column must flip that namespace to "Unhealthy" and the tooltip
+    must list "Pod/<ns>/crasher: CrashLoopBackOff".
+    This case previously showed "Healthy" — this is the p17 payoff.
+
+V9. Non-regression — "Resources" column count.
+    Note the current "Resources" number for the same namespace BEFORE V8.
+    After V8, the "Resources" number is IDENTICAL (bare Pod is not counted)
+    — because Pod fetch is local to the new Cell only, never written to
+    the shared items[].
+
+V10. Non-regression — Project Details page.
+     Open the details page for the same namespace. Every existing tab and
+     graph (Overview, Resources, Map, Access, etc.) looks byte-identical
+     to before p17. No Pod nodes appear in ResourceMap unless they were
+     appearing before (they were not).
+
+V11. Reversibility.
+     Comment-swap the BEGIN/END block in ProjectList.tsx (uncomment the
+     upstream column, comment out the new one) OR delete the two new
+     files and remove the imports — the app returns to upstream behavior
+     with no residue.
+
+
+OUT OF SCOPE (do NOT touch in p17)
+--------------------------------------------------------------------------------
+- Real-time watching (stay on the 60 s poll).
+- Adding EndpointSlice / CRDs / any resource other than Pod to the local
+  fetch. Follow-up spec if we ever want them.
+- Switching to a plugin approach (`registerProjectApiResource`) — actively
+  rejected; would mutate shared state.
+- Changes to Resources column, Overview, ResourceMap, Access tab,
+  backend, plugin registry, or i18n bundles beyond adding a couple of
+  strings the new column itself needs.
+- Any upstream PR to kubernetes-sigs/headlamp.
+- ResourceQuota rule (deferred to v2 once we pick a quantity parser).
+
+
+ROLLBACK PLAN (one command each)
+--------------------------------------------------------------------------------
+- Quick disable, keep files: uncomment BEGIN/END block, comment new
+  column, `npm run build`, restart. Upstream behavior returns.
+- Full revert:
+    git revert <p17-commit-sha>
+  Or, if kept in a branch stack:
+    git checkout GT_D_V1 -- frontend/src/components/project/ProjectList.tsx
+    git rm frontend/src/components/project/localHealth.ts
+    git rm frontend/src/components/project/useLocalHealthItems.ts
+
+================================================================================
+END p17
+================================================================================
