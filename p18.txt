@@ -1,0 +1,383 @@
+================================================================================
+p18 — HEALTH SIMULATOR (fixtures + tests) AND EVIDENCE POPOVER
+Target branch: GT_D_V1  (local only; no upstream PR)
+Depends on:   p17.txt on this same branch (which supersedes p15/p16).
+Two goals:
+  (A) A "fake cluster simulator" that exercises every health scenario the
+      Applications tab can encounter, end-to-end, without a real cluster.
+      Proves that p17's Status column returns the right badge and the right
+      evidence for every scenario — including the one from health.txt
+      (wnv7a0vbgw0013c) — and never silently mislabels a broken app.
+  (B) A tooltip + click-to-open evidence popover on the Status badge that
+      surfaces the actual objects and reasons behind the badge (no more
+      "trust me, it's Unhealthy" — you can SEE why).
+================================================================================
+
+
+WHY THIS EXISTS
+--------------------------------------------------------------------------------
+p17 delivers a corrected Status column and a Pod fetch scoped to that column.
+Two gaps remain and this spec closes them:
+
+  1. p17 says "verify manually", but nobody wants to hand-break a Deployment
+     to test 12 scenarios. We need a REPEATABLE test rig — a set of fabricated
+     KubeObject fixtures fed to getLocalHealth() directly, plus a hook-level
+     test that renders the actual column with those fixtures. Runs in CI, no
+     cluster, seconds not minutes.
+
+  2. p17's tooltip just concatenates reasons with newlines. That's readable
+     for 2 lines and unreadable for 12. And a tooltip disappears the moment
+     you move the mouse — you can't copy an object name from it. The evidence
+     belongs in a click-to-open popover, with the tooltip demoted to a
+     one-liner hint ("Click for evidence"). This makes the column
+     accountable: whatever badge shows, the operator can inspect the exact
+     objects behind it.
+
+Both goals are additive to p17 and touch only local files.
+
+
+HARD CONSTRAINTS (extend p17's constraints; do NOT relax any)
+--------------------------------------------------------------------------------
+1. LOCAL ONLY. Branch GT_D_V1.
+2. NO SHARED CODE EDITS. Same list as p17. Simulator fixtures never touch
+   projectUtils.ts, KubeObjectStatus.tsx, useKubeLists.ts, etc.
+3. THE POPOVER LIVES ONLY IN THE NEW COLUMN. It renders inside the Cell
+   introduced by p17 in ProjectList.tsx. No new global component, no
+   registry change, no plugin.
+4. TESTS ARE PURE LOGIC + LIGHT UI. The primary rig calls getLocalHealth()
+   directly with fabricated KubeObject arrays. A single UI-level test
+   mounts the Cell with mocked useLocalHealthItems returning those same
+   fixtures. No MSW, no fake HTTP server, no KIND cluster — those add
+   maintenance cost for no additional guarantee here.
+5. NO CHANGE TO THE HEALTH RULES. p18 verifies the rules from p17
+   (localHealth.ts) — it does not silently tune them. If a fixture reveals a
+   real rule bug, fix the rule in localHealth.ts and re-run; do not change
+   the assertion to match a wrong output.
+
+
+FILES TOUCHED (exhaustive)
+--------------------------------------------------------------------------------
+A. NEW  : frontend/src/components/project/__fixtures__/healthScenarios.ts
+          - Fabricated KubeObject arrays, one per scenario in the matrix
+            below. Each fixture exports { name, items, expected } where
+            expected = { status, label, rank, reasonsIncludes: string[] }.
+          - No React, no imports from shared code except the KubeObject type.
+
+B. NEW  : frontend/src/components/project/localHealth.test.ts
+          - Vitest unit tests. Loops over fixtures, calls getLocalHealth(),
+            asserts (status, label, rank) exactly and reasons via substring
+            match on each entry of expected.reasonsIncludes.
+          - One extra suite: multi-scenario aggregation (mix items from N
+            scenarios into one array and assert the aggregate rule
+            error > warning > success).
+
+C. NEW  : frontend/src/components/project/useLocalHealthItems.test.tsx
+          - Vitest + React Testing Library. Renders ONLY the Cell used by
+            the new column (extracted as a small internal component in
+            ProjectList.tsx — see edit below) with useLocalHealthItems
+            mocked to return each fixture. Asserts the visible badge text,
+            the tooltip text, and — after userEvent.click on the badge — the
+            popover content (headings, per-reason rows).
+
+D. EDIT : frontend/src/components/project/ProjectList.tsx
+          - Extract the p17 Cell body into a small internal component
+            `LocalHealthCell({ project })` (keeps the diff to the column
+            object minimal AND makes the Cell reusable from the UI test).
+          - Replace p17's simple <Tooltip title={reasons.join('\n')}>...
+            with:
+              <Tooltip title={t('Click for evidence')}>
+                <button ...opens popover...>
+                  <StatusLabel ...>{icon + label}</StatusLabel>
+                </button>
+              </Tooltip>
+              <Popover ...evidence list...>
+          - Keep the p17 BEGIN/END comment markers around the old 'health'
+            column untouched.
+
+E. NEW (optional) :
+          frontend/src/components/project/ProjectList.LocalHealth.stories.tsx
+          - Storybook stories, one story per scenario, sharing the same
+            fixtures. Purely visual; nice for design review; does not gate CI.
+          - Skip if the team does not run stories in this component's folder;
+            everything CI needs is in files (A)–(C).
+
+
+SCENARIO MATRIX (fixtures live in healthScenarios.ts)
+--------------------------------------------------------------------------------
+Legend for expected.status:  S = success (Healthy)
+                             W = warning (Degraded)
+                             E = error   (Unhealthy)
+                             _ = empty   (No Resources)
+
+Baseline / boundary
+  01  empty                                         -> _ / "No Resources"       rank 0
+  02  all-healthy-single-cluster (Deployment 3/3,
+      Service, ConfigMap, one Succeeded Job)        -> S / "Healthy"            rank 1
+  03  wnv7a0vbgw0013c-style (mirror the shape of
+      the example in health.txt — namespaces
+      dominated by Ready workloads + Services +
+      Secrets + a couple Succeeded Jobs)             -> S / "Healthy"            rank 1
+  04  all-healthy-multi-cluster (same 3 Deployments
+      replicated across 2 clusters, all Ready)      -> S / "Healthy"            rank 1
+
+Workload degradation / breakage
+  10  Deployment 2/3 Ready                          -> W  ("Deployment/.../: 2/3 ready")
+  11  Deployment desired=3, status.replicas=0
+      (controller stuck)                            -> E  ("0/3 pods created")
+  12  Deployment desired=0 (scaled to zero)         -> S  (intentional)
+  13  StatefulSet 0/2 Ready                         -> W
+  14  DaemonSet numberReady < desiredNumberScheduled -> W
+  15  ReplicaSet ready < replicas                   -> W
+
+Pod-only scenarios (bare pods, no owner) — the payoff of p17's local fetch
+  20  Pod Failed                                    -> E  ("Pod/.../: Failed")
+  21  Pod CrashLoopBackOff (containerStatuses
+      waiting.reason)                               -> E  ("CrashLoopBackOff")
+  22  Pod ImagePullBackOff                          -> E  ("ImagePullBackOff")
+  23  Pod ErrImagePull                              -> E
+  24  Pod CreateContainerConfigError                -> E
+  25  Pod InvalidImageName                          -> E
+  26  Pod Running but Ready=False                   -> E  ("Running but NotReady")
+  27  Pod Pending older than 5 minutes              -> E  ("Pending > 5m")
+  28  Pod Pending younger than 5 minutes            -> W  ("Pending")
+  29  Pod Succeeded                                 -> S
+  30  Pod Running + Ready=True                      -> S
+
+Batch
+  40  Job failed >= backoffLimit+1, succeeded 0     -> E  ("failed (7/7)")
+  41  Job failed but retries left                   -> S
+  42  Job Succeeded                                 -> S
+  50  CronJob active=6, concurrencyPolicy default   -> W  ("6 active runs")
+  51  CronJob active=2, concurrencyPolicy=Forbid    -> W
+  52  CronJob active=1                              -> S
+
+Storage / networking / autoscaling / ingress
+  60  PVC Lost                                      -> E  ("Lost")
+  61  PVC Pending older than 2 minutes              -> E  ("Pending > 2m")
+  62  PVC Pending younger than 2 minutes            -> W  ("Pending")
+  63  PVC Bound                                     -> S
+  70  Endpoints with empty subsets                  -> W  ("no endpoints")
+  71  Endpoints with subset but zero addresses      -> W
+  72  Endpoints with addresses                      -> S
+  80  HPA ScalingActive=False, reason=FailedGetMetrics -> W  ("FailedGetMetrics")
+  81  HPA ScalingActive=False, reason=ScalingDisabled  -> S  (deliberate off)
+  82  HPA ScalingActive=True                        -> S
+  90  Ingress no LB address, older than 5 min       -> W  ("no address")
+  91  Ingress no LB address, younger than 5 min     -> S
+  92  Ingress with LB address                       -> S
+
+Silent-success kinds (must NOT flip health)
+  A1  ConfigMap present                             -> S
+  A2  Secret present                                -> S
+  A3  Service present                               -> S
+  A4  NetworkPolicy / Role / RoleBinding / LimitRange -> S
+
+Aggregation
+  B1  Mix: 1 E + 2 W + 5 S                          -> E / "Unhealthy" / rank 3
+  B2  Mix: 0 E + 3 W + 5 S                          -> W / "Degraded"  / rank 2
+  B3  Mix: 0 E + 0 W + 8 S                          -> S / "Healthy"   / rank 1
+  B4  Reason cap: 15 failing pods                    -> E; reasons.length === 11
+      (10 + one "…and 5 more")
+
+Multi-cluster collapse (project.clusters.length > 1)
+  C1  Namespace X across 2 clusters, both healthy   -> S
+  C2  Namespace X across 2 clusters, one degraded   -> W
+  C3  Namespace X across 2 clusters, one Unhealthy  -> E (worst-of)
+
+The wnv7a0vbgw0013c reproduction (fixture 03) is the direct answer to
+"does p17 still show my Healthy app as Healthy?" and to
+"does health.txt's example still hold under the new rules?".
+
+
+TEST FILE SKETCH — localHealth.test.ts
+--------------------------------------------------------------------------------
+  import { describe, it, expect } from 'vitest';
+  import { getLocalHealth }        from './localHealth';
+  import * as F                    from './__fixtures__/healthScenarios';
+
+  const ALL: Array<{ name: string; items: any[]; expected: any }> =
+    Object.values(F).filter(x => x && Array.isArray(x.items));
+
+  describe('getLocalHealth', () => {
+    for (const scenario of ALL) {
+      it(`${scenario.name} → ${scenario.expected.label}`, () => {
+        const h = getLocalHealth(scenario.items);
+        expect(h.status).toBe(scenario.expected.status);
+        expect(h.label).toBe(scenario.expected.label);
+        expect(h.rank).toBe(scenario.expected.rank);
+        for (const needle of scenario.expected.reasonsIncludes ?? []) {
+          expect(h.reasons.some(r => r.includes(needle))).toBe(true);
+        }
+      });
+    }
+
+    it('reasons cap at 10 with "…and N more" suffix', () => {
+      const h = getLocalHealth(F.reasonCap15FailingPods.items);
+      expect(h.reasons.length).toBe(11);
+      expect(h.reasons[10]).toMatch(/…and 5 more/);
+    });
+
+    it('worst-of aggregation across mixed items (E > W > S)', () => {
+      const mix = [
+        ...F.deployment2Of3Ready.items,      // W
+        ...F.podCrashLoopBackOff.items,      // E
+        ...F.serviceHealthy.items,           // S
+      ];
+      expect(getLocalHealth(mix).status).toBe('error');
+    });
+  });
+
+
+TEST FILE SKETCH — useLocalHealthItems.test.tsx
+--------------------------------------------------------------------------------
+  import { describe, it, expect, vi } from 'vitest';
+  import { render, screen }           from '@testing-library/react';
+  import userEvent                    from '@testing-library/user-event';
+  import { LocalHealthCell }          from './ProjectList';   // exported for tests
+  import * as F                       from './__fixtures__/healthScenarios';
+
+  vi.mock('./useLocalHealthItems', () => ({
+    useLocalHealthItems: vi.fn(),
+  }));
+  import { useLocalHealthItems } from './useLocalHealthItems';
+
+  const fakeProject: any = { id: 'demo', namespaces: ['demo'], clusters: ['c1'] };
+
+  function mountCellWith(items: any[]) {
+    (useLocalHealthItems as any).mockReturnValue({ items, isLoading: false, errors: [] });
+    return render(<LocalHealthCell project={fakeProject} />);
+  }
+
+  describe('LocalHealthCell', () => {
+    it('renders "Healthy" and no evidence when all success', () => {
+      mountCellWith(F.allHealthySingleCluster.items);
+      expect(screen.getByText('Healthy')).toBeInTheDocument();
+    });
+
+    it('renders "Unhealthy" and lists CrashLoopBackOff in popover on click', async () => {
+      const u = userEvent.setup();
+      mountCellWith(F.podCrashLoopBackOff.items);
+      expect(screen.getByText('Unhealthy')).toBeInTheDocument();
+      await u.click(screen.getByRole('button', { name: /Unhealthy/i }));
+      // popover mounts; evidence row is visible
+      expect(await screen.findByText(/CrashLoopBackOff/)).toBeInTheDocument();
+    });
+
+    it('renders "No Resources" for empty items', () => {
+      mountCellWith([]);
+      expect(screen.getByText('No Resources')).toBeInTheDocument();
+    });
+  });
+
+
+EVIDENCE POPOVER — INTERACTION SPEC
+--------------------------------------------------------------------------------
+Trigger:
+  - The Cell renders StatusLabel as the visual, wrapped in a MUI <IconButton>
+    (or a plain button styled as unstyled). Hovering shows the Tooltip below.
+    Clicking opens the Popover anchored at the button.
+
+Tooltip (hover, unchanged position):
+  - Text: t('Click for evidence')
+  - Do NOT dump the reasons list into the tooltip.
+
+Popover (click):
+  - Title row: `<Status label> — <namespaces joined> @ <clusters joined>`
+    e.g. "Unhealthy — wnv7a0vbgw0013c @ default--api-…"
+  - Section "Errors" (only when reasons of severity error > 0):
+      one row per reason
+  - Section "Warnings" (only when reasons of severity warning > 0):
+      one row per reason
+  - Each row shows: <kind icon> <kind/namespace/name> — <short reason>
+  - Bottom row: an "OK" close button. Popover also closes on outside click
+    or Esc, matching MUI default Popover behavior.
+  - Empty error+warning list should not be reachable — if the badge is
+    Healthy, the button is still clickable but the popover reads
+    "Healthy — no issues detected across N resources." (this is safer than
+    silently swallowing the click).
+
+Data source:
+  - getLocalHealth() currently returns reasons: string[] (flat list). For
+    the popover we need severity per reason. Minimal change:
+      Extend LocalHealthResult with `evidence: Array<{
+        severity: 'error' | 'warning';
+        kind: string;
+        namespace: string;
+        name: string;
+        message: string;
+      }>`
+      and keep the flat `reasons: string[]` for backward compatibility with
+      existing tooltip fallbacks.
+    localGetItemStatus already knows the severity and constructs the reason
+    string — this is a mechanical add, not a rule change.
+
+Accessibility:
+  - The trigger MUST be a real focusable element (button / IconButton). No
+    <div onClick>. The popover MUST render into a DOM node with
+    role="dialog" (MUI Popover does this automatically). Keyboard: Enter/Space
+    opens it, Esc closes it.
+
+
+VERIFICATION (this p18 spec is done when all of these pass)
+--------------------------------------------------------------------------------
+V1. `git diff --stat` shows only:
+      A  frontend/src/components/project/__fixtures__/healthScenarios.ts
+      A  frontend/src/components/project/localHealth.test.ts
+      A  frontend/src/components/project/useLocalHealthItems.test.tsx
+      M  frontend/src/components/project/localHealth.ts        (only the
+                                                                LocalHealthResult
+                                                                widening for evidence)
+      M  frontend/src/components/project/ProjectList.tsx       (Cell extract +
+                                                                popover swap)
+    Nothing outside those five paths.
+
+V2. `cd frontend && npm run test -- localHealth`  → all fixtures green.
+    Zero failures. Zero xit()/skip().
+
+V3. `cd frontend && npm run test -- useLocalHealthItems` → passes.
+    Verifies badge label, tooltip text, popover open-on-click, and popover
+    content for at least one healthy, one degraded, one unhealthy, one
+    empty case.
+
+V4. Fixture 03 (wnv7a0vbgw0013c-style) yields Healthy. This is the
+    non-regression guarantee against the example from health.txt.
+
+V5. `cd frontend && npm run build` succeeds.
+
+V6. Manual smoke:
+      - Open Applications tab in a running dev build.
+      - Hover any Status badge — tooltip reads "Click for evidence".
+      - Click any Status badge — popover opens, listing the objects.
+      - Click outside / press Esc — popover closes.
+      - Repeat on a healthy row; popover shows the
+        "no issues detected across N resources" message.
+
+V7. `git grep -n "id: 'health'" frontend/src/components/project/ProjectList.tsx`
+    still shows exactly ONE hit, still inside the p17 BEGIN/END commented
+    block. p18 does not resurrect the old column.
+
+V8. `git grep -n "state.projects.apiResources" .` still shows only the
+    upstream shared-code hits. p18 does not begin using the plugin route.
+
+V9. Non-regression: run the whole project test suite for that folder:
+      `cd frontend && npm run test -- src/components/project`
+    Only the three new specs added; existing project tests (ProjectList.test.tsx,
+    ProjectDetails.test.tsx, ProjectResourcesTab.test.tsx, ...) must remain
+    green with zero snapshot updates required.
+
+
+OUT OF SCOPE (do NOT touch in p18)
+--------------------------------------------------------------------------------
+- Real KIND / minikube cluster fixtures. If we ever need a live end-to-end
+  check, that's a separate playbook, not this file.
+- MSW / fake HTTP layer. Not needed — mocking useLocalHealthItems at the
+  hook level is sufficient and much cheaper.
+- Extending the health rules themselves (add ResourceQuota, EndpointSlice,
+  CRDs, etc.). Those go in p19 or later.
+- Any change to the tooltip/popover of the OLD (commented-out) column.
+- Any performance change (memoization inside popover rendering is fine to
+  add IF it comes up during V6 smoke — otherwise defer).
+
+================================================================================
+END p18
+================================================================================
