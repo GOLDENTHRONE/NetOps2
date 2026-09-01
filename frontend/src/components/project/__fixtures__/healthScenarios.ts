@@ -467,9 +467,12 @@ export const cronJobActiveOne: Scenario = {
 };
 
 // ─── 60-63: PVC ─────────────────────────────────────────────────────────
+// Each PVC fixture pairs the PVC with a healthy workload so the Passive-app
+// rule doesn't fire — we're testing PVC rules in isolation here, not the
+// no-workload path.
 export const pvcLost: Scenario = {
   name: 'pvcLost',
-  items: [pvc('data', 'Lost')],
+  items: [deployment('web', 1, 1), pvc('data', 'Lost')],
   expected: {
     status: 'error',
     label: 'Unhealthy',
@@ -480,7 +483,7 @@ export const pvcLost: Scenario = {
 
 export const pvcPendingOld: Scenario = {
   name: 'pvcPendingOld',
-  items: [pvc('data', 'Pending', 10 * 60_000)],
+  items: [deployment('web', 1, 1), pvc('data', 'Pending', 10 * 60_000)],
   expected: {
     status: 'error',
     label: 'Unhealthy',
@@ -491,7 +494,7 @@ export const pvcPendingOld: Scenario = {
 
 export const pvcPendingYoung: Scenario = {
   name: 'pvcPendingYoung',
-  items: [pvc('data', 'Pending', 30_000)],
+  items: [deployment('web', 1, 1), pvc('data', 'Pending', 30_000)],
   expected: {
     status: 'warning',
     label: 'Degraded',
@@ -502,14 +505,79 @@ export const pvcPendingYoung: Scenario = {
 
 export const pvcBound: Scenario = {
   name: 'pvcBound',
-  items: [pvc('data', 'Bound')],
+  items: [deployment('web', 1, 1), pvc('data', 'Bound')],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
-// ─── 70-72: Endpoints ───────────────────────────────────────────────────
-export const endpointsEmpty: Scenario = {
-  name: 'endpointsEmpty',
-  items: [endpoints('demo-svc', 0)],
+// ─── 70-75: Endpoints (paired-with-Service rule) ────────────────────────
+// Rule: Endpoints only warn when paired with a REAL selector-based Service
+// (ClusterIP/NodePort/LoadBalancer, non-headless, with a selector). All
+// other Endpoints objects are treated as supporting/unused and stay silent.
+export const endpointsEmptyOrphan: Scenario = {
+  // Empty Endpoints with NO paired Service → not our problem.
+  name: 'endpointsEmptyOrphan',
+  items: [deployment('web', 1, 1), endpoints('some-svc', 0)],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const endpointsHeadlessSvc: Scenario = {
+  // Headless service (clusterIP: None) — deliberately empty subsets are OK.
+  name: 'endpointsHeadlessSvc',
+  items: [
+    deployment('web', 1, 1),
+    {
+      kind: 'Service',
+      metadata: { name: 'stateful-svc', namespace: 'demo', creationTimestamp: OLD },
+      spec: { clusterIP: 'None', selector: { app: 'web' } },
+    },
+    endpoints('stateful-svc', 0),
+  ],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const endpointsExternalNameSvc: Scenario = {
+  // ExternalName service — no cluster endpoints by design.
+  name: 'endpointsExternalNameSvc',
+  items: [
+    deployment('web', 1, 1),
+    {
+      kind: 'Service',
+      metadata: { name: 'ext', namespace: 'demo', creationTimestamp: OLD },
+      spec: { type: 'ExternalName', externalName: 'foo.example.com' },
+    },
+    endpoints('ext', 0),
+  ],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const endpointsSelectorlessSvc: Scenario = {
+  // Manual endpoints (spec.selector empty) — user manages endpoints
+  // themselves; empty subsets are not a failure signal.
+  name: 'endpointsSelectorlessSvc',
+  items: [
+    deployment('web', 1, 1),
+    {
+      kind: 'Service',
+      metadata: { name: 'manual', namespace: 'demo', creationTimestamp: OLD },
+      spec: {}, // no selector
+    },
+    endpoints('manual', 0),
+  ],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const endpointsPairedRealSvc: Scenario = {
+  // Real selector-based Service + empty Endpoints → genuine "no backends".
+  name: 'endpointsPairedRealSvc',
+  items: [
+    deployment('web', 1, 1),
+    {
+      kind: 'Service',
+      metadata: { name: 'web-svc', namespace: 'demo', creationTimestamp: OLD },
+      spec: { type: 'ClusterIP', selector: { app: 'web' } },
+    },
+    endpoints('web-svc', 0),
+  ],
   expected: {
     status: 'warning',
     label: 'Degraded',
@@ -520,14 +588,14 @@ export const endpointsEmpty: Scenario = {
 
 export const endpointsWithAddresses: Scenario = {
   name: 'endpointsWithAddresses',
-  items: [endpoints('demo-svc', 2)],
+  items: [deployment('web', 1, 1), endpoints('demo-svc', 2)],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
 // ─── 80-82: HPA ─────────────────────────────────────────────────────────
 export const hpaFailedGetMetrics: Scenario = {
   name: 'hpaFailedGetMetrics',
-  items: [hpa('web-hpa', false, 'FailedGetMetrics')],
+  items: [deployment('web', 1, 1), hpa('web-hpa', false, 'FailedGetMetrics')],
   expected: {
     status: 'warning',
     label: 'Degraded',
@@ -538,20 +606,20 @@ export const hpaFailedGetMetrics: Scenario = {
 
 export const hpaScalingDisabled: Scenario = {
   name: 'hpaScalingDisabled',
-  items: [hpa('web-hpa', false, 'ScalingDisabled')],
+  items: [deployment('web', 1, 1), hpa('web-hpa', false, 'ScalingDisabled')],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
 export const hpaScalingActive: Scenario = {
   name: 'hpaScalingActive',
-  items: [hpa('web-hpa', true)],
+  items: [deployment('web', 1, 1), hpa('web-hpa', true)],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
 // ─── 90-92: Ingress ─────────────────────────────────────────────────────
 export const ingressNoLbOld: Scenario = {
   name: 'ingressNoLbOld',
-  items: [ingress('web', false, 10 * 60_000)],
+  items: [deployment('web', 1, 1), ingress('web', false, 10 * 60_000)],
   expected: {
     status: 'warning',
     label: 'Degraded',
@@ -562,25 +630,28 @@ export const ingressNoLbOld: Scenario = {
 
 export const ingressNoLbYoung: Scenario = {
   name: 'ingressNoLbYoung',
-  items: [ingress('web', false, 60_000)],
+  items: [deployment('web', 1, 1), ingress('web', false, 60_000)],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
 export const ingressWithLb: Scenario = {
   name: 'ingressWithLb',
-  items: [ingress('web', true)],
+  items: [deployment('web', 1, 1), ingress('web', true)],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
-// ─── Silent-success kinds ───────────────────────────────────────────────
+// ─── Silent-success kinds + Passive detection ───────────────────────────
 export const serviceHealthy: Scenario = {
+  // Service alone is not a workload — should be Passive, not Healthy.
   name: 'serviceHealthy',
   items: [svc('web')],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'passive', label: 'Passive', rank: 0 },
 };
 
-export const passiveKindsOnly: Scenario = {
-  name: 'passiveKindsOnly',
+export const passiveConfigOnly: Scenario = {
+  // Namespace with only supporting resources: no Deployment / Pod / Job /
+  // etc. → app is dormant. "Healthy" would be a lie.
+  name: 'passiveConfigOnly',
   items: [
     cm('c1'),
     secret('s1'),
@@ -593,6 +664,13 @@ export const passiveKindsOnly: Scenario = {
     { kind: 'RoleBinding', metadata: { name: 'rb', namespace: 'demo', creationTimestamp: OLD } },
     { kind: 'LimitRange', metadata: { name: 'lr', namespace: 'demo', creationTimestamp: OLD } },
   ],
+  expected: { status: 'passive', label: 'Passive', rank: 0 },
+};
+
+export const passiveWakesUpWithWorkload: Scenario = {
+  // Same supporting bag + one healthy Deployment → app is Healthy.
+  name: 'passiveWakesUpWithWorkload',
+  items: [cm('c1'), secret('s1'), svc('web'), deployment('worker', 1, 1)],
   expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 

@@ -15,20 +15,10 @@
  */
 
 import { Icon } from '@iconify/react';
-import {
-  Box,
-  Button,
-  Divider,
-  IconButton,
-  List,
-  ListItem,
-  ListItemText,
-  Popover,
-  Tooltip,
-  Typography,
-} from '@mui/material';
+import { Box, Divider, IconButton, Popover, Tooltip, Typography } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { groupBy, uniq } from 'lodash';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
 import Namespace from '../../lib/k8s/namespace';
@@ -40,7 +30,12 @@ import { StatusLabel } from '../common';
 import Link from '../common/Link';
 import { PureNamespacesAutocomplete } from '../common/NamespacesAutocomplete';
 import Table, { TableColumn } from '../common/Table/Table';
-import { getLocalHealth, LocalHealthEvidence } from './localHealth';
+import {
+  getLocalHealth,
+  getUnavailableHealth,
+  LocalHealthEvidence,
+  LocalHealthResult,
+} from './localHealth';
 // NOTE (p17): if you restore the upstream 'health' column below, re-add
 // `getHealthIcon, getResourcesHealth` to the import list on the next line.
 import { isSystemNamespace } from './projectUtils';
@@ -133,10 +128,57 @@ export interface LocalHealthCellProps {
   onRank?: (id: string, rank: number) => void;
 }
 
+// Map badge status → theme colour token used to tint the popover header
+// and the badge chip. Keeps a single source of truth per state.
+function statusColor(theme: any, status: LocalHealthResult['status']): string {
+  switch (status) {
+    case 'error':
+      return theme.palette.error.main;
+    case 'warning':
+      return theme.palette.warning.main;
+    case 'success':
+      return theme.palette.success.main;
+    case 'unavailable':
+      return theme.palette.error.main;
+    case 'passive':
+    case 'empty':
+    default:
+      return theme.palette.text.secondary;
+  }
+}
+
+// Small "label │ value" row used inside the popover body.
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <Box display="flex" gap={2} alignItems="baseline" py={0.4}>
+      <Typography variant="caption" color="text.secondary" sx={{ minWidth: 120, flexShrink: 0 }}>
+        {label}
+      </Typography>
+      <Box sx={{ minWidth: 0, flexGrow: 1 }}>{value}</Box>
+    </Box>
+  );
+}
+
 export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
   const { t } = useTranslation();
-  const { items } = useLocalHealthItems(project);
-  const health = useMemo(() => getLocalHealth(items), [items]);
+  const theme = useTheme();
+  const { items, errors: fetchErrors } = useLocalHealthItems(project);
+
+  // If the cluster fetch itself failed (proxy 5xx, network down, cluster
+  // paused, ...), we don't know the app's health — surface "Unavailable"
+  // instead of pretending it's Healthy from an empty result set.
+  const health = useMemo<LocalHealthResult>(() => {
+    if (fetchErrors && fetchErrors.length > 0) {
+      const first = fetchErrors[0] as any;
+      const apiErr = first?.errors?.[0];
+      return getUnavailableHealth({
+        cluster: project.clusters?.[0],
+        httpCode: apiErr?.status,
+        errorMessage: apiErr?.message,
+      });
+    }
+    return getLocalHealth(items);
+  }, [items, fetchErrors, project.clusters]);
 
   useEffect(() => {
     onRank?.(project.id, health.rank);
@@ -157,26 +199,45 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
   const errors = health.evidence.filter(e => e.severity === 'error');
   const warnings = health.evidence.filter(e => e.severity === 'warning');
   const totalItems = items?.length ?? 0;
+  const color = statusColor(theme, health.status);
+  // StatusLabel only knows success | warning | error | '' (grey).
+  // Passive/empty → grey. Unavailable → red. Everything else maps one-to-one.
+  const summaryStatusLabel: 'success' | 'warning' | 'error' | '' =
+    health.status === 'success'
+      ? 'success'
+      : health.status === 'warning'
+      ? 'warning'
+      : health.status === 'passive' || health.status === 'empty'
+      ? ''
+      : 'error';
   const contextLine = `${project.namespaces.join(', ')} @ ${project.clusters.join(', ')}`;
 
   return (
     <>
-      <Tooltip title={t('Click for evidence')}>
-        <IconButton
-          size="small"
+      <Tooltip title={t('Click to see why')}>
+        <Box
+          component="button"
+          type="button"
+          aria-haspopup="dialog"
+          aria-label={`${t(health.label)} — ${t('Click to see why')}`}
           onClick={openPopover}
-          aria-label={`${health.label} — ${t('Click for evidence')}`}
-          sx={{ p: 0.5, borderRadius: 1 }}
+          sx={{
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            font: 'inherit',
+            color: 'inherit',
+            cursor: 'pointer',
+            textAlign: 'left',
+            borderRadius: 1,
+            '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
+          }}
         >
-          <StatusLabel status={health.status}>
+          <StatusLabel status={summaryStatusLabel}>
             <Icon icon={health.icon} style={{ fontSize: 24 }} />
-            {health.status === 'error'
-              ? t('Unhealthy')
-              : health.status === 'warning'
-              ? t('Degraded')
-              : t('Healthy')}
+            {t(health.label)}
           </StatusLabel>
-        </IconButton>
+        </Box>
       </Tooltip>
       <Popover
         open={open}
@@ -184,56 +245,208 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
         onClose={closePopover}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { maxWidth: 480, minWidth: 320, p: 1.5 } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              mt: 1,
+              maxWidth: 480,
+              minWidth: 340,
+              borderRadius: 2,
+              border: `1px solid ${theme.palette.divider}`,
+              boxShadow: '0 12px 32px rgba(0, 0, 0, 0.18)',
+              overflow: 'hidden',
+            },
+          },
+        }}
       >
-        <Typography variant="subtitle2" gutterBottom>
-          {health.label} — {contextLine}
-        </Typography>
-        {errors.length === 0 && warnings.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            {t('Healthy — no issues detected across {{count}} resources.', {
-              count: totalItems,
-            })}
-          </Typography>
-        ) : (
-          <>
-            {errors.length > 0 && <EvidenceSection title={t('Errors')} evidence={errors} />}
-            {warnings.length > 0 && (
-              <>
-                {errors.length > 0 && <Divider sx={{ my: 1 }} />}
-                <EvidenceSection title={t('Warnings')} evidence={warnings} />
-              </>
-            )}
-          </>
-        )}
-        <Box mt={1.5} display="flex" justifyContent="flex-end">
-          <Button size="small" onClick={closePopover}>
-            {t('OK')}
-          </Button>
+        <Box px={2} pt={1.5} pb={1.25}>
+          <Box display="flex" alignItems="center" gap={1}>
+            <Icon icon={health.icon} width={20} color={color} />
+            <Typography variant="subtitle1" sx={{ color, fontWeight: 700, flexGrow: 1 }}>
+              {t(health.label)}
+            </Typography>
+            <IconButton size="small" aria-label={t('Close')} onClick={closePopover}>
+              <Icon icon="mdi:close" width={16} />
+            </IconButton>
+          </Box>
+          <Box display="flex" alignItems="baseline" gap={0.75} mt={0.75}>
+            <Typography variant="body2" color="text.secondary">
+              {t('Application:')}
+            </Typography>
+            <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
+              {contextLine}
+            </Typography>
+          </Box>
+        </Box>
+        <Divider />
+        <Box px={2} py={1.25}>
+          {health.status === 'unavailable' ? (
+            <UnavailableBody health={health as any} color={color} t={t} />
+          ) : health.status === 'passive' ? (
+            <Typography variant="body2" color="text.secondary">
+              {t(
+                'This application has {{count}} supporting resource(s) but no runnable workload (no Deployment, StatefulSet, DaemonSet, ReplicaSet, Pod, Job or CronJob). Health is undetermined.',
+                { count: totalItems }
+              )}
+            </Typography>
+          ) : errors.length === 0 && warnings.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              {t('Healthy — no issues detected across {{count}} resources.', {
+                count: totalItems,
+              })}
+            </Typography>
+          ) : (
+            <>
+              {errors.length > 0 && (
+                <EvidenceSection title={t('Errors')} color={color} evidence={errors} />
+              )}
+              {warnings.length > 0 && (
+                <>
+                  {errors.length > 0 && <Divider sx={{ my: 1 }} />}
+                  <EvidenceSection
+                    title={t('Warnings')}
+                    color={theme.palette.warning.main}
+                    evidence={warnings}
+                  />
+                </>
+              )}
+            </>
+          )}
         </Box>
       </Popover>
     </>
   );
 }
 
-function EvidenceSection({ title, evidence }: { title: string; evidence: LocalHealthEvidence[] }) {
+function UnavailableBody({
+  health,
+  color,
+  t,
+}: {
+  health: {
+    cluster?: string;
+    httpCode?: number;
+    errorMessage?: string;
+  };
+  color: string;
+  t: (k: string, opts?: any) => string;
+}) {
   return (
     <>
-      <Typography variant="overline" color="text.secondary">
+      <DetailRow
+        label={t('Cluster')}
+        value={
+          <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+            {health.cluster ?? '—'}
+          </Typography>
+        }
+      />
+      {health.httpCode !== undefined && (
+        <DetailRow
+          label={t('HTTP code')}
+          value={
+            <Typography variant="body2" sx={{ color, fontWeight: 600 }}>
+              {health.httpCode}
+            </Typography>
+          }
+        />
+      )}
+      {health.errorMessage && (
+        <DetailRow
+          label={t('Reported error')}
+          value={
+            <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+              {health.errorMessage}
+            </Typography>
+          }
+        />
+      )}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+        {t(
+          'The cluster API server could not be reached, so the application’s real health is unknown. Retry when connectivity is restored.'
+        )}
+      </Typography>
+    </>
+  );
+}
+
+// Kubernetes kind → Headlamp route name for the resource details page.
+// Kinds not in this map fall back to plain text (no hyperlink).
+const KIND_TO_ROUTE: Record<string, string> = {
+  Pod: 'pod',
+  Deployment: 'deployment',
+  StatefulSet: 'statefulSet',
+  DaemonSet: 'daemonSet',
+  ReplicaSet: 'replicaSet',
+  Job: 'job',
+  CronJob: 'cronJob',
+  Service: 'service',
+  Ingress: 'ingress',
+  PersistentVolumeClaim: 'persistentVolumeClaim',
+  Endpoints: 'endpoint',
+  EndpointSlice: 'endpointslice',
+  ConfigMap: 'configMap',
+  Secret: 'secret',
+  HorizontalPodAutoscaler: 'horizontalPodAutoscaler',
+};
+
+function EvidenceRow({ evidence }: { evidence: LocalHealthEvidence }) {
+  const label = `${evidence.kind}/${evidence.namespace || '-'}/${evidence.name}`;
+  const routeName = KIND_TO_ROUTE[evidence.kind];
+  const cluster = (evidence.object as any)?.cluster;
+  const canLink = Boolean(routeName && evidence.name);
+
+  const primary = canLink ? (
+    <Link
+      routeName={routeName}
+      params={{
+        name: evidence.name,
+        namespace: evidence.namespace,
+        ...(cluster ? { cluster } : {}),
+      }}
+    >
+      <Typography component="span" variant="body2" sx={{ fontWeight: 500 }}>
+        {label}
+      </Typography>
+    </Link>
+  ) : (
+    <Typography component="span" variant="body2" sx={{ fontWeight: 500 }}>
+      {label}
+    </Typography>
+  );
+
+  return (
+    <Box component="li" sx={{ py: 0.35, lineHeight: 1.4 }}>
+      {primary}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+        {evidence.message}
+      </Typography>
+    </Box>
+  );
+}
+
+function EvidenceSection({
+  title,
+  color,
+  evidence,
+}: {
+  title: string;
+  color: string;
+  evidence: LocalHealthEvidence[];
+}) {
+  return (
+    <>
+      <Typography
+        variant="overline"
+        sx={{ color, fontWeight: 700, display: 'block', lineHeight: 1.6 }}
+      >
         {title}
       </Typography>
-      <List dense disablePadding>
+      <Box component="ul" sx={{ pl: 2, m: 0 }}>
         {evidence.map((e, i) => (
-          <ListItem key={`${e.kind}/${e.namespace}/${e.name}/${i}`} sx={{ py: 0.25 }}>
-            <ListItemText
-              primary={`${e.kind}/${e.namespace || '-'}/${e.name}`}
-              secondary={e.message}
-              primaryTypographyProps={{ variant: 'body2' }}
-              secondaryTypographyProps={{ variant: 'caption' }}
-            />
-          </ListItem>
+          <EvidenceRow key={`${e.kind}/${e.namespace}/${e.name}/${i}`} evidence={e} />
         ))}
-      </List>
+      </Box>
     </>
   );
 }

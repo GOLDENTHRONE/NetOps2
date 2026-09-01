@@ -96,12 +96,12 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     expect(screen.getByText('Unhealthy')).toBeInTheDocument();
   });
 
-  it('shows tooltip prompt "Click for evidence" on hover', async () => {
+  it('shows tooltip prompt "Click to see why" on hover', async () => {
     const u = userEvent.setup();
     mountWith(F.podCrashLoopBackOff.items);
     const trigger = screen.getByRole('button', { name: /Unhealthy/i });
     await u.hover(trigger);
-    await waitFor(() => expect(screen.getByText('Click for evidence')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Click to see why')).toBeInTheDocument());
   });
 
   it('opens popover on click and lists CrashLoopBackOff evidence', async () => {
