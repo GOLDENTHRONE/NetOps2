@@ -1,0 +1,334 @@
+BGW 0013C APPLICATION HEALTH FLOW - APPLICATIONS TAB
+=====================================================
+
+Observed application
+--------------------
+Application/namespace: wnv7a0vbgw0013c
+Cluster: default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306
+Applications page URL: http://localhost:3000/#/projects
+Observed Resources count: 845
+Observed Status: Unhealthy
+
+Visible health evidence from Status popover
+------------------------------------------
+Errors:
+1. Job/wnv7a0vbgw0013c/wnv7a0vbgw0013c-sbc-healthcheck-job
+   Message: failed (1/1)
+   UI details route:
+   #/c/default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306/jobs/wnv7a0vbgw0013c/wnv7a0vbgw0013c-sbc-healthcheck-job
+
+2. Job/wnv7a0vbgw0013c/wnv7a0vbgw0013c-sbc4zts-pre-upgrade-ztsprequites
+   Message: failed (1/1)
+   UI details route:
+   #/c/default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306/jobs/wnv7a0vbgw0013c/wnv7a0vbgw0013c-sbc4zts-pre-upgrade-ztsprequites
+
+3. Job/wnv7a0vbgw0013c/wnv7a0vbgw0013c-scm-test-alarm
+   Message: failed (1/1)
+   UI details route:
+   #/c/default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306/jobs/wnv7a0vbgw0013c/wnv7a0vbgw0013c-scm-test-alarm
+
+Warnings:
+1. Endpoints/wnv7a0vbgw0013c/esymacservice-1 - no endpoints
+2. Endpoints/wnv7a0vbgw0013c/esymacservice-2 - no endpoints
+3. Endpoints/wnv7a0vbgw0013c/esymacservice-3 - no endpoints
+4. Endpoints/wnv7a0vbgw0013c/esymacservice-4 - no endpoints
+5. Endpoints/wnv7a0vbgw0013c/esymacservice-5 - no endpoints
+6. Endpoints/wnv7a0vbgw0013c/esymacservice-6 - no endpoints
+7. Endpoints/wnv7a0vbgw0013c/esymacservice-7 - no endpoints
+8. Endpoints/wnv7a0vbgw0013c/esymacservice-8 - no endpoints
+9. Endpoints/wnv7a0vbgw0013c/esymacservice-9 - no endpoints
+10. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-0 - no endpoints
+11. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-1 - no endpoints
+12. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-2 - no endpoints
+13. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-3 - no endpoints
+14. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-4 - no endpoints
+15. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-5 - no endpoints
+16. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-6 - no endpoints
+17. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-7 - no endpoints
+18. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-8 - no endpoints
+19. Endpoints/wnv7a0vbgw0013c/zts-cnfcmserver-9 - no endpoints
+20. Ingress/wnv7a0vbgw0013c/cbur-master-cbur-ingress - no address
+
+Why status is Unhealthy
+-----------------------
+Frontend uses worst-status wins:
+- any error -> Unhealthy
+- no errors and any warning -> Degraded
+- no errors/warnings and at least one runnable workload -> Healthy
+- resources exist but no runnable workload -> Passive
+- no resources -> No Resources
+- fetch error -> Unavailable
+
+This app has 3 Job errors. That makes final status Unhealthy even though many other resources may be healthy.
+
+Important: there is no separate backend health API for this column. Health is computed in frontend from Kubernetes API list responses proxied by backend.
+
+End-to-end flow
+----------------
+1. User opens Applications tab: /#/projects.
+
+2. Frontend discovers applications from namespaces.
+   Code path:
+   - ProjectList.tsx -> useProjects()
+   - Namespace.useList({ clusters })
+   - discoverProjectsFromNamespaces(namespaces)
+   - system namespaces filtered by isSystemNamespace()
+
+   Application identity rule:
+   - each visible namespace becomes one application
+   - application name = namespace name
+   - same namespace name across clusters collapses into one application row
+
+   For BGW 0013C:
+   - namespace wnv7a0vbgw0013c becomes application wnv7a0vbgw0013c
+   - cluster list contains default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306
+
+3. Frontend loads Resources column.
+   Code path:
+   - ProjectList.tsx Resources cell
+   - useProjectItems(project, { disableWatch: true })
+   - useKubeLists(defaultApiResources + pluginApiResources, project.clusters, 1000, 60000, project.namespaces)
+
+   Behavior:
+   - max 1000 items per resource kind
+   - polling interval 60000 ms
+   - watch disabled for Applications list
+   - result item arrays flatten into one list
+   - current row shows 845 total resources
+
+4. Frontend loads Status column.
+   Code path:
+   - ProjectList.tsx LocalHealthCell
+   - useLocalHealthItems(project)
+   - shared = useProjectItems(project, { disableWatch: true })
+   - podList = useKubeLists([Pod], project.clusters, 1000, 60000, project.namespaces)
+   - items = shared.items + podList.items
+   - getLocalHealth(items)
+
+   Important local behavior:
+   - Pods are fetched only for Status column.
+   - Pod fetch does not mutate Redux project resources.
+   - Pod fetch does not change Resources column, ProjectDetails, ResourceMap, backend, or plugins.
+
+5. Backend receives frontend cluster API requests.
+   Frontend call shape:
+   http://localhost:4466/clusters/{clusterName}/{kubernetesApiPath}
+
+   Backend route:
+   /clusters/{clusterName}/{api:.*}
+
+   Backend code path:
+   - headlamp.go -> handleClusterAPI()
+   - router.PathPrefix('/clusters/{clusterName}/{api:.*}')
+   - auth.NewBackendTokenMiddleware(...)
+   - clusterRequestHandler()
+   - getContextKeyForRequest()
+   - getContextWithWebSocketFallback()
+   - kContext.ProxyRequest(w, r)
+
+   Backend processing:
+   - validates backend token/cookie middleware
+   - finds cluster context from kubeconfig store
+   - maps {clusterName} to real Kubernetes API server URL
+   - rewrites request URL host/scheme/path to target cluster server
+   - attaches Kubernetes Authorization bearer token when available
+   - proxies response from Kubernetes API server back to frontend
+
+6. Frontend parses Kubernetes list responses.
+   Code path:
+   - useKubeObjectList.ts -> kubeObjectListQuery()
+   - clusterFetch(path, { cluster })
+   - response.json()
+   - list.items mapped into KubeObject classes
+   - metadata.managedFields removed from list items to save memory
+   - item.kind and item.apiVersion copied from list response
+   - item.cluster set to cluster name
+
+7. Health reducer calculates final status.
+   Code path:
+   - localHealth.ts -> getLocalHealth(items)
+   - localGetItemStatus(item, allItems)
+   - evidence sorted errors first, warnings second
+   - reasons capped for summary, evidence popover shows object rows
+
+APIs called for BGW 0013C health/status
+---------------------------------------
+Cluster placeholder:
+{cluster} = default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306
+Namespace placeholder:
+{ns} = wnv7a0vbgw0013c
+Backend base:
+http://localhost:4466/clusters/{cluster}
+
+Discovery API:
+GET /clusters/{cluster}/api/v1/namespaces
+
+Namespaced resource APIs from Resources column and Status shared data:
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/configmaps
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/endpoints
+GET /clusters/{cluster}/apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/persistentvolumeclaims
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/secrets
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/services
+GET /clusters/{cluster}/apis/apps/v1/namespaces/{ns}/statefulsets
+GET /clusters/{cluster}/apis/apps/v1/namespaces/{ns}/replicasets
+GET /clusters/{cluster}/apis/apps/v1/namespaces/{ns}/deployments
+GET /clusters/{cluster}/apis/apps/v1/namespaces/{ns}/daemonsets
+GET /clusters/{cluster}/apis/batch/v1/namespaces/{ns}/jobs
+GET /clusters/{cluster}/apis/batch/v1/namespaces/{ns}/cronjobs
+GET /clusters/{cluster}/apis/networking.k8s.io/v1/namespaces/{ns}/ingresses
+GET /clusters/{cluster}/apis/networking.k8s.io/v1/namespaces/{ns}/networkpolicies
+GET /clusters/{cluster}/apis/autoscaling/v2/namespaces/{ns}/horizontalpodautoscalers
+GET /clusters/{cluster}/apis/rbac.authorization.k8s.io/v1/namespaces/{ns}/roles
+GET /clusters/{cluster}/apis/rbac.authorization.k8s.io/v1/namespaces/{ns}/rolebindings
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/resourcequotas
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/limitranges
+
+Extra Status-only API:
+GET /clusters/{cluster}/api/v1/namespaces/{ns}/pods
+
+Plugin extension point:
+- useProjectItems also includes state.projects.apiResources from plugins.
+- Any registered plugin resource adds more list calls with same pattern.
+
+Common API response shape
+-------------------------
+Most calls return Kubernetes List objects:
+
+{
+  "kind": "JobList",
+  "apiVersion": "batch/v1",
+  "metadata": {
+    "resourceVersion": "...",
+    "continue": "... optional ...",
+    "remainingItemCount": 0
+  },
+  "items": [
+    {
+      "apiVersion": "batch/v1",
+      "kind": "Job",
+      "metadata": {
+        "name": "wnv7a0vbgw0013c-sbc-healthcheck-job",
+        "namespace": "wnv7a0vbgw0013c",
+        "creationTimestamp": "..."
+      },
+      "spec": {
+        "backoffLimit": 0
+      },
+      "status": {
+        "failed": 1,
+        "succeeded": 0
+      }
+    }
+  ]
+}
+
+Frontend converts each item to KubeObject and adds:
+- kind from list.kind without List suffix
+- apiVersion from list.apiVersion
+- cluster = default--api-wnv7a0-wnvlil-itn-3pc-att-com:6443--at9306
+
+Health rules by kind
+--------------------
+Pod:
+- status.phase == Failed -> error, message Failed
+- container waiting reason CrashLoopBackOff -> error
+- container waiting reason ImagePullBackOff -> error
+- container waiting reason ErrImagePull -> error
+- container waiting reason CreateContainerConfigError -> error
+- container waiting reason InvalidImageName -> error
+- phase Running and Ready condition not True -> error, message Running but NotReady
+- phase Pending older than 5 minutes -> error, message Pending > 5m
+- phase Pending younger than/equal 5 minutes -> warning, message Pending
+- otherwise success
+
+Deployment, ReplicaSet, StatefulSet, DaemonSet:
+- desired replicas == 0 -> success
+- status.replicas == 0 and desired > 0 -> error, message 0/{desired} pods created
+- ready replicas < desired replicas -> warning, message {ready}/{desired} ready
+- otherwise success
+
+Job:
+- failed >= backoffLimit + 1 and succeeded == 0 -> error, message failed ({failed}/{backoffLimit + 1})
+- otherwise success
+
+For BGW 0013C failed jobs:
+- observed message failed (1/1)
+- means failed count reached retry threshold and succeeded is 0
+
+CronJob:
+- active runs > 1 when concurrencyPolicy == Forbid -> warning
+- active runs > 5 otherwise -> warning
+- otherwise success
+
+PersistentVolumeClaim:
+- phase Lost -> error
+- phase Pending older than 2 minutes -> error, message Pending > 2m
+- phase Pending younger than/equal 2 minutes -> warning
+- otherwise success
+
+Endpoints:
+- if subsets contain addresses -> success
+- if paired Service missing -> success
+- if paired Service type ExternalName -> success
+- if paired Service clusterIP == None -> success
+- if paired Service has no selector -> success
+- otherwise no addresses -> warning, message no endpoints
+
+For BGW 0013C endpoint warnings:
+- listed Endpoints objects have no usable endpoint addresses for selector-based Services
+- frontend marks each as warning "no endpoints"
+
+HorizontalPodAutoscaler:
+- ScalingActive=False with reason not ScalingDisabled -> warning
+- ScalingDisabled is treated as deliberate/off -> success
+- otherwise success
+
+Ingress:
+- no loadBalancer.ingress address and object older than 5 minutes -> warning, message no address
+- otherwise success
+
+For BGW 0013C ingress warning:
+- cbur-master-cbur-ingress has no load balancer address, so warning "no address"
+
+Other fetched kinds:
+- ConfigMap, Secret, Service, EndpointSlice, NetworkPolicy, Role, RoleBinding, ResourceQuota, LimitRange are success unless covered by specific rule elsewhere.
+
+Unavailable flow
+----------------
+If any list fetch in useLocalHealthItems returns non-404 error:
+- LocalHealthCell does not compute Healthy/Unhealthy from partial empty data.
+- It calls getUnavailableHealth().
+- Status becomes Unavailable.
+- Popover shows cluster, HTTP code, and backend/API error message.
+
+404 handling:
+- useKubeLists ignores one 404 for a resource kind.
+- Reason: some clusters do not support every optional API group/resource.
+- 404 for one kind does not make whole application Unavailable.
+
+Direct URL test note
+--------------------
+Manual browser fetches to /clusters/{cluster}/... can return 403 if missing Headlamp backend auth header.
+Normal app calls use clusterFetch(), which adds Headlamp backend headers/cookies before backend proxy handles request.
+
+Exact source files for this flow
+--------------------------------
+Frontend:
+- frontend/src/components/project/ProjectList.tsx
+- frontend/src/components/project/useProjectResources.ts
+- frontend/src/components/project/useLocalHealthItems.ts
+- frontend/src/components/project/localHealth.ts
+- frontend/src/components/project/projectUtils.ts
+- frontend/src/components/advancedSearch/utils/useKubeLists.ts
+- frontend/src/lib/k8s/api/v2/useKubeObjectList.ts
+- frontend/src/lib/k8s/api/v2/KubeObjectEndpoint.ts
+- frontend/src/lib/k8s/api/v2/fetch.ts
+- frontend/src/helpers/getHeadlampAPIHeaders.ts
+
+Backend:
+- backend/cmd/headlamp.go
+
+Short conclusion
+----------------
+BGW 0013C shows Unhealthy because frontend Status column found real Kubernetes resource errors in namespace wnv7a0vbgw0013c: 3 failed Jobs. It also found warning evidence: multiple Endpoints with no endpoints and one Ingress with no address. Backend does not decide this health status; backend only authenticates and proxies Kubernetes API responses. Frontend combines those responses and applies localHealth.ts rules to produce the final badge and popover evidence.
