@@ -431,6 +431,59 @@ func (c *Context) SourceStr() string {
 	}
 }
 
+// upstreamCORSResponseHeaders are CORS response headers that may be set by the
+// cluster (or a gateway in front of it). Headlamp owns the browser-facing CORS
+// headers, so upstream values must not be copied through the proxy.
+var upstreamCORSResponseHeaders = []string{
+	"Access-Control-Allow-Origin",
+	"Access-Control-Allow-Credentials",
+	"Access-Control-Allow-Methods",
+	"Access-Control-Allow-Headers",
+	"Access-Control-Expose-Headers",
+	"Access-Control-Max-Age",
+}
+
+// stripUpstreamCORSHeaders removes CORS response headers set by the upstream so
+// Headlamp's own CORS middleware stays the single source of those headers.
+// "Vary" is only pruned of its "Origin" token; other Vary values are preserved.
+func stripUpstreamCORSHeaders(header http.Header) {
+	for _, name := range upstreamCORSResponseHeaders {
+		header.Del(name)
+	}
+
+	varyValues, ok := header["Vary"]
+	if !ok {
+		return
+	}
+
+	kept := make([]string, 0, len(varyValues))
+
+	for _, value := range varyValues {
+		tokens := make([]string, 0, len(value))
+
+		for _, token := range strings.Split(value, ",") {
+			trimmed := strings.TrimSpace(token)
+			if trimmed == "" || strings.EqualFold(trimmed, "Origin") {
+				continue
+			}
+
+			tokens = append(tokens, trimmed)
+		}
+
+		if len(tokens) > 0 {
+			kept = append(kept, strings.Join(tokens, ", "))
+		}
+	}
+
+	if len(kept) == 0 {
+		header.Del("Vary")
+
+		return
+	}
+
+	header["Vary"] = kept
+}
+
 // SetupProxy sets up a reverse proxy for the context.
 func (c *Context) SetupProxy() error {
 	URL, err := url.Parse(c.Cluster.Server)
@@ -440,13 +493,14 @@ func (c *Context) SetupProxy() error {
 
 	proxy := httputil.NewSingleHostReverseProxy(URL)
 
-	// For OIDC clusters, log a hint upon receiving a 401 from the API server (StatusUnauthorized),
-	// as it can indicate the API server does not trust the same OIDC provider as Headlamp.
-	if c.AuthType() == "oidc" {
-		// Log at most once per proxy to avoid flooding the logs on repeated 401s.
-		var warnOnce sync.Once
+	var warnOnce sync.Once
 
-		proxy.ModifyResponse = func(resp *http.Response) error {
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		stripUpstreamCORSHeaders(resp.Header)
+
+		// For OIDC clusters, log a hint upon receiving a 401 from the API server (StatusUnauthorized),
+		// as it can indicate the API server does not trust the same OIDC provider as Headlamp.
+		if c.AuthType() == "oidc" {
 			authHeader := ""
 			if resp.Request != nil {
 				authHeader = resp.Request.Header.Get("Authorization")
@@ -460,9 +514,9 @@ func (c *Context) SetupProxy() error {
 							"and client-id as Headlamp")
 				})
 			}
-
-			return nil
 		}
+
+		return nil
 	}
 
 	restConf, err := c.RESTConfig()

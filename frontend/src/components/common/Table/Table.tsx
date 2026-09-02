@@ -156,6 +156,16 @@ function usePageURLState(
   return [zeroIndexPage, setZeroIndexPage];
 }
 
+// Hiding the filter row should also clear any typed filter values, otherwise
+// the row stays visually gone but rows remain filtered until each "x" is clicked.
+function toggleColumnFilters(table: MRT_TableInstance<any>) {
+  const next = !table.getState().showColumnFilters;
+  if (!next) {
+    table.resetColumnFilters();
+  }
+  table.setShowColumnFilters(next);
+}
+
 const StyledHeadRow = styled('tr')(({ theme }) => ({
   display: 'contents',
   background: theme.palette.background.muted,
@@ -408,7 +418,7 @@ export default function Table<RowItem extends Record<string, any>>({
             <MRT_ToggleGlobalFilterButton table={tbl} />
           )}
           {enableFilters && enableColumnFilters && columnFilterDisplayMode !== 'popover' && (
-            <MRT_ToggleFiltersButton table={tbl} />
+            <MRT_ToggleFiltersButton table={tbl} onClick={() => toggleColumnFilters(tbl)} />
           )}
           {(enableHiding || enableColumnOrdering || enableColumnPinning) && (
             <ColumnVisibilityButton table={tbl} />
@@ -510,7 +520,7 @@ export default function Table<RowItem extends Record<string, any>>({
     'TABLE_COLUMN_FILTERS',
     event => {
       event.stopPropagation();
-      table.setShowColumnFilters(!table.getState().showColumnFilters);
+      toggleColumnFilters(table);
     },
     {},
     [table]

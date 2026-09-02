@@ -16,8 +16,8 @@
 
 import { ThemeProvider } from '@mui/material/styles';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./useProjectResources', () => ({
   useProjectItems: () => ({ items: [], isLoading: false }),
@@ -28,7 +28,11 @@ import Namespace from '../../lib/k8s/namespace';
 import { createMuiTheme } from '../../lib/themes';
 import { HeadlampEventType } from '../../redux/headlampEventSlice';
 import { recordHeadlampEvents, TestContext } from '../../test';
-import ProjectList, { groupNamespacesIntoProjects, useProject } from './ProjectList';
+import ProjectList, {
+  discoverProjectsFromNamespaces,
+  filterProjectsByNamespaces,
+  useProject,
+} from './ProjectList';
 import { PROJECT_ID_LABEL } from './projectUtils';
 
 // cyclic imports fix
@@ -45,24 +49,25 @@ function ns(name: string, opts: { project?: string; cluster?: string } = {}) {
   };
 }
 
-describe('groupNamespacesIntoProjects', () => {
-  it('groups namespaces by project id', () => {
-    const projects = groupNamespacesIntoProjects([
-      ns('app-prod', { project: 'app' }),
-      ns('app-staging', { project: 'app' }),
-      ns('billing', { project: 'billing' }),
+describe('discoverProjectsFromNamespaces', () => {
+  it('maps every namespace to an application named after the namespace', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('app-prod'),
+      ns('app-staging'),
+      ns('billing'),
     ]);
 
     expect(projects).toEqual([
-      { id: 'app', namespaces: ['app-prod', 'app-staging'], clusters: ['cluster-a'] },
+      { id: 'app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
+      { id: 'app-staging', namespaces: ['app-staging'], clusters: ['cluster-a'] },
       { id: 'billing', namespaces: ['billing'], clusters: ['cluster-a'] },
     ]);
   });
 
-  it('collects clusters from every namespace in a project', () => {
-    const projects = groupNamespacesIntoProjects([
-      ns('shared', { project: 'app', cluster: 'cluster-a' }),
-      ns('shared', { project: 'app', cluster: 'cluster-b' }),
+  it('collapses a same-named namespace across clusters into one application', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('shared', { cluster: 'cluster-a' }),
+      ns('shared', { cluster: 'cluster-b' }),
     ]);
 
     expect(projects).toHaveLength(1);
@@ -70,31 +75,54 @@ describe('groupNamespacesIntoProjects', () => {
     expect(projects[0].clusters).toEqual(['cluster-a', 'cluster-b']);
   });
 
-  // Regression test for #5254: a namespace without metadata.labels reached
-  // the inner groupBy iteratee through a stale react-query cache and crashed
-  // the Projects page with
-  //   TypeError: Cannot read properties of undefined (reading 'headlamp.dev/project-id')
-  it('skips namespaces with no labels instead of crashing', () => {
-    expect(() =>
-      groupNamespacesIntoProjects([ns('labelled', { project: 'app' }), ns('unlabelled')])
-    ).not.toThrow();
-
-    const projects = groupNamespacesIntoProjects([
-      ns('labelled', { project: 'app' }),
-      ns('unlabelled'),
+  it('excludes system / infrastructure namespaces', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('openshift-config'),
+      ns('kube-system'),
+      ns('open-cluster-management-agent'),
+      ns('default'),
+      ns('my-app'),
     ]);
-    expect(projects).toEqual([{ id: 'app', namespaces: ['labelled'], clusters: ['cluster-a'] }]);
+
+    expect(projects).toEqual([{ id: 'my-app', namespaces: ['my-app'], clusters: ['cluster-a'] }]);
   });
 
-  it('skips namespaces whose labels object is present but has no project id', () => {
-    const projects = groupNamespacesIntoProjects([
-      {
-        metadata: { name: 'other', labels: { 'app.kubernetes.io/name': 'x' } },
-        cluster: 'cluster-a',
-      },
-      ns('mine', { project: 'app' }),
+  // Regression guard for #5254: a namespace without metadata.name reached the
+  // groupBy iteratee through a stale react-query cache and crashed the page.
+  it('skips namespaces with no name instead of crashing', () => {
+    expect(() =>
+      discoverProjectsFromNamespaces([ns('real'), { metadata: {} as any, cluster: 'cluster-a' }])
+    ).not.toThrow();
+
+    const projects = discoverProjectsFromNamespaces([
+      ns('real'),
+      { metadata: {} as any, cluster: 'cluster-a' },
     ]);
-    expect(projects).toEqual([{ id: 'app', namespaces: ['mine'], clusters: ['cluster-a'] }]);
+    expect(projects).toEqual([{ id: 'real', namespaces: ['real'], clusters: ['cluster-a'] }]);
+  });
+});
+
+describe('filterProjectsByNamespaces', () => {
+  const projects = [
+    { id: 'a', namespaces: ['a'], clusters: ['c1'] },
+    { id: 'b', namespaces: ['b'], clusters: ['c1'] },
+    { id: 'c', namespaces: ['c'], clusters: ['c1'] },
+  ];
+
+  it('returns all projects when nothing is selected (default view)', () => {
+    expect(filterProjectsByNamespaces(projects, [])).toEqual(projects);
+  });
+
+  it('returns only the project matching a single selected namespace', () => {
+    expect(filterProjectsByNamespaces(projects, ['b'])).toEqual([projects[1]]);
+  });
+
+  it('returns projects matching any of several selected namespaces', () => {
+    expect(filterProjectsByNamespaces(projects, ['a', 'c'])).toEqual([projects[0], projects[2]]);
+  });
+
+  it('returns an empty list when no project matches', () => {
+    expect(filterProjectsByNamespaces(projects, ['does-not-exist'])).toEqual([]);
   });
 });
 
@@ -144,12 +172,73 @@ describe('ProjectList events', () => {
           type: HeadlampEventType.PROJECT_LIST_VIEW,
           data: {
             projects: [
-              { id: 'app', namespaces: ['app-prod'], clusters: ['cluster-a'] },
+              { id: 'app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
               { id: 'billing', namespaces: ['billing'], clusters: ['cluster-a'] },
             ],
           },
         },
       ]);
     });
+  });
+});
+
+describe('ProjectList namespace dropdown', () => {
+  beforeEach(() => {
+    // A previous test's vi.restoreAllMocks() clears the matchMedia mock that
+    // setupTests installs; MRT's toolbar needs it, so re-install it here.
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation(query => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('shows all applications by default and filters the table by the selected namespace', async () => {
+    vi.spyOn(Namespace, 'useList').mockReturnValue({
+      items: [ns('app-prod'), ns('billing'), ns('web')],
+      isLoading: false,
+    } as any);
+
+    render(
+      <TestContext>
+        <QueryClientProvider client={new QueryClient()}>
+          <ThemeProvider theme={createMuiTheme({ name: 'Light', base: 'light' })}>
+            <ProjectList />
+          </ThemeProvider>
+        </QueryClientProvider>
+      </TestContext>
+    );
+
+    // Default: nothing selected -> every application row is visible.
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'app-prod' })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('link', { name: 'billing' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'web' })).toBeInTheDocument();
+
+    // Open the namespace dropdown and pick 'app-prod'.
+    const input = screen.getByRole('combobox');
+    fireEvent.mouseDown(input);
+    fireEvent.click(await screen.findByRole('option', { name: 'app-prod' }));
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    // The table now shows only the selected namespace's row.
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'billing' })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole('link', { name: 'web' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'app-prod' })).toBeInTheDocument();
   });
 });

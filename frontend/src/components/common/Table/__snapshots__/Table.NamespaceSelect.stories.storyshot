@@ -32,7 +32,7 @@
               class="MuiAutocomplete-root MuiAutocomplete-hasClearIcon MuiAutocomplete-hasPopupIcon css-1x6bjyf-MuiAutocomplete-root"
             >
               <div
-                class="MuiBox-root css-1dipl1t"
+                class="MuiBox-root css-1phfs7n"
               >
                 <div
                   class="MuiFormControl-root MuiFormControl-fullWidth MuiTextField-root css-wb57ya-MuiFormControl-root-MuiTextField-root"
@@ -50,20 +50,10 @@
                     class="MuiInputBase-root MuiOutlinedInput-root MuiInputBase-colorPrimary MuiInputBase-fullWidth MuiInputBase-formControl MuiInputBase-sizeSmall MuiInputBase-adornedStart MuiInputBase-adornedEnd MuiAutocomplete-inputRoot css-1gohie-MuiInputBase-root-MuiOutlinedInput-root"
                   >
                     <p
-                      class="MuiTypography-root MuiTypography-body1 css-19qhv5g-MuiTypography-root"
+                      class="MuiTypography-root MuiTypography-body2 css-ab4e19-MuiTypography-root"
                       style="overflow-wrap: anywhere;"
                     >
-                      MyNamespace1
-                      <span>
-                        , 
-                      </span>
-                      <b
-                        class=""
-                        data-mui-internal-clone-element="true"
-                        style="cursor: pointer;"
-                      >
-                        +1
-                      </b>
+                      MyNamespace1, MyNamespace0
                     </p>
                     <input
                       aria-autocomplete="both"

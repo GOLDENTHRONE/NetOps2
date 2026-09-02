@@ -22,6 +22,53 @@ import { getStatus, KubeObjectStatus } from '../resourceMap/nodes/KubeObjectStat
 
 export const PROJECT_ID_LABEL = 'headlamp.dev/project-id';
 
+/**
+ * Applications are auto-discovered from the cluster: every namespace the user's
+ * token is allowed to see becomes an application (application name = namespace
+ * name). System / infrastructure namespaces are hidden using the rules below.
+ *
+ * These two lists are the ONLY place to control what counts as "system".
+ * Add or remove entries here to change what is hidden from the projects list.
+ * The defaults cover the OpenShift / Kubernetes platform namespaces.
+ */
+export const SYSTEM_NAMESPACE_PREFIXES: ReadonlyArray<string> = [
+  'openshift-',
+  'kube-',
+  'open-cluster-management',
+];
+
+export const SYSTEM_NAMESPACE_NAMES: ReadonlyArray<string> = [
+  'default',
+  'openshift',
+  'kube-system',
+  'kube-public',
+  'kube-node-lease',
+  'cert-manager',
+  'cert-manager-operator',
+  'istio-system',
+  'metallb-system',
+  'quay-registry',
+  'vault-secrets-operator',
+  'ldap-group-sync',
+  'assisted-installer',
+  'hardware-sensors-metrics',
+  'att-metallb-test',
+  'curts-stomping-ground',
+  'debug',
+  'cluster-backup',
+];
+
+/**
+ * Whether a namespace is a system/infrastructure namespace that should be
+ * hidden from the auto-discovered application (project) list.
+ *
+ * @param name - The namespace name.
+ * @returns true when the namespace should be excluded.
+ */
+export const isSystemNamespace = (name: string): boolean =>
+  SYSTEM_NAMESPACE_NAMES.includes(name) ||
+  SYSTEM_NAMESPACE_PREFIXES.some(prefix => name.startsWith(prefix));
+
 export const getHealthIcon = (healthy: number, unhealthy: number, warning: number) => {
   if (healthy + unhealthy + warning === 0) return 'mdi:help-circle';
   if (unhealthy > 0) return 'mdi:alert-circle';

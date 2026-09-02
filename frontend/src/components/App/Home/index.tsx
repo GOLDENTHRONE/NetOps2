@@ -19,18 +19,17 @@ import { Box, Tab, Tabs, Typography } from '@mui/material';
 import { isEqual } from 'lodash';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useHistory } from 'react-router-dom';
+import { useHistory, useLocation } from 'react-router-dom';
 import { setupBackstageMessageReceiver } from '../../../helpers/backstageMessageReceiver';
 import { useAutoConnectClusters } from '../../../helpers/clusterAutoConnect';
 import { isBackstage } from '../../../helpers/isBackstage';
 import { isElectron } from '../../../helpers/isElectron';
-import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
+import { useClustersConf, useClustersOcpVersion, useClustersVersion } from '../../../lib/k8s';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { useEventWarningList } from '../../../lib/k8s/event';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
 import { PageGrid } from '../../common/Resource';
 import SectionBox from '../../common/SectionBox';
-import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ProjectList from '../../project/ProjectList';
 import ClusterTable from './ClusterTable';
 import { ENABLE_RECENT_CLUSTERS } from './config';
@@ -116,10 +115,10 @@ function useWarningSettingsPerCluster(clusterNames: string[]) {
 }
 
 function HomeComponent(props: HomeComponentProps) {
-  const [view, setView] = useLocalStorageState<'clusters' | 'projects'>(
-    'home-tab-view',
-    'clusters'
-  );
+  // Always open Home on "All Clusters" tab when view mounts.
+  const [view, setView] = React.useState<'clusters' | 'projects'>('clusters');
+  const location = useLocation();
+  const history = useHistory();
   const { clusters } = props;
   const [customNameClusters, setCustomNameClusters] = React.useState(
     getCustomClusterNames(clusters)
@@ -141,6 +140,7 @@ function HomeComponent(props: HomeComponentProps) {
   );
 
   const [versions, errors] = useClustersVersion(autoConnectClusters);
+  const ocpVersions = useClustersOcpVersion(autoConnectClusters);
 
   const clusterNames = React.useMemo(
     () => allClusterNames.filter(name => connectedClusters.has(name)),
@@ -148,6 +148,20 @@ function HomeComponent(props: HomeComponentProps) {
   );
 
   const warningLabels = useWarningSettingsPerCluster(clusterNames);
+
+  React.useEffect(() => {
+    if (location.pathname === '/projects') {
+      setView('projects');
+      return;
+    }
+
+    const queryView = new URLSearchParams(location.search).get('view');
+    if (queryView === 'projects' || queryView === 'clusters') {
+      setView(queryView);
+      return;
+    }
+    setView('clusters');
+  }, [location.pathname, location.search]);
 
   React.useEffect(() => {
     if (isBackstage()) {
@@ -174,6 +188,7 @@ function HomeComponent(props: HomeComponentProps) {
         <ClusterTable
           customNameClusters={customNameClusters}
           versions={versions}
+          ocpVersions={ocpVersions}
           errors={errors}
           warningLabels={warningLabels}
           clusters={clusters}
@@ -186,6 +201,7 @@ function HomeComponent(props: HomeComponentProps) {
       customNameClusters,
       errors,
       versions,
+      ocpVersions,
       warningLabels,
       clusters,
       connectedClusters,
@@ -197,7 +213,14 @@ function HomeComponent(props: HomeComponentProps) {
     <PageGrid>
       <SectionBox title="Home" headerProps={{ headerStyle: 'main' }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
-          <Tabs value={view} onChange={(_, newView) => setView(() => newView)}>
+          <Tabs
+            value={view}
+            onChange={(_, newView: 'clusters' | 'projects') => {
+              // Navigate so tab clicks stay in sync with the sidebar's
+              // "All Clusters" / "Applications" links (both drive the URL).
+              history.push(createRouteURL(newView === 'projects' ? 'projectsHome' : 'home'));
+            }}
+          >
             <Tab
               value="clusters"
               label={
@@ -216,8 +239,8 @@ function HomeComponent(props: HomeComponentProps) {
               value="projects"
               label={
                 <>
-                  <Icon icon="mdi:folder-multiple" />
-                  <Typography>{t('Projects')}</Typography>
+                  <Icon icon="mdi:apps" />
+                  <Typography>{t('Applications')}</Typography>
                 </>
               }
               sx={{

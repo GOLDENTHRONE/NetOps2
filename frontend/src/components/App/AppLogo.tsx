@@ -21,8 +21,6 @@ import { useNavBarMode } from '../../lib/themes';
 import { useTypedSelector } from '../../redux/hooks';
 import LogoDark from '../../resources/icon-dark.svg?react';
 import LogoLight from '../../resources/icon-light.svg?react';
-import LogoWithTextDark from '../../resources/logo-dark.svg?react';
-import LogoWithTextLight from '../../resources/logo-light.svg?react';
 import { EmptyContent } from '../common';
 import ErrorBoundary from '../common/ErrorBoundary';
 
@@ -47,16 +45,25 @@ export type AppLogoType =
 export default function OriginalAppLogo(props: AppLogoProps) {
   const { logoType, themeName } = props;
 
-  const Component =
-    logoType === 'large'
-      ? themeName === 'dark'
-        ? LogoWithTextLight
-        : LogoWithTextDark
-      : themeName === 'dark'
-      ? LogoLight
-      : LogoDark;
+  const Icon = themeName === 'dark' ? LogoLight : LogoDark;
 
-  return <Component style={{ width: 'auto', height: '32px' }} />;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+      <Icon style={{ width: 'auto', height: '32px' }} />
+      {logoType === 'large' && (
+        <span
+          style={{
+            color: themeName === 'dark' ? '#FFFFFF' : '#1B1A19',
+            fontSize: '20px',
+            fontWeight: 700,
+            lineHeight: 1,
+          }}
+        >
+          USPe.NetOps
+        </span>
+      )}
+    </span>
+  );
 }
 
 export function AppLogo(props: AppLogoProps) {

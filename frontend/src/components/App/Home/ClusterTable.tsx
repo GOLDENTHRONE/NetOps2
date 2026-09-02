@@ -33,7 +33,7 @@ import { isElectron } from '../../../helpers/isElectron';
 import { setRecentCluster } from '../../../helpers/recentClusters';
 import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSettings';
 import { formatClusterPathParam } from '../../../lib/cluster';
-import { useClustersConf, useClustersVersion } from '../../../lib/k8s';
+import { useClustersConf, useClustersOcpVersion, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
@@ -45,15 +45,19 @@ import Table from '../../common/Table';
 import { LightTooltip } from '../../common/Tooltip';
 import { useLocalStorageState } from '../../globalSearch/useLocalStorageState';
 import ClusterBadge from '../../Sidebar/ClusterBadge';
+/*
 import ClusterContextMenu from './ClusterContextMenu';
+*/
 import {
   getClusterStatusAccessor,
   getClusterStatusInfo,
-  getConditionTooltip,
-  isClusterInventoryCluster,
   STATUS_VARIANTS,
 } from './ClusterInventory';
+/*
+import { isClusterInventoryCluster } from './ClusterInventory';
+*/
 import { canSelectCluster } from './clusterStatus';
+import ClusterStatusPopover from './ClusterStatusPopover';
 import { CONNECT_ON_CLUSTER_LINK, MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
 import RegisteredClusterEmptyState from './RegisteredClusterEmptyState';
@@ -119,19 +123,25 @@ function ClusterStatus({
   // ambiguous "⋯".
   if (isConnected && error === undefined) {
     return (
-      <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
-        <CircularProgress size={14} />
-        <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
-          {t('translation|Connecting…')}
-        </Typography>
-      </Box>
+      <ClusterStatusPopover
+        cluster={cluster}
+        error={error}
+        statusKind="unknown"
+        statusText={t('translation|Connecting…')}
+      >
+        <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
+          <CircularProgress size={14} />
+          <Typography variant="body2" sx={{ ml: 1, color: theme.palette.text.secondary }}>
+            {t('translation|Connecting…')}
+          </Typography>
+        </Box>
+      </ClusterStatusPopover>
     );
   }
 
-  const { kind, text, condition } = getClusterStatusInfo(cluster, error, t);
+  const { kind, text } = getClusterStatusInfo(cluster, error, t);
   const variant = STATUS_VARIANTS[kind];
   const color = theme.palette.home.status[variant.colorKey];
-  const tooltip = condition ? getConditionTooltip(condition) : '';
   const statusContent = (
     <Box display="flex" alignItems="center" justifyContent="center" width="fit-content">
       <Icon icon={variant.icon} width={16} color={color} />
@@ -147,12 +157,10 @@ function ClusterStatus({
     </Box>
   );
 
-  return tooltip ? (
-    <LightTooltip title={<span style={{ whiteSpace: 'pre-line' }}>{tooltip}</span>}>
+  return (
+    <ClusterStatusPopover cluster={cluster} error={error} statusKind={kind} statusText={text}>
       {statusContent}
-    </LightTooltip>
-  ) : (
-    statusContent
+    </ClusterStatusPopover>
   );
 }
 
@@ -161,6 +169,8 @@ export interface ClusterTableProps {
   customNameClusters: ReturnType<typeof getCustomClusterNames>;
   /** Versions for each cluster. */
   versions: ReturnType<typeof useClustersVersion>[0];
+  /** OpenShift (OCP) versions for each cluster, when applicable. */
+  ocpVersions?: ReturnType<typeof useClustersOcpVersion>;
   /** Errors for each cluster. */
   errors: ReturnType<typeof useClustersVersion>[1];
   /** Clusters configuration. */
@@ -184,6 +194,7 @@ const CLUSTER_TABLE_ID = 'home-clusters';
 export default function ClusterTable({
   customNameClusters,
   versions,
+  ocpVersions = {},
   errors,
   clusters,
   warningLabels,
@@ -244,25 +255,25 @@ export default function ClusterTable({
     [setColumnFilters]
   );
 
-  /**
-   * Gets the origin of a cluster.
-   *
-   * @param cluster
-   * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
-   */
-  function getOrigin(cluster: Cluster): string {
-    if (cluster?.meta_data?.source === 'kubeconfig') {
-      const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
-      return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
-    } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
-      return t('translation|Plugin');
-    } else if (cluster?.meta_data?.source === 'incluster') {
-      return t('translation|In-cluster');
-    } else if (isClusterInventoryCluster(cluster)) {
-      return t('translation|Cluster Inventory');
-    }
-    return t('translation|Unknown');
-  }
+  // /**
+  //  * Gets the origin of a cluster.
+  //  *
+  //  * @param cluster
+  //  * @returns A description of where the cluster is picked up from: dynamic, in-cluster, or from a kubeconfig file.
+  //  */
+  // function getOrigin(cluster: Cluster): string {
+  //   if (cluster?.meta_data?.source === 'kubeconfig') {
+  //     const sourcePath = cluster?.meta_data?.origin?.kubeconfig;
+  //     return sourcePath ? `Kubeconfig: ${sourcePath}` : 'Kubeconfig';
+  //   } else if (cluster?.meta_data?.source === 'dynamic_cluster') {
+  //     return t('translation|Plugin');
+  //   } else if (cluster?.meta_data?.source === 'incluster') {
+  //     return t('translation|In-cluster');
+  //   } else if (isClusterInventoryCluster(cluster)) {
+  //     return t('translation|Cluster Inventory');
+  //   }
+  //   return t('translation|Unknown');
+  // }
 
   const viewClusters = t('View Clusters');
 
@@ -344,6 +355,7 @@ export default function ClusterTable({
             );
           },
         },
+        /*
         {
           id: 'origin',
           header: t('Origin'),
@@ -352,6 +364,7 @@ export default function ClusterTable({
             <Typography variant="body2">{getOrigin((clusters || {})[original.name])}</Typography>
           ),
         },
+        */
         {
           id: 'status',
           header: t('Status'),
@@ -379,11 +392,17 @@ export default function ClusterTable({
             isClusterConnected(cluster?.name) ? warningLabels[cluster?.name] ?? '⋯' : '',
         },
         {
+          id: 'ocpVersion',
+          header: t('glossary|OCP Version'),
+          accessorFn: ({ name }) => (isClusterConnected(name) ? ocpVersions[name] || '⋯' : ''),
+        },
+        {
           id: 'version',
           header: t('glossary|Kubernetes Version'),
           accessorFn: ({ name }) =>
             isClusterConnected(name) ? versions[name]?.gitVersion || '⋯' : '',
         },
+        /*
         {
           id: 'actions',
           header: t('Actions'),
@@ -398,6 +417,7 @@ export default function ClusterTable({
           enableSorting: false,
           enableColumnFilter: false,
         },
+        */
       ]}
       data={clustersList}
       enableRowSelection={
