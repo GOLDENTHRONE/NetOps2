@@ -521,17 +521,16 @@ export const cronJobPileup: Scenario = {
   name: 'cronJobPileup',
   items: [cronJob('report', 6)],
   expected: {
-    status: 'warning',
-    label: 'Degraded',
-    rank: 2,
-    reasonsIncludes: ['6 active runs'],
+    status: 'success',
+    label: 'Healthy',
+    rank: 1,
   },
 };
 
 export const cronJobForbidPileup: Scenario = {
   name: 'cronJobForbidPileup',
   items: [cronJob('report', 2, 'Forbid')],
-  expected: { status: 'warning', label: 'Degraded', rank: 2 },
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
 };
 
 export const cronJobActiveOne: Scenario = {

@@ -293,7 +293,19 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                   />
                 </>
               )}
-              {(errors.length > 0 || warnings.length > 0) && <Divider sx={{ my: 1 }} />}
+              {health.needsAttention.length > 0 && (
+                <>
+                  {(errors.length > 0 || warnings.length > 0) && <Divider sx={{ my: 1 }} />}
+                  <EvidenceSection
+                    title={t('Needs Attention')}
+                    color={theme.palette.text.secondary}
+                    evidence={health.needsAttention}
+                  />
+                </>
+              )}
+              {(errors.length > 0 || warnings.length > 0 || health.needsAttention.length > 0) && (
+                <Divider sx={{ my: 1 }} />
+              )}
               <StatsSection stats={health.stats} t={t} totalItems={totalItems} />
             </>
           )}

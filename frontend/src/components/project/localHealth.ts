@@ -27,7 +27,13 @@ import { KubeObject } from '../../lib/k8s/cluster';
 // logic can never silently drift when an upstream helper changes shape.
 // See tinyPickDesired / tinyPickReady near the bottom.
 
-export type LocalHealthSeverity = 'success' | 'warning' | 'error';
+export type LocalHealthSeverity =
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'progressing'
+  | 'info'
+  | 'unknown';
 export type LocalHealthBadge =
   | LocalHealthSeverity
   | 'empty' // no resources at all
@@ -35,7 +41,7 @@ export type LocalHealthBadge =
   | 'unavailable'; // couldn't reach the cluster to know the truth
 
 export interface LocalHealthEvidence {
-  severity: 'error' | 'warning';
+  severity: 'error' | 'warning' | 'progressing' | 'info' | 'unknown';
   kind: string;
   namespace: string;
   name: string;
@@ -68,6 +74,9 @@ export interface LocalHealthResult {
   /** Breakdown of the observed resource inventory, per kind, in a fixed
    *  reading order. Empty when the badge is 'unavailable' or 'empty'. */
   stats: LocalHealthStat[];
+  /** Non-success verdicts from kinds in NON_HEALTH_BEARING_KINDS (e.g. Job).
+   *  Never affects `status`/`label`/`rank` — surfaced for visibility only. */
+  needsAttention: LocalHealthEvidence[];
 }
 
 const REASON_CAP = 10;
@@ -88,6 +97,15 @@ const WORKLOAD_KINDS = new Set([
   'Job',
   'CronJob',
 ]);
+
+// Kinds whose verdict is surfaced (Needs Attention) but never rolled into the
+// Healthy/Degraded/Unhealthy tally. Job is one-shot/run-to-completion; a
+// failed Helm test-hook Job (e.g. wnv7a0vbgw0013c-sbc-healthcheck-job, a
+// helm.sh/hook: test Job) shouldn't drag down an otherwise-healthy app.
+// CronJob is scheduled orchestration, not application health itself. It may
+// still be visible in the popover/Needs Attention, but it must not affect the
+// app badge or rank.
+const NON_HEALTH_BEARING_KINDS = new Set(['Job', 'CronJob']);
 
 interface ItemVerdict {
   severity: LocalHealthSeverity;
@@ -240,24 +258,108 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     return { severity: 'success' };
   }
 
+  // Job — NON_HEALTH_BEARING: verdict below still computed (for the Needs
+  // Attention popover section) but excluded from the health tally by the
+  // getLocalHealth loop. status.conditions (Failed/Complete) is the
+  // authoritative K8s signal, checked before raw counters — matches real
+  // cluster data: a failed Job carries conditions: [{ type: 'Failed',
+  // status: 'True', reason: 'BackoffLimitExceeded' }].
   if (kind === 'Job') {
     const status = anyObj.status ?? {};
-    const spec = anyObj.spec ?? {};
     const failed: number = status.failed ?? 0;
-    const succeeded: number = status.succeeded ?? 0;
-    const backoff = (spec.backoffLimit ?? 6) + 1;
-    if (failed >= backoff && succeeded === 0)
-      return { severity: 'error', message: `failed (${failed}/${backoff})` };
-    return { severity: 'success' };
+    const active: number = status.active ?? 0;
+    const conditions: any[] = status.conditions ?? [];
+
+    const failedCondition = conditions.find(c => c.type === 'Failed' && c.status === 'True');
+    const isComplete = conditions.some(c => c.type === 'Complete' && c.status === 'True');
+
+    if (failedCondition) {
+      return { severity: 'error', message: failedCondition.reason ?? 'Job Failed' };
+    }
+    if (isComplete) {
+      return { severity: 'success', message: 'Complete' };
+    }
+    if (active > 0) {
+      return { severity: 'progressing', message: 'Running' };
+    }
+    // No conditions yet (older API servers / custom controllers don't always
+    // set them) but the raw counter already shows a failure — don't miss it.
+    if (failed > 0) {
+      return { severity: 'warning', message: `Failed attempts: ${failed}` };
+    }
+    return { severity: 'unknown', message: 'Pending' };
   }
 
   if (kind === 'CronJob') {
     const status = anyObj.status ?? {};
     const spec = anyObj.spec ?? {};
-    const active: number = status.active?.length ?? 0;
+    const meta = (o as any).metadata ?? {};
+    const cronUid = meta.uid;
+    const childJobs = allItems.filter(job => {
+      if (job.kind !== 'Job') return false;
+      const refs = Array.isArray((job as any).metadata?.ownerReferences)
+        ? (job as any).metadata.ownerReferences
+        : [];
+      return (
+        typeof cronUid === 'string' &&
+        refs.some((ref: any) => ref?.kind === 'CronJob' && ref?.uid === cronUid)
+      );
+    });
+
+    const activeRuns = Array.isArray(status.active) ? status.active.length : 0;
     const cap = spec.concurrencyPolicy === 'Forbid' ? 1 : 5;
-    if (active > cap) return { severity: 'warning', message: `${active} active runs` };
-    return { severity: 'success' };
+    const completedJobs = childJobs.filter(job => {
+      const jobStatus = (job as any).status ?? {};
+      const conditions: any[] = jobStatus.conditions ?? [];
+      return conditions.some(
+        (condition: any) =>
+          (condition.type === 'Complete' || condition.type === 'Failed') &&
+          condition.status === 'True'
+      );
+    });
+    const latestCompletedJob = completedJobs
+      .map(job => {
+        const endTime =
+          get(job, 'status.startTime') ?? get(job, 'metadata.creationTimestamp') ?? '';
+        const ts = endTime ? new Date(endTime).getTime() : Number.NEGATIVE_INFINITY;
+        return { job, ts };
+      })
+      .filter(item => Number.isFinite(item.ts))
+      .sort((a, b) => b.ts - a.ts)[0]?.job;
+
+    if (spec.suspend === true) return { severity: 'info', message: 'Suspended' };
+
+    if (latestCompletedJob) {
+      const latestStatus = (latestCompletedJob as any).status ?? {};
+      const failedCondition = (latestStatus.conditions ?? []).find(
+        (c: any) => c.type === 'Failed' && c.status === 'True'
+      );
+      if (failedCondition) {
+        return {
+          severity: 'warning',
+          message: `Recent run failed: ${failedCondition.reason ?? 'Job Failed'}`,
+        };
+      }
+      if ((latestStatus.failed ?? 0) > 0) {
+        return { severity: 'warning', message: 'Recent run failed: Job Failed' };
+      }
+      if ((latestStatus.succeeded ?? 0) > 0) {
+        return { severity: 'success', message: 'Last run succeeded' };
+      }
+    }
+
+    if (activeRuns > cap) return { severity: 'warning', message: `${activeRuns} active runs` };
+    if (activeRuns > 0) return { severity: 'progressing', message: 'Running' };
+    if (status.lastScheduleTime && !status.lastSuccessfulTime) {
+      return { severity: 'warning', message: 'Scheduled but never succeeded' };
+    }
+    if (
+      status.lastSuccessfulTime ||
+      (latestCompletedJob && (latestCompletedJob as any).status?.succeeded)
+    ) {
+      return { severity: 'success', message: 'Last run succeeded' };
+    }
+    return { severity: 'unknown', message: 'No run recorded yet' };
   }
 
   if (kind === 'PersistentVolumeClaim') {
@@ -412,8 +514,9 @@ function sumJobs(items: KubeObject[]): LocalHealthStat | undefined {
   if (succeeded) parts.push(`${succeeded} Succeeded`);
   if (running) parts.push(`${running} Running`);
   if (failed) parts.push(`${failed} Failed`);
-  const tone: LocalHealthStat['tone'] = failed > 0 ? 'error' : 'success';
-  return { kind: 'Job', total: jobs.length, state: parts.join(', ') || '—', tone };
+  // Neutral tone always — Job is NON_HEALTH_BEARING, real failures already
+  // surfaced in the Needs Attention section, this row is inventory-only.
+  return { kind: 'Job', total: jobs.length, state: parts.join(', ') || '—', tone: 'neutral' };
 }
 
 function sumEndpoints(items: KubeObject[]): LocalHealthStat | undefined {
@@ -476,6 +579,7 @@ export interface LocalHealthUnavailability {
   reasons: string[];
   evidence: [];
   stats: [];
+  needsAttention: [];
   /** First cluster whose fetch failed, if known. */
   cluster?: string;
   /** HTTP status code from the failed fetch, if any. */
@@ -501,6 +605,7 @@ export function getUnavailableHealth(details: {
     reasons: [],
     evidence: [],
     stats: [],
+    needsAttention: [],
     cluster: details.cluster,
     httpCode: details.httpCode,
     errorMessage: details.errorMessage,
@@ -517,19 +622,47 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       reasons: [],
       evidence: [],
       stats: [],
+      needsAttention: [],
     };
   }
 
   const evidence: LocalHealthEvidence[] = [];
+  const needsAttention: LocalHealthEvidence[] = [];
   const perSeverity: LocalHealthSeverity[] = [];
   let hasWorkload = false;
 
   for (const item of items) {
     if (WORKLOAD_KINDS.has(item.kind)) hasWorkload = true;
     const verdict = localGetItemStatus(item, items);
+    const meta = (item as any).metadata ?? {};
+
+    if (NON_HEALTH_BEARING_KINDS.has(item.kind)) {
+      // Surfaced for visibility only — never enters perSeverity/tally, so it
+      // can't move the Healthy/Degraded/Unhealthy badge. CronJobs are allowed
+      // to report their state in the popover, including active/suspended
+      // progress messages, without affecting the app designation.
+      if (
+        (verdict.severity === 'error' ||
+          verdict.severity === 'warning' ||
+          verdict.severity === 'progressing' ||
+          verdict.severity === 'info' ||
+          verdict.severity === 'unknown') &&
+        verdict.message
+      ) {
+        needsAttention.push({
+          severity: verdict.severity,
+          kind: item.kind,
+          namespace: meta.namespace ?? '',
+          name: meta.name ?? '',
+          message: verdict.message,
+          object: item,
+        });
+      }
+      continue;
+    }
+
     perSeverity.push(verdict.severity);
-    if (verdict.severity !== 'success' && verdict.message) {
-      const meta = (item as any).metadata ?? {};
+    if (verdict.severity !== 'success' && verdict.severity !== 'unknown' && verdict.message) {
       evidence.push({
         severity: verdict.severity,
         kind: item.kind,
@@ -554,6 +687,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       reasons: [],
       evidence: [],
       stats,
+      needsAttention,
     };
   }
 
@@ -579,6 +713,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       reasons: cappedReasons,
       evidence,
       stats,
+      needsAttention,
     };
   }
   if ((tally.warning ?? 0) > 0) {
@@ -590,6 +725,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       reasons: cappedReasons,
       evidence,
       stats,
+      needsAttention,
     };
   }
   return {
@@ -600,5 +736,6 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     reasons: [],
     evidence: [],
     stats,
+    needsAttention,
   };
 }

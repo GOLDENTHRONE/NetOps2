@@ -138,4 +138,90 @@ describe('getLocalHealth — fake cluster simulator', () => {
     expect(dsStat!.state).toBe('5/5 ready');
     expect(dsStat!.tone).toBe('success');
   });
+
+  it('CronJob status respects suspension, child-job history, and active runs', () => {
+    const suspended = [
+      {
+        kind: 'CronJob',
+        metadata: { uid: 'cron-1', name: 'nightly', namespace: 'demo' },
+        spec: { suspend: true, concurrencyPolicy: 'Forbid' },
+        status: { active: [], lastScheduleTime: '2025-01-01T00:00:00Z' },
+      },
+    ];
+    expect(getLocalHealth(suspended).needsAttention[0]?.message).toBe('Suspended');
+
+    const recentFailure = [
+      {
+        kind: 'CronJob',
+        metadata: { uid: 'cron-2', name: 'nightly', namespace: 'demo' },
+        spec: { concurrencyPolicy: 'Forbid' },
+        status: { active: [], lastScheduleTime: '2025-01-01T00:00:00Z' },
+      },
+      {
+        kind: 'Job',
+        metadata: {
+          name: 'nightly-1',
+          namespace: 'demo',
+          creationTimestamp: '2025-01-01T00:02:00Z',
+          ownerReferences: [{ kind: 'CronJob', uid: 'cron-2' }],
+        },
+        status: {
+          active: 0,
+          failed: 1,
+          succeeded: 0,
+          conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+        },
+      },
+    ];
+    expect(getLocalHealth(recentFailure).needsAttention[0]?.message).toBe(
+      'Recent run failed: BackoffLimitExceeded'
+    );
+
+    const active = [
+      {
+        kind: 'CronJob',
+        metadata: { uid: 'cron-3', name: 'nightly', namespace: 'demo' },
+        spec: { concurrencyPolicy: 'Forbid' },
+        status: { active: [{ name: 'nightly-1' }], lastScheduleTime: '2025-01-01T00:00:00Z' },
+      },
+    ];
+    expect(getLocalHealth(active).needsAttention[0]?.message).toBe('Running');
+
+    const noHistory = [
+      {
+        kind: 'CronJob',
+        metadata: { uid: 'cron-4', name: 'nightly', namespace: 'demo' },
+        spec: { concurrencyPolicy: 'Forbid' },
+        status: { active: [] },
+      },
+    ];
+    expect(getLocalHealth(noHistory).needsAttention[0]?.message).toBe('No run recorded yet');
+
+    const terminalConditionOnly = [
+      {
+        kind: 'CronJob',
+        metadata: { uid: 'cron-5', name: 'nightly', namespace: 'demo' },
+        spec: { concurrencyPolicy: 'Forbid' },
+        status: { active: [], lastScheduleTime: '2025-01-01T00:00:00Z' },
+      },
+      {
+        kind: 'Job',
+        metadata: {
+          name: 'nightly-2',
+          namespace: 'demo',
+          creationTimestamp: '2025-01-01T00:03:00Z',
+          ownerReferences: [{ kind: 'CronJob', uid: 'cron-5' }],
+        },
+        status: {
+          active: 0,
+          failed: 0,
+          succeeded: 0,
+          conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+        },
+      },
+    ];
+    expect(getLocalHealth(terminalConditionOnly).needsAttention[0]?.message).toBe(
+      'Recent run failed: BackoffLimitExceeded'
+    );
+  });
 });
