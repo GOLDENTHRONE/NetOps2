@@ -79,15 +79,28 @@ const statefulSet = (name: string, desired: number, ready: number): ItemPlan => 
   status: { replicas: desired, readyReplicas: ready },
 });
 
-const daemonSet = (name: string, desired: number, ready: number): ItemPlan => ({
+// Real Kubernetes DaemonSet status shape (apps/v1). It does NOT carry
+// `spec.replicas` or `status.replicas` — the count is derived from
+// `desiredNumberScheduled` / `currentNumberScheduled` / `numberReady`.
+// The old factory faked a `status.replicas: desired` field to make the
+// pre-fix combined-workload branch happy; removing it here so the test
+// data matches what a real API server returns.
+const daemonSet = (
+  name: string,
+  desired: number,
+  ready: number,
+  opts: { scheduled?: number; misscheduled?: number } = {}
+): ItemPlan => ({
   kind: 'DaemonSet',
   metadata: { name, namespace: 'demo', creationTimestamp: OLD },
   spec: {},
   status: {
     desiredNumberScheduled: desired,
-    currentNumberScheduled: desired,
+    currentNumberScheduled: opts.scheduled ?? desired,
     numberReady: ready,
-    replicas: desired,
+    numberAvailable: ready,
+    numberMisscheduled: opts.misscheduled ?? 0,
+    updatedNumberScheduled: opts.scheduled ?? desired,
   },
 });
 
@@ -284,6 +297,51 @@ export const daemonSetPartial: Scenario = {
   name: 'daemonSetPartial',
   items: [daemonSet('node-agent', 5, 3)],
   expected: { status: 'warning', label: 'Degraded', rank: 2 },
+};
+
+// ─── DaemonSet-specific rules (caveman weak-spot #1) ────────────────────
+// A perfectly healthy DaemonSet has NO spec.replicas and NO status.replicas.
+// The old combined branch used status.replicas which was undefined → 0, and
+// falsely marked every healthy DaemonSet as "0/N pods created" (error).
+// These fixtures freeze that regression forever.
+export const daemonSetAllReadyRealShape: Scenario = {
+  name: 'daemonSetAllReadyRealShape',
+  items: [daemonSet('fluent-bit', 5, 5)],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const daemonSetNoMatchingNodes: Scenario = {
+  // nodeSelector / affinity / taints matched zero nodes — deliberate,
+  // e.g. a GPU-only DaemonSet on a CPU cluster.
+  name: 'daemonSetNoMatchingNodes',
+  items: [deployment('web', 1, 1), daemonSet('gpu-agent', 0, 0)],
+  expected: { status: 'success', label: 'Healthy', rank: 1 },
+};
+
+export const daemonSetZeroScheduledDesiredPositive: Scenario = {
+  // Controller wants pods on 3 nodes but scheduler placed zero
+  // (image pull loop / preempted / taints without toleration).
+  name: 'daemonSetZeroScheduledDesiredPositive',
+  items: [daemonSet('csi-driver', 3, 0, { scheduled: 0 })],
+  expected: {
+    status: 'error',
+    label: 'Unhealthy',
+    rank: 3,
+    reasonsIncludes: ['0/3 pods scheduled'],
+  },
+};
+
+export const daemonSetMisscheduled: Scenario = {
+  // A pod is sitting on a node whose labels no longer match. Controller
+  // will clean it up — warning, not error.
+  name: 'daemonSetMisscheduled',
+  items: [daemonSet('log-collector', 4, 4, { misscheduled: 1 })],
+  expected: {
+    status: 'warning',
+    label: 'Degraded',
+    rank: 2,
+    reasonsIncludes: ['1 misscheduled'],
+  },
 };
 
 export const replicaSetPartial: Scenario = {

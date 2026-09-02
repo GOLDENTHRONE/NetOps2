@@ -179,12 +179,9 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     return { severity: 'success' };
   }
 
-  if (
-    kind === 'Deployment' ||
-    kind === 'ReplicaSet' ||
-    kind === 'StatefulSet' ||
-    kind === 'DaemonSet'
-  ) {
+  // Deployment / ReplicaSet / StatefulSet — all three carry the classic
+  // `spec.replicas` + `status.replicas` / `status.readyReplicas` shape.
+  if (kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'StatefulSet') {
     const spec = anyObj.spec ?? {};
     const status = anyObj.status ?? {};
     const desiredExplicit: number | undefined = spec.replicas;
@@ -197,6 +194,45 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     if (statusReplicas === 0 && desired > 0)
       return { severity: 'error', message: `0/${desired} pods created` };
     if (ready < desired) return { severity: 'warning', message: `${ready}/${desired} ready` };
+    return { severity: 'success' };
+  }
+
+  // DaemonSet — completely different shape from Deployment/StatefulSet.
+  // It has NO `spec.replicas` and NO `status.replicas`. Instead the Kubernetes
+  // DaemonSetStatus schema (apps/v1) exposes:
+  //   status.desiredNumberScheduled  – nodes the controller wants a pod on
+  //   status.currentNumberScheduled  – nodes that actually got a pod scheduled
+  //   status.numberReady             – how many of those pods are Ready
+  //   status.numberMisscheduled      – pods sitting on nodes that no longer match
+  // Ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1/#daemonsetstatus-v1-apps
+  //
+  // Using status.replicas here (as the combined branch used to) is a bug:
+  // for a perfectly healthy DaemonSet that field is undefined → 0, and the
+  // "0/N pods created" branch would fire falsely. Kept out of the shared
+  // branch above so this rule can evolve independently.
+  if (kind === 'DaemonSet') {
+    const status = anyObj.status ?? {};
+    const desired: number = status.desiredNumberScheduled ?? 0;
+    const scheduled: number = status.currentNumberScheduled ?? 0;
+    const ready: number = status.numberReady ?? 0;
+    const misscheduled: number = status.numberMisscheduled ?? 0;
+
+    // nodeSelector / affinity / taints matched zero nodes — deliberate,
+    // not a failure. (E.g. a DaemonSet gated to GPU nodes on a CPU cluster.)
+    if (desired === 0) return { severity: 'success' };
+
+    // Kubelet has pods sitting on nodes that no longer match. Mild signal —
+    // controller will clean them up, but worth surfacing.
+    if (misscheduled > 0) return { severity: 'warning', message: `${misscheduled} misscheduled` };
+
+    // Nothing scheduled anywhere but the controller wants pods → real error
+    // (image pull loop, priority preemption, scheduler stuck, etc.).
+    if (scheduled === 0 && desired > 0)
+      return { severity: 'error', message: `0/${desired} pods scheduled` };
+
+    // Some nodes got a pod but not all are Ready.
+    if (ready < desired) return { severity: 'warning', message: `${ready}/${desired} ready` };
+
     return { severity: 'success' };
   }
 
