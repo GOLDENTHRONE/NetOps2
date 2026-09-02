@@ -43,6 +43,19 @@ export const SYSTEM_NAMESPACE_NAMES: ReadonlyArray<string> = [
   'kube-system',
   'kube-public',
   'kube-node-lease',
+  'cert-manager',
+  'cert-manager-operator',
+  'istio-system',
+  'metallb-system',
+  'quay-registry',
+  'vault-secrets-operator',
+  'ldap-group-sync',
+  'assisted-installer',
+  'hardware-sensors-metrics',
+  'att-metallb-test',
+  'curts-stomping-ground',
+  'debug',
+  'cluster-backup',
 ];
 
 /**
