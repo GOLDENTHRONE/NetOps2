@@ -331,6 +331,22 @@ export const daemonSetZeroScheduledDesiredPositive: Scenario = {
   },
 };
 
+export const daemonSetPartialScheduling: Scenario = {
+  // desired 5, scheduler placed only 3, all 3 ready. The badge must say
+  // Degraded (real health), and the popover Inventory row must say
+  // "3/5 ready" — NOT the misleading "3/3 ready" the old sumWorkload
+  // (via shared getTotalReplicas fallback to currentNumberScheduled)
+  // produced before the A2 inline fix.
+  name: 'daemonSetPartialScheduling',
+  items: [daemonSet('csi-driver', 5, 3, { scheduled: 3 })],
+  expected: {
+    status: 'warning',
+    label: 'Degraded',
+    rank: 2,
+    reasonsIncludes: ['3/5 ready'],
+  },
+};
+
 export const daemonSetMisscheduled: Scenario = {
   // A pod is sitting on a node whose labels no longer match. Controller
   // will clean it up — warning, not error.

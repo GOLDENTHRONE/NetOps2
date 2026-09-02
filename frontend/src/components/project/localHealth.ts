@@ -20,7 +20,12 @@
 
 import { countBy } from 'lodash';
 import { KubeObject } from '../../lib/k8s/cluster';
-import { getReadyReplicas, getTotalReplicas } from '../../lib/util';
+
+// NOTE: this file deliberately does NOT import any shared workload helpers
+// (e.g. lib/util.getReadyReplicas / getTotalReplicas). The equivalent
+// per-kind field reads are inlined below so the Applications-tab health
+// logic can never silently drift when an upstream helper changes shape.
+// See tinyPickDesired / tinyPickReady near the bottom.
 
 export type LocalHealthSeverity = 'success' | 'warning' | 'error';
 export type LocalHealthBadge =
@@ -181,13 +186,12 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
 
   // Deployment / ReplicaSet / StatefulSet — all three carry the classic
   // `spec.replicas` + `status.replicas` / `status.readyReplicas` shape.
+  // Fields read inline; no shared helper called.
   if (kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'StatefulSet') {
     const spec = anyObj.spec ?? {};
     const status = anyObj.status ?? {};
-    const desiredExplicit: number | undefined = spec.replicas;
-    const desired =
-      typeof desiredExplicit === 'number' ? desiredExplicit : getTotalReplicas(anyObj);
-    const ready = getReadyReplicas(anyObj) ?? 0;
+    const desired: number = typeof spec.replicas === 'number' ? spec.replicas : 0;
+    const ready: number = status.readyReplicas ?? 0;
     const statusReplicas: number = status.replicas ?? 0;
 
     if (desired === 0) return { severity: 'success' };
@@ -331,16 +335,33 @@ const STAT_ORDER: string[] = [
   'Secret',
 ];
 
+/**
+ * Sum desired/ready replicas across every object of `kind` in the app,
+ * reading the correct fields per kind. Splits DaemonSet from the
+ * Deployment/ReplicaSet/StatefulSet family because DaemonSet's status has
+ * a completely different shape (desiredNumberScheduled / numberReady) and
+ * no spec.replicas / status.replicas at all — using the generic fields on
+ * a DaemonSet with partial scheduling silently shows "3/3 ready" instead
+ * of the true "3/5 ready", contradicting the badge.
+ *
+ * All field reads are inline; no shared helper is called.
+ */
 function sumWorkload(items: KubeObject[], kind: string): LocalHealthStat | undefined {
   const list = items.filter(i => i.kind === kind);
   if (list.length === 0) return undefined;
   let ready = 0;
   let desired = 0;
   for (const w of list) {
-    const d = get(w, 'spec.replicas') ?? getTotalReplicas(w as any) ?? 0;
-    const r = getReadyReplicas(w as any) ?? 0;
-    desired += d;
-    ready += r;
+    const spec = get(w, 'spec') ?? {};
+    const status = get(w, 'status') ?? {};
+    if (kind === 'DaemonSet') {
+      desired += status.desiredNumberScheduled ?? 0;
+      ready += status.numberReady ?? 0;
+    } else {
+      // Deployment / ReplicaSet / StatefulSet
+      desired += typeof spec.replicas === 'number' ? spec.replicas : 0;
+      ready += status.readyReplicas ?? 0;
+    }
   }
   const tone: LocalHealthStat['tone'] =
     ready === desired ? 'success' : ready === 0 && desired > 0 ? 'error' : 'warning';

@@ -113,4 +113,29 @@ describe('getLocalHealth — fake cluster simulator', () => {
     const h = getLocalHealth(undefined as any);
     expect(h.status).toBe('empty');
   });
+
+  // ─── Inventory / stats non-regression for DaemonSet ────────────────────
+  // Before the A2 inline fix, sumWorkload() called the shared
+  // getTotalReplicas() helper which falls back to currentNumberScheduled
+  // for DaemonSet — so a DaemonSet with desired=5 / scheduled=3 / ready=3
+  // rendered as "3/3 ready" in the popover Inventory row, contradicting
+  // the badge that (correctly) said "3/5 ready" and confusing operators.
+  // This test freezes the corrected behaviour: the DaemonSet stat row
+  // must report the true desiredNumberScheduled (5), not the currently
+  // scheduled count (3).
+  it('DaemonSet inventory row reports desiredNumberScheduled, not scheduled', () => {
+    const h = getLocalHealth(F.daemonSetPartialScheduling.items);
+    const dsStat = h.stats.find(s => s.kind === 'DaemonSet');
+    expect(dsStat).toBeDefined();
+    expect(dsStat!.state).toBe('3/5 ready');
+    expect(dsStat!.tone).toBe('warning');
+  });
+
+  it('healthy DaemonSet inventory row reports N/N ready with success tone', () => {
+    const h = getLocalHealth(F.daemonSetAllReadyRealShape.items);
+    const dsStat = h.stats.find(s => s.kind === 'DaemonSet');
+    expect(dsStat).toBeDefined();
+    expect(dsStat!.state).toBe('5/5 ready');
+    expect(dsStat!.tone).toBe('success');
+  });
 });
