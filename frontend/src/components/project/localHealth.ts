@@ -65,12 +65,22 @@ export interface LocalHealthStat {
 
 export interface LocalHealthResult {
   status: LocalHealthBadge;
-  label: 'Healthy' | 'Degraded' | 'Unhealthy' | 'No Resources' | 'No Workloads' | 'Unavailable';
-  /** 0 = empty/passive, 1 = healthy, 2 = degraded, 3 = unhealthy, 4 = unavailable */
-  rank: 0 | 1 | 2 | 3 | 4;
+  label:
+    | 'Healthy'
+    | 'Degraded'
+    | 'Unhealthy'
+    | 'Progressing'
+    | 'Unknown'
+    | 'No Resources'
+    | 'No Workloads'
+    | 'Unavailable';
+  /** 0 = empty/passive/healthy, 1 = unknown, 2 = progressing, 3 = degraded, 4 = unhealthy, 5 = unavailable */
+  rank: 0 | 1 | 2 | 3 | 4 | 5;
   icon: string;
   reasons: string[];
   evidence: LocalHealthEvidence[];
+  progressing: LocalHealthEvidence[];
+  unknownItems: LocalHealthEvidence[];
   /** Breakdown of the observed resource inventory, per kind, in a fixed
    *  reading order. Empty when the badge is 'unavailable' or 'empty'. */
   stats: LocalHealthStat[];
@@ -86,6 +96,9 @@ const POD_WAIT_ERROR_REASONS = new Set([
   'ErrImagePull',
   'CreateContainerConfigError',
   'InvalidImageName',
+  'CreateContainerError',
+  'RunContainerError',
+  'ContainerCannotRun',
 ]);
 
 const WORKLOAD_KINDS = new Set([
@@ -105,19 +118,21 @@ const WORKLOAD_KINDS = new Set([
 // CronJob is scheduled orchestration, not application health itself. It may
 // still be visible in the popover/Needs Attention, but it must not affect the
 // app badge or rank.
-const NON_HEALTH_BEARING_KINDS = new Set(['Job', 'CronJob']);
+const NON_HEALTH_BEARING_KINDS = new Set(['Job', 'CronJob', 'HorizontalPodAutoscaler']);
 
-interface ItemVerdict {
+export interface ItemVerdict {
   severity: LocalHealthSeverity;
   message?: string;
 }
 
-function ageMs(ts?: string): number {
-  return ts ? Date.now() - new Date(ts).getTime() : 0;
-}
-
 function get(o: KubeObject, path: string): any {
   return path.split('.').reduce<any>((v, k) => (v == null ? v : v[k]), o as any);
+}
+
+function isDeploymentOwnedReplicaSet(o: KubeObject): boolean {
+  if (o.kind !== 'ReplicaSet') return false;
+  const refs = (o as any).metadata?.ownerReferences;
+  return Array.isArray(refs) && refs.some((r: any) => r?.kind === 'Deployment');
 }
 
 /**
@@ -156,6 +171,26 @@ function workloadTargetsService(service: KubeObject, items: KubeObject[]): boole
   const svcNs = get(service, 'metadata.namespace');
   const svcCluster = (service as any).cluster;
   const entries = Object.entries(selector);
+  const matchesSelector = (labels: Record<string, string> | undefined): boolean =>
+    !!labels && entries.every(([k, v]) => labels[k] === v);
+
+  // A matching template alone does not mean workload is active: scaled-zero
+  // controllers intentionally leave Services without backing Pods.
+  // A Succeeded/Failed/terminating Pod is not a live backend even if its
+  // labels still match the selector.
+  const isLivePod = (p: KubeObject): boolean => {
+    const phase = get(p, 'status.phase');
+    if (phase === 'Succeeded' || phase === 'Failed') return false;
+    if (get(p, 'metadata.deletionTimestamp')) return false;
+    return true;
+  };
+  const hasMatchingPod = items.some(p => {
+    if (p.kind !== 'Pod') return false;
+    if (get(p, 'metadata.namespace') !== svcNs) return false;
+    if ((p as any).cluster !== svcCluster) return false;
+    if (!isLivePod(p)) return false;
+    return matchesSelector(get(p, 'metadata.labels') as Record<string, string> | undefined);
+  });
 
   for (const w of items) {
     if (!['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet'].includes(w.kind)) continue;
@@ -164,48 +199,219 @@ function workloadTargetsService(service: KubeObject, items: KubeObject[]): boole
     const tmplLabels = (get(w, 'spec.template.metadata.labels') ??
       get(w, 'spec.selector.matchLabels') ??
       {}) as Record<string, string>;
-    const matches = entries.every(([k, v]) => tmplLabels[k] === v);
-    if (matches) return true;
+    if (!matchesSelector(tmplLabels)) continue;
+
+    const replicas = get(w, 'spec.replicas');
+    if ((typeof replicas === 'number' && replicas > 0) || hasMatchingPod) return true;
   }
-  // Also consider live Pods in the same namespace as targeting the service.
-  for (const p of items) {
-    if (p.kind !== 'Pod') continue;
-    if (get(p, 'metadata.namespace') !== svcNs) continue;
-    if ((p as any).cluster !== svcCluster) continue;
-    const podLabels = (get(p, 'metadata.labels') ?? {}) as Record<string, string>;
-    const matches = entries.every(([k, v]) => podLabels[k] === v);
-    if (matches) return true;
-  }
-  return false;
+  return hasMatchingPod;
 }
 
-function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict {
+/**
+ * Find the first container (in array order) reporting a *current* fatal
+ * state. Only `state.waiting` (known bad reasons) and `state.terminated`
+ * with a non-zero exit code count — `lastState` is deliberately never
+ * inspected here: history (past OOMKilled, past restarts) must not
+ * override a container that is currently fine. Deterministic: first match
+ * wins, so a failing 2nd container is still caught even if container 1 is
+ * healthy, and a failing 3rd init container is still caught even if the
+ * first two already completed successfully.
+ */
+function findFatalContainerReason(containerStatuses: any[]): string | undefined {
+  for (const c of containerStatuses) {
+    const waiting = c?.state?.waiting;
+    if (waiting && POD_WAIT_ERROR_REASONS.has(waiting.reason)) return waiting.reason;
+
+    const terminated = c?.state?.terminated;
+    if (terminated && terminated.exitCode !== 0) {
+      return terminated.reason || `Exit Code: ${terminated.exitCode}`;
+    }
+  }
+  return undefined;
+}
+
+function findCondition(conditions: any[], type: string): any {
+  return conditions.find(c => c?.type === type);
+}
+
+/**
+ * Exported only as a test seam for the Pod-verdict contract (see
+ * localHealth.test.ts "Pod verdict contract" describe block). Not used by
+ * any other module — application code always goes through getLocalHealth().
+ */
+export function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict {
   const kind = o.kind;
   const meta = (o as any).metadata ?? {};
   const anyObj = o as any;
 
   if (kind === 'Pod') {
-    const status = anyObj.status ?? {};
+    const status = anyObj.status;
+
+    // No status payload at all — can't say anything about this Pod.
+    if (!status || Object.keys(status).length === 0) {
+      return { severity: 'unknown', message: 'Pod status unavailable' };
+    }
+
     const phase: string | undefined = status.phase;
     const conds: any[] = status.conditions ?? [];
-    const ready = conds.find(c => c.type === 'Ready')?.status === 'True';
-    const cs: any[] = status.containerStatuses ?? [];
-    const badContainer = cs.find(c => POD_WAIT_ERROR_REASONS.has(c?.state?.waiting?.reason));
+    const initContainerStatuses: any[] = status.initContainerStatuses ?? [];
+    const containerStatuses: any[] = status.containerStatuses ?? [];
 
-    if (phase === 'Failed') return { severity: 'error', message: 'Failed' };
-    if (badContainer) return { severity: 'error', message: badContainer.state.waiting.reason };
-    if (phase === 'Running' && !ready)
-      return { severity: 'error', message: 'Running but NotReady' };
-    if (phase === 'Pending' && ageMs(meta.creationTimestamp) > 5 * 60_000)
-      return { severity: 'error', message: 'Pending > 5m' };
-    if (phase === 'Pending') return { severity: 'warning', message: 'Pending' };
+    const readyCond = findCondition(conds, 'Ready');
+    const podScheduledCond = findCondition(conds, 'PodScheduled');
+    const containersReadyCond = findCondition(conds, 'ContainersReady');
+    const initializedCond = findCondition(conds, 'Initialized');
+
+    // Current fatal container state beats everything except the terminal
+    // Failed phase message assembly below — a CrashLoopBackOff/OOMKilled
+    // container is the most useful reason regardless of what phase/ready
+    // says, and it must not be masked by a generic "Pending"/"Not Ready".
+    const fatalInit = findFatalContainerReason(initContainerStatuses);
+    const fatalMain = findFatalContainerReason(containerStatuses);
+
+    if (phase === 'Failed') {
+      return {
+        severity: 'error',
+        message: status.reason || status.message || fatalMain || fatalInit || 'Failed',
+      };
+    }
+
+    if (fatalInit) return { severity: 'error', message: fatalInit };
+    if (fatalMain) return { severity: 'error', message: fatalMain };
+
+    if (phase === undefined || phase === null) {
+      return { severity: 'unknown', message: status.reason || 'Pod status unavailable' };
+    }
+
+    if (phase === 'Unknown') {
+      return {
+        severity: 'unknown',
+        message: status.reason || readyCond?.reason || 'Pod phase Unknown',
+      };
+    }
+
+    // Pod is being deleted — real terminal signals above (Failed phase,
+    // fatal container reasons) still win; otherwise this is a normal,
+    // age-independent transition, not a fresh failure.
+    if (meta.deletionTimestamp) {
+      return { severity: 'progressing', message: 'Terminating' };
+    }
+
+    if (podScheduledCond?.status === 'False') {
+      if (podScheduledCond.reason === 'SchedulingGated') {
+        return { severity: 'progressing', message: 'SchedulingGated' };
+      }
+      return { severity: 'error', message: podScheduledCond.reason || 'Unschedulable' };
+    }
+
+    if (phase === 'Running') {
+      // No Ready condition reported at all — can't confirm health, and a
+      // missing condition must never be read as Healthy.
+      if (!readyCond) return { severity: 'unknown', message: 'Pod status unavailable' };
+      if (readyCond.status === 'True') return { severity: 'success' };
+      // Running but not confirmed Ready, with no fatal container reason
+      // found above — partial/degraded operation, not a hard failure.
+      return {
+        severity: 'warning',
+        message: readyCond.reason || containersReadyCond?.reason || 'Not Ready',
+      };
+    }
+
+    if (phase === 'Pending') {
+      const runningInit = initContainerStatuses.some(c => c?.state?.running);
+      const waitingMain = containerStatuses.find(c => c?.state?.waiting)?.state?.waiting;
+      const waitingInit = initContainerStatuses.find(c => c?.state?.waiting)?.state?.waiting;
+      const message =
+        waitingMain?.reason ||
+        waitingInit?.reason ||
+        (runningInit && 'PodInitializing') ||
+        (initializedCond?.status === 'False' && initializedCond.reason) ||
+        containersReadyCond?.reason ||
+        'Pending';
+      return { severity: 'progressing', message };
+    }
+
+    if (phase === 'Succeeded') {
+      return { severity: 'success', message: 'Completed' };
+    }
+
+    // Any other phase value is not one Kubernetes documents — don't guess.
+    return { severity: 'unknown', message: `Unknown Pod phase: ${phase}` };
+  }
+
+  // Deployment — dedicated branch. Replica counts alone can't tell "still
+  // rolling out" apart from "died after rollout finished" (both can show
+  // "3/5 ready"); status.updatedReplicas + status.conditions disambiguate.
+  if (kind === 'Deployment') {
+    const spec = anyObj.spec ?? {};
+    const status = anyObj.status;
+    const desired: number = typeof spec.replicas === 'number' ? spec.replicas : 0;
+
+    const hasStatus = !!status && Object.keys(status).length > 0;
+    const observedGeneration = status?.observedGeneration;
+    const generation = meta.generation;
+    const isStale =
+      typeof observedGeneration === 'number' &&
+      typeof generation === 'number' &&
+      observedGeneration < generation;
+
+    // Controller hasn't reported on the latest spec yet (or hasn't reported
+    // at all) — the rest of `status` would be stale/absent truth.
+    if (!hasStatus || isStale) {
+      return { severity: 'unknown', message: 'Status updating' };
+    }
+
+    // Intentionally scaled down — not broken.
+    if (desired === 0) return { severity: 'success' };
+
+    const conditions: any[] = status.conditions ?? [];
+    const progressingCond = findCondition(conditions, 'Progressing');
+    const availableCond = findCondition(conditions, 'Available');
+
+    // Real failure signal — the Deployment equivalent of CrashLoopBackOff.
+    if (
+      progressingCond?.status === 'False' &&
+      progressingCond.reason === 'ProgressDeadlineExceeded'
+    ) {
+      return { severity: 'error', message: 'ProgressDeadlineExceeded' };
+    }
+
+    const statusReplicas: number = status.replicas ?? 0;
+    const ready: number = status.readyReplicas ?? 0;
+    const updated: number | undefined =
+      typeof status.updatedReplicas === 'number' ? status.updatedReplicas : undefined;
+
+    // A rollout can be transiently unavailable before its new pods become
+    // Ready. Progressing must win over Available=False in that normal state.
+    // Do not use Progressing=True alone: settled Deployments also report it
+    // with reason NewReplicaSetAvailable.
+    const isProgressing =
+      (typeof updated === 'number' && updated < desired) ||
+      progressingCond?.reason === 'ReplicaSetUpdated';
+    if (isProgressing) {
+      return { severity: 'progressing', message: `Rolling out ${updated ?? ready}/${desired}` };
+    }
+
+    if (availableCond?.status === 'False') {
+      return { severity: 'error', message: availableCond.reason || 'Not Available' };
+    }
+
+    if (statusReplicas === 0 && desired > 0) {
+      return { severity: 'error', message: `0/${desired} pods created` };
+    }
+
+    // Rollout finished (updatedReplicas === desired) but pods still dropped
+    // out afterwards — a real regression, not a normal transition.
+    if (ready < desired) return { severity: 'warning', message: `${ready}/${desired} ready` };
+
     return { severity: 'success' };
   }
 
-  // Deployment / ReplicaSet / StatefulSet — all three carry the classic
-  // `spec.replicas` + `status.replicas` / `status.readyReplicas` shape.
-  // Fields read inline; no shared helper called.
-  if (kind === 'Deployment' || kind === 'ReplicaSet' || kind === 'StatefulSet') {
+  // ReplicaSet — unchanged: classic `spec.replicas` + `status.replicas` /
+  // `status.readyReplicas` shape. Deployment and StatefulSet each split out
+  // above/below into their own richer branches; ReplicaSet keeps today's
+  // behavior. Fields read inline; no shared helper called.
+  if (kind === 'ReplicaSet') {
     const spec = anyObj.spec ?? {};
     const status = anyObj.status ?? {};
     const desired: number = typeof spec.replicas === 'number' ? spec.replicas : 0;
@@ -219,12 +425,72 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     return { severity: 'success' };
   }
 
+  // StatefulSet — dedicated branch. Unlike Deployment, StatefulSet does NOT
+  // populate status.conditions (no Available/Progressing/
+  // ProgressDeadlineExceeded here — confirmed empty on every live sample).
+  // Rollout is detected via revisions instead: status.currentRevision !==
+  // status.updateRevision means pods are still being migrated to the new
+  // revision, even if replica counts already look fully ready. There is no
+  // StatefulSet equivalent of ProgressDeadlineExceeded — a stuck rollout
+  // just stays 'progressing' forever; the real failure signal (e.g.
+  // CrashLoopBackOff) surfaces on the Pod itself via the Pod branch.
+  if (kind === 'StatefulSet') {
+    const spec = anyObj.spec ?? {};
+    const status = anyObj.status;
+    const desired: number = typeof spec.replicas === 'number' ? spec.replicas : 0;
+
+    const hasStatus = !!status && Object.keys(status).length > 0;
+    const observedGeneration = status?.observedGeneration;
+    const generation = meta.generation;
+    const isStale =
+      typeof observedGeneration === 'number' &&
+      typeof generation === 'number' &&
+      observedGeneration < generation;
+
+    if (!hasStatus || isStale) {
+      return { severity: 'unknown', message: 'Status updating' };
+    }
+
+    if (desired === 0) return { severity: 'success' };
+
+    if (typeof status.collisionCount === 'number' && status.collisionCount > 0) {
+      return { severity: 'error', message: 'Revision collision' };
+    }
+
+    const statusReplicas: number = status.replicas ?? 0;
+    if (statusReplicas === 0 && desired > 0) {
+      return { severity: 'error', message: `0/${desired} pods created` };
+    }
+
+    const ready: number = status.readyReplicas ?? 0;
+    const updated: number | undefined =
+      typeof status.updatedReplicas === 'number' ? status.updatedReplicas : undefined;
+    const revisionsDiffer =
+      !!status.currentRevision &&
+      !!status.updateRevision &&
+      status.currentRevision !== status.updateRevision;
+
+    // Rollout in progress — revisions disagree, or the new-revision count
+    // hasn't caught up to desired, even though readyReplicas may already
+    // equal desired (old-revision pods can still be Ready).
+    if (revisionsDiffer || (typeof updated === 'number' && updated < desired)) {
+      return { severity: 'progressing', message: `Updating ${updated ?? ready}/${desired}` };
+    }
+
+    // Rollout settled (revisions match, updated === desired) but pods
+    // dropped out afterwards — a real regression, not a normal transition.
+    if (ready < desired) return { severity: 'warning', message: `${ready}/${desired} ready` };
+
+    return { severity: 'success' };
+  }
+
   // DaemonSet — completely different shape from Deployment/StatefulSet.
   // It has NO `spec.replicas` and NO `status.replicas`. Instead the Kubernetes
   // DaemonSetStatus schema (apps/v1) exposes:
   //   status.desiredNumberScheduled  – nodes the controller wants a pod on
   //   status.currentNumberScheduled  – nodes that actually got a pod scheduled
   //   status.numberReady             – how many of those pods are Ready
+  //   status.updatedNumberScheduled  – nodes running the NEW pod version (rollout counter)
   //   status.numberMisscheduled      – pods sitting on nodes that no longer match
   // Ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1/#daemonsetstatus-v1-apps
   //
@@ -233,27 +499,61 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
   // "0/N pods created" branch would fire falsely. Kept out of the shared
   // branch above so this rule can evolve independently.
   if (kind === 'DaemonSet') {
-    const status = anyObj.status ?? {};
+    const spec = anyObj.spec ?? {};
+    const status = anyObj.status;
+
+    const hasStatus = !!status && Object.keys(status).length > 0;
+    const observedGeneration = status?.observedGeneration;
+    const generation = meta.generation;
+    const isStale =
+      typeof observedGeneration === 'number' &&
+      typeof generation === 'number' &&
+      observedGeneration < generation;
+
+    if (!hasStatus || isStale) {
+      return { severity: 'unknown', message: 'Status updating' };
+    }
+
     const desired: number = status.desiredNumberScheduled ?? 0;
-    const scheduled: number = status.currentNumberScheduled ?? 0;
-    const ready: number = status.numberReady ?? 0;
-    const misscheduled: number = status.numberMisscheduled ?? 0;
 
     // nodeSelector / affinity / taints matched zero nodes — deliberate,
     // not a failure. (E.g. a DaemonSet gated to GPU nodes on a CPU cluster.)
     if (desired === 0) return { severity: 'success' };
 
-    // Kubelet has pods sitting on nodes that no longer match. Mild signal —
-    // controller will clean them up, but worth surfacing.
-    if (misscheduled > 0) return { severity: 'warning', message: `${misscheduled} misscheduled` };
+    const scheduled: number = status.currentNumberScheduled ?? 0;
 
     // Nothing scheduled anywhere but the controller wants pods → real error
-    // (image pull loop, priority preemption, scheduler stuck, etc.).
-    if (scheduled === 0 && desired > 0)
+    // (image pull loop, priority preemption, scheduler stuck, etc.). Checked
+    // before misscheduled so a badly broken DaemonSet (0 scheduled + some
+    // misscheduled) can't get downgraded to a mild warning.
+    if (scheduled === 0 && desired > 0) {
       return { severity: 'error', message: `0/${desired} pods scheduled` };
+    }
+
+    // Rollout in progress — only meaningful for RollingUpdate. Compared
+    // against `scheduled`, not `desired`: updatedNumberScheduled < scheduled
+    // means pods already exist on those nodes but some are still the OLD
+    // version (a true rollout). Comparing against `desired` instead would
+    // wrongly flag a plain scheduling gap (nodes with NO pod yet, all
+    // placed pods already current) as "rolling out" — that's Degraded via
+    // the ready check below, not Progressing. OnDelete intentionally leaves
+    // old pods running until a human deletes them, so it's excluded here.
+    const strategy = spec.updateStrategy?.type ?? 'RollingUpdate';
+    const updated: number | undefined =
+      typeof status.updatedNumberScheduled === 'number' ? status.updatedNumberScheduled : undefined;
+    if (strategy !== 'OnDelete' && typeof updated === 'number' && updated < scheduled) {
+      return { severity: 'progressing', message: `Updating ${updated}/${scheduled}` };
+    }
 
     // Some nodes got a pod but not all are Ready.
+    const ready: number = status.numberReady ?? 0;
     if (ready < desired) return { severity: 'warning', message: `${ready}/${desired} ready` };
+
+    // Kubelet has pods sitting on nodes that no longer match. Mild signal —
+    // controller will clean them up. Checked last: real errors/rollout above
+    // always win over this cosmetic cleanup-pending state.
+    const misscheduled: number = status.numberMisscheduled ?? 0;
+    if (misscheduled > 0) return { severity: 'warning', message: `${misscheduled} misscheduled` };
 
     return { severity: 'success' };
   }
@@ -261,17 +561,42 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
   // Job — NON_HEALTH_BEARING: verdict below still computed (for the Needs
   // Attention popover section) but excluded from the health tally by the
   // getLocalHealth loop. status.conditions (Failed/Complete) is the
-  // authoritative K8s signal, checked before raw counters — matches real
-  // cluster data: a failed Job carries conditions: [{ type: 'Failed',
-  // status: 'True', reason: 'BackoffLimitExceeded' }].
+  // authoritative K8s signal — matches real cluster data: a failed Job
+  // carries conditions: [{ type: 'Failed', status: 'True', reason:
+  // 'BackoffLimitExceeded' }]. `status.failed` is a raw retry counter, not
+  // a verdict — a Job with backoffLimit=100 that failed once (failed=1,
+  // no Failed condition yet) is completely normal, not Degraded. There is
+  // no real Kubernetes field for "how many failures is too many before the
+  // Failed condition fires" other than the Failed condition itself, so the
+  // old raw-counter fallback is removed rather than replaced with a
+  // fabricated threshold.
   if (kind === 'Job') {
-    const status = anyObj.status ?? {};
-    const failed: number = status.failed ?? 0;
-    const active: number = status.active ?? 0;
-    const conditions: any[] = status.conditions ?? [];
+    const status = anyObj.status;
 
+    if (!status || Object.keys(status).length === 0) {
+      return { severity: 'unknown', message: 'Job status unavailable' };
+    }
+
+    // Same staleness rule as Deployment/StatefulSet/DaemonSet, kept
+    // defensive: observedGeneration was not present on any live Job status
+    // sampled from this cluster, so this only fires where the field exists.
+    const observedGeneration = status.observedGeneration;
+    const generation = meta.generation;
+    const isStale =
+      typeof observedGeneration === 'number' &&
+      typeof generation === 'number' &&
+      observedGeneration < generation;
+    if (isStale) {
+      return { severity: 'unknown', message: 'Status updating' };
+    }
+
+    const conditions: any[] = status.conditions ?? [];
     const failedCondition = conditions.find(c => c.type === 'Failed' && c.status === 'True');
-    const isComplete = conditions.some(c => c.type === 'Complete' && c.status === 'True');
+    // SuccessCriteriaMet not observed live (only 'Complete' seen) — accepted
+    // defensively since it's a documented alternate completion condition.
+    const isComplete = conditions.some(
+      c => (c.type === 'Complete' || c.type === 'SuccessCriteriaMet') && c.status === 'True'
+    );
 
     if (failedCondition) {
       return { severity: 'error', message: failedCondition.reason ?? 'Job Failed' };
@@ -279,17 +604,31 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     if (isComplete) {
       return { severity: 'success', message: 'Complete' };
     }
+
+    const active: number = status.active ?? 0;
     if (active > 0) {
       return { severity: 'progressing', message: 'Running' };
     }
-    // No conditions yet (older API servers / custom controllers don't always
-    // set them) but the raw counter already shows a failure — don't miss it.
-    if (failed > 0) {
-      return { severity: 'warning', message: `Failed attempts: ${failed}` };
+
+    // Multi-completion Job still short of its target with no Failed
+    // condition — real fields (spec.completions/status.succeeded), but a
+    // live Job actually mid-multi-completion was not observed in the
+    // current sample (fixture-verified only).
+    const completions = anyObj.spec?.completions;
+    const succeeded: number = status.succeeded ?? 0;
+    if (typeof completions === 'number' && succeeded < completions) {
+      return { severity: 'progressing', message: `${succeeded}/${completions} completions` };
     }
-    return { severity: 'unknown', message: 'Pending' };
+
+    // No conditions yet, not active — accepted but not started/reported.
+    // A known transient state, not an unreadable one.
+    return { severity: 'progressing', message: 'Pending' };
   }
 
+  // CronJob — NON_HEALTH_BEARING (same as Job, unchanged here). Real
+  // CronJobStatus (batch/v1) has NO `status.conditions` and NO
+  // `status.observedGeneration` (confirmed absent on every live sample) —
+  // staleness is genuinely not applicable to this kind, not merely unread.
   if (kind === 'CronJob') {
     const status = anyObj.status ?? {};
     const spec = anyObj.spec ?? {};
@@ -307,7 +646,6 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     });
 
     const activeRuns = Array.isArray(status.active) ? status.active.length : 0;
-    const cap = spec.concurrencyPolicy === 'Forbid' ? 1 : 5;
     const completedJobs = childJobs.filter(job => {
       const jobStatus = (job as any).status ?? {};
       const conditions: any[] = jobStatus.conditions ?? [];
@@ -317,17 +655,41 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
           condition.status === 'True'
       );
     });
+    // Sort by status.completionTime — the real field marking when a Job
+    // FINISHED. Falls back to startTime, then creationTimestamp, only when
+    // completionTime is absent (e.g. a Failed job with no completionTime).
+    // Sorting by startTime instead would pick the run that started most
+    // recently, not the one that finished most recently — wrong when runs
+    // overlap.
     const latestCompletedJob = completedJobs
       .map(job => {
         const endTime =
-          get(job, 'status.startTime') ?? get(job, 'metadata.creationTimestamp') ?? '';
+          get(job, 'status.completionTime') ??
+          get(job, 'status.startTime') ??
+          get(job, 'metadata.creationTimestamp') ??
+          '';
         const ts = endTime ? new Date(endTime).getTime() : Number.NEGATIVE_INFINITY;
         return { job, ts };
       })
       .filter(item => Number.isFinite(item.ts))
       .sort((a, b) => b.ts - a.ts)[0]?.job;
 
+    // Not observed live — no suspended CronJob exists in the current
+    // sample. Fixture-verified only.
     if (spec.suspend === true) return { severity: 'info', message: 'Suspended' };
+
+    // Real Kubernetes semantics per concurrencyPolicy — no invented cap.
+    // Forbid: at most 1 concurrent run is ever expected; Replace: the
+    // controller kills the old run before starting a new one, so it also
+    // never expects more than 1 running at once. Allow has NO concurrency
+    // limit by design — Kubernetes permits unlimited simultaneous runs, so
+    // activeRuns must never be treated as a warning signal for Allow.
+    if (spec.concurrencyPolicy === 'Forbid' || spec.concurrencyPolicy === 'Replace') {
+      if (activeRuns > 1) return { severity: 'warning', message: `${activeRuns} active runs` };
+    }
+    // A run happening now outranks any retained history: reporting a past
+    // result while a run is in flight would show a stale message.
+    if (activeRuns > 0) return { severity: 'progressing', message: 'Running' };
 
     if (latestCompletedJob) {
       const latestStatus = (latestCompletedJob as any).status ?? {};
@@ -348,11 +710,15 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
       }
     }
 
-    if (activeRuns > cap) return { severity: 'warning', message: `${activeRuns} active runs` };
-    if (activeRuns > 0) return { severity: 'progressing', message: 'Running' };
     if (status.lastScheduleTime && !status.lastSuccessfulTime) {
       return { severity: 'warning', message: 'Scheduled but never succeeded' };
     }
+    // No child Jobs found above (e.g. successfulJobsHistoryLimit=0 /
+    // failedJobsHistoryLimit=0 — confirmed live: Kubernetes garbage-collects
+    // every child Job immediately, so childJobs can legitimately be empty
+    // even after months of successful runs) — fall back to the CronJob's
+    // own status fields, which the controller keeps updating regardless of
+    // whether any Job object still exists.
     if (
       status.lastSuccessfulTime ||
       (latestCompletedJob && (latestCompletedJob as any).status?.succeeded)
@@ -362,39 +728,86 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
     return { severity: 'unknown', message: 'No run recorded yet' };
   }
 
+  // PersistentVolumeClaim — only three real phases exist: Pending, Bound,
+  // Lost. The old "Pending > 2m → error" timer is removed entirely (same
+  // disease already removed from Pod/CronJob): a PVC using a
+  // WaitForFirstConsumer StorageClass legitimately stays Pending — often
+  // for a long time — until a Pod actually consumes it. A genuinely broken
+  // PVC either goes Lost, or its consuming Pod surfaces the real problem
+  // (stuck ContainerCreating), already handled by the Pod branch. Pending
+  // is 'progressing', not 'warning': it is a normal, expected wait state
+  // for WaitForFirstConsumer, not a degraded one.
   if (kind === 'PersistentVolumeClaim') {
-    const phase = anyObj.status?.phase;
+    const status = anyObj.status;
+    const phase: string | undefined = status?.phase;
+    const RECOGNIZED_PHASES = new Set(['Pending', 'Bound', 'Lost']);
+
+    if (!status || Object.keys(status).length === 0 || !phase || !RECOGNIZED_PHASES.has(phase)) {
+      return {
+        severity: 'unknown',
+        message: phase ? `Unknown phase: ${phase}` : 'Status unavailable',
+      };
+    }
+
+    // Lost checked before Terminating: a Lost PVC being deleted is still a
+    // real failure (the underlying PV is gone), not a normal transition —
+    // that signal must not be masked by "it's just terminating".
     if (phase === 'Lost') return { severity: 'error', message: 'Lost' };
-    if (phase === 'Pending' && ageMs(meta.creationTimestamp) > 2 * 60_000)
-      return { severity: 'error', message: 'Pending > 2m' };
-    if (phase === 'Pending') return { severity: 'warning', message: 'Pending' };
+
+    if (meta.deletionTimestamp) return { severity: 'progressing', message: 'Terminating' };
+
+    if (phase === 'Pending') return { severity: 'progressing', message: 'Pending' };
+
+    // Resize in progress — real condition types per the VolumeResizing
+    // feature. Not observed on any live PVC in the current sample
+    // (fixture-verified only), but a real, documented condition shape.
+    const conditions: any[] = status.conditions ?? [];
+    const resizingCond = conditions.find(
+      c => (c?.type === 'Resizing' || c?.type === 'FileSystemResizePending') && c?.status === 'True'
+    );
+    if (resizingCond) return { severity: 'progressing', message: resizingCond.type };
+
     return { severity: 'success' };
   }
 
   if (kind === 'Endpoints') {
-    // 1. If it already has addresses, we're done.
     const subsets: any[] = anyObj.subsets ?? [];
-    const hasAddr = subsets.some(sub => (sub.addresses?.length ?? 0) > 0);
-    if (subsets.length > 0 && hasAddr) return { severity: 'success' };
+    const ready = subsets.reduce((total, subset) => total + (subset.addresses?.length ?? 0), 0);
+    const notReady = subsets.reduce(
+      (total, subset) => total + (subset.notReadyAddresses?.length ?? 0),
+      0
+    );
 
-    // 2. Find the paired Service. If none, this is an orphan; not our problem.
-    const svc = findPairedService(o, allItems);
-    if (!svc) return { severity: 'success' };
-    const svcSpec = (svc as any).spec ?? {};
-    if (svcSpec.type === 'ExternalName') return { severity: 'success' };
-    if (svcSpec.clusterIP === 'None') return { severity: 'success' }; // headless
-    const selector = svcSpec.selector ?? {};
-    if (Object.keys(selector).length === 0) return { severity: 'success' }; // manual endpoints
-    // StatefulSet per-pod service — deliberately empty when the ordinal
-    // is not running. Not a real "app broken" signal.
-    if (selector['statefulset.kubernetes.io/pod-name']) return { severity: 'success' };
-    // 3. Only warn if a workload actually targets this Service. Otherwise
-    // the Service is an unused/dormant helper and complaining about its
-    // empty endpoints would be noise.
-    if (!workloadTargetsService(svc, allItems)) return { severity: 'success' };
+    if (ready > 0 && notReady === 0) return { severity: 'success' };
+
+    // Benign filters apply only when no ready addresses exist. A ready
+    // address plus notReadyAddresses is a real partial-readiness signal.
+    if (ready === 0) {
+      // Find the paired Service. If none, this is an orphan; not our problem.
+      const svc = findPairedService(o, allItems);
+      if (!svc) return { severity: 'success' };
+      const svcSpec = (svc as any).spec ?? {};
+      if (svcSpec.type === 'ExternalName') return { severity: 'success' };
+      if (svcSpec.clusterIP === 'None') return { severity: 'success' }; // headless
+      const selector = svcSpec.selector ?? {};
+      if (Object.keys(selector).length === 0) return { severity: 'success' }; // manual endpoints
+      // StatefulSet per-pod service — deliberately empty when the ordinal
+      // is not running. Not a real "app broken" signal.
+      if (selector['statefulset.kubernetes.io/pod-name']) return { severity: 'success' };
+      if (!workloadTargetsService(svc, allItems)) return { severity: 'success' };
+
+      if (notReady > 0) {
+        return {
+          severity: 'warning',
+          message: `no ready pods yet (0/${notReady}) behind this Service`,
+        };
+      }
+      return { severity: 'warning', message: 'no pods behind this Service' };
+    }
+
     return {
       severity: 'warning',
-      message: 'no ready pods behind this Service',
+      message: `${ready}/${ready + notReady} pods ready behind this Service`,
     };
   }
 
@@ -408,9 +821,35 @@ function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemVerdict 
   }
 
   if (kind === 'Ingress') {
-    const lb: any[] = anyObj.status?.loadBalancer?.ingress ?? [];
-    if (lb.length === 0 && ageMs(meta.creationTimestamp) > 5 * 60_000)
-      return { severity: 'warning', message: 'no address' };
+    const backendNames = new Set<string>();
+    const defaultBackendName = get(o, 'spec.defaultBackend.service.name');
+    if (defaultBackendName) backendNames.add(defaultBackendName);
+
+    const rules: any[] = get(o, 'spec.rules') ?? [];
+    for (const rule of rules) {
+      const paths: any[] = rule?.http?.paths ?? [];
+      for (const path of paths) {
+        const name = path?.backend?.service?.name;
+        if (name) backendNames.add(name);
+      }
+    }
+
+    const ingressCluster = (o as any).cluster;
+    const missing = [...backendNames].filter(
+      name =>
+        !allItems.some(service => {
+          if (service.kind !== 'Service') return false;
+          const serviceMeta = (service as any).metadata ?? {};
+          return (
+            serviceMeta.name === name &&
+            serviceMeta.namespace === meta.namespace &&
+            (service as any).cluster === ingressCluster
+          );
+        })
+    );
+    if (missing.length > 0) {
+      return { severity: 'warning', message: `backend Service not found: ${missing.join(', ')}` };
+    }
     return { severity: 'success' };
   }
 
@@ -574,7 +1013,7 @@ export function getResourceBreakdown(items: KubeObject[] | undefined): LocalHeal
 export interface LocalHealthUnavailability {
   status: 'unavailable';
   label: 'Unavailable';
-  rank: 4;
+  rank: 5;
   icon: string;
   reasons: string[];
   evidence: [];
@@ -600,10 +1039,12 @@ export function getUnavailableHealth(details: {
   return {
     status: 'unavailable',
     label: 'Unavailable',
-    rank: 4,
+    rank: 5,
     icon: 'mdi:cloud-off-outline',
     reasons: [],
     evidence: [],
+    progressing: [],
+    unknownItems: [],
     stats: [],
     needsAttention: [],
     cluster: details.cluster,
@@ -621,18 +1062,23 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       icon: 'mdi:help-circle',
       reasons: [],
       evidence: [],
+      progressing: [],
+      unknownItems: [],
       stats: [],
       needsAttention: [],
     };
   }
 
   const evidence: LocalHealthEvidence[] = [];
+  const progressing: LocalHealthEvidence[] = [];
+  const unknownItems: LocalHealthEvidence[] = [];
   const needsAttention: LocalHealthEvidence[] = [];
   const perSeverity: LocalHealthSeverity[] = [];
   let hasWorkload = false;
 
   for (const item of items) {
     if (WORKLOAD_KINDS.has(item.kind)) hasWorkload = true;
+    if (isDeploymentOwnedReplicaSet(item)) continue;
     const verdict = localGetItemStatus(item, items);
     const meta = (item as any).metadata ?? {};
 
@@ -662,8 +1108,28 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     }
 
     perSeverity.push(verdict.severity);
-    if (verdict.severity !== 'success' && verdict.severity !== 'unknown' && verdict.message) {
+    if ((verdict.severity === 'error' || verdict.severity === 'warning') && verdict.message) {
       evidence.push({
+        severity: verdict.severity,
+        kind: item.kind,
+        namespace: meta.namespace ?? '',
+        name: meta.name ?? '',
+        message: verdict.message,
+        object: item,
+      });
+    }
+    if (verdict.severity === 'progressing' && verdict.message) {
+      progressing.push({
+        severity: verdict.severity,
+        kind: item.kind,
+        namespace: meta.namespace ?? '',
+        name: meta.name ?? '',
+        message: verdict.message,
+        object: item,
+      });
+    }
+    if (verdict.severity === 'unknown' && verdict.message) {
+      unknownItems.push({
         severity: verdict.severity,
         kind: item.kind,
         namespace: meta.namespace ?? '',
@@ -678,7 +1144,13 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
   const stats = getResourceBreakdown(items);
 
   // No workloads: don't claim Healthy — nothing is running to be healthy.
-  if (!hasWorkload && (tally.error ?? 0) === 0 && (tally.warning ?? 0) === 0) {
+  if (
+    !hasWorkload &&
+    (tally.error ?? 0) === 0 &&
+    (tally.warning ?? 0) === 0 &&
+    (tally.progressing ?? 0) === 0 &&
+    (tally.unknown ?? 0) === 0
+  ) {
     return {
       status: 'passive',
       label: 'No Workloads',
@@ -686,6 +1158,8 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       icon: 'mdi:pause-circle-outline',
       reasons: [],
       evidence: [],
+      progressing: [],
+      unknownItems: [],
       stats,
       needsAttention,
     };
@@ -708,10 +1182,12 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     return {
       status: 'error',
       label: 'Unhealthy',
-      rank: 3,
+      rank: 4,
       icon: 'mdi:alert-circle',
       reasons: cappedReasons,
       evidence,
+      progressing,
+      unknownItems,
       stats,
       needsAttention,
     };
@@ -720,10 +1196,40 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     return {
       status: 'warning',
       label: 'Degraded',
-      rank: 2,
+      rank: 3,
       icon: 'mdi:alert',
       reasons: cappedReasons,
       evidence,
+      progressing,
+      unknownItems,
+      stats,
+      needsAttention,
+    };
+  }
+  if ((tally.progressing ?? 0) > 0) {
+    return {
+      status: 'progressing',
+      label: 'Progressing',
+      rank: 2,
+      icon: 'mdi:progress-clock',
+      reasons: [],
+      evidence: [],
+      progressing,
+      unknownItems,
+      stats,
+      needsAttention,
+    };
+  }
+  if ((tally.unknown ?? 0) > 0) {
+    return {
+      status: 'unknown',
+      label: 'Unknown',
+      rank: 1,
+      icon: 'mdi:help-circle-outline',
+      reasons: [],
+      evidence: [],
+      progressing,
+      unknownItems,
       stats,
       needsAttention,
     };
@@ -731,10 +1237,12 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
   return {
     status: 'success',
     label: 'Healthy',
-    rank: 1,
+    rank: 0,
     icon: 'mdi:check-circle',
     reasons: [],
     evidence: [],
+    progressing,
+    unknownItems,
     stats,
     needsAttention,
   };

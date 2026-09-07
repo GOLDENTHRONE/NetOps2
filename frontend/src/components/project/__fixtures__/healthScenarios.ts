@@ -30,8 +30,15 @@ type Scenario = {
   items: ItemPlan[];
   expected: {
     status: LocalHealthBadge;
-    label: 'Healthy' | 'Degraded' | 'Unhealthy' | 'No Resources';
-    rank: 0 | 1 | 2 | 3;
+    label:
+      | 'Healthy'
+      | 'Degraded'
+      | 'Unhealthy'
+      | 'Progressing'
+      | 'Unknown'
+      | 'No Resources'
+      | 'No Workloads';
+    rank: 0 | 1 | 2 | 3 | 4 | 5;
     reasonsIncludes?: string[];
   };
 };
@@ -72,12 +79,48 @@ const deployment = (
   },
 });
 
+/**
+ * Raw Deployment fixture for the fine-grained Deployment verdict contract
+ * tests — full control over spec/status/conditions/metadata.generation
+ * that the simple `deployment()` helper above doesn't expose.
+ */
+const deploymentRaw = (
+  name: string,
+  spec: any,
+  status: any,
+  metaExtra: Record<string, any> = {}
+): ItemPlan => ({
+  kind: 'Deployment',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, ...metaExtra },
+  spec,
+  status,
+});
+export { deploymentRaw };
+
 const statefulSet = (name: string, desired: number, ready: number): ItemPlan => ({
   kind: 'StatefulSet',
   metadata: { name, namespace: 'demo', creationTimestamp: OLD },
   spec: { replicas: desired },
   status: { replicas: desired, readyReplicas: ready },
 });
+
+/**
+ * Raw StatefulSet fixture for the fine-grained StatefulSet verdict contract
+ * tests — full control over spec/status/revisions/metadata.generation that
+ * the simple `statefulSet()` helper above doesn't expose.
+ */
+const statefulSetRaw = (
+  name: string,
+  spec: any,
+  status: any,
+  metaExtra: Record<string, any> = {}
+): ItemPlan => ({
+  kind: 'StatefulSet',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, ...metaExtra },
+  spec,
+  status,
+});
+export { statefulSetRaw };
 
 // Real Kubernetes DaemonSet status shape (apps/v1). It does NOT carry
 // `spec.replicas` or `status.replicas` — the count is derived from
@@ -103,6 +146,24 @@ const daemonSet = (
     updatedNumberScheduled: opts.scheduled ?? desired,
   },
 });
+
+/**
+ * Raw DaemonSet fixture for the fine-grained DaemonSet verdict contract
+ * tests — full control over spec.updateStrategy/status/generation that the
+ * simple `daemonSet()` helper above doesn't expose.
+ */
+const daemonSetRaw = (
+  name: string,
+  spec: any,
+  status: any,
+  metaExtra: Record<string, any> = {}
+): ItemPlan => ({
+  kind: 'DaemonSet',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, ...metaExtra },
+  spec,
+  status,
+});
+export { daemonSetRaw };
 
 const replicaSet = (name: string, desired: number, ready: number): ItemPlan => ({
   kind: 'ReplicaSet',
@@ -139,6 +200,19 @@ const pod = (
   };
 };
 
+/**
+ * Raw Pod fixture for the fine-grained Pod verdict contract tests — gives
+ * full control over status/metadata shape (initContainerStatuses,
+ * restartCount, lastState, deletionTimestamp, PodScheduled, etc.) that the
+ * simple `pod()` helper above deliberately doesn't expose.
+ */
+const podRaw = (name: string, status: any, metaExtra: Record<string, any> = {}): ItemPlan => ({
+  kind: 'Pod',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, ...metaExtra },
+  status,
+});
+export { podRaw };
+
 const job = (
   name: string,
   overrides: { failed?: number; succeeded?: number; backoffLimit?: number } = {}
@@ -151,6 +225,24 @@ const job = (
     succeeded: overrides.succeeded ?? 0,
   },
 });
+
+/**
+ * Raw Job fixture for the fine-grained Job verdict contract tests — full
+ * control over spec/status/conditions/metadata.generation that the simple
+ * `job()` helper above doesn't expose.
+ */
+const jobRaw = (
+  name: string,
+  spec: any,
+  status: any,
+  metaExtra: Record<string, any> = {}
+): ItemPlan => ({
+  kind: 'Job',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, ...metaExtra },
+  spec,
+  status,
+});
+export { jobRaw };
 
 const cronJob = (
   name: string,
@@ -167,11 +259,53 @@ const cronJob = (
   },
 });
 
+/**
+ * Raw CronJob fixture for the fine-grained CronJob verdict contract tests —
+ * full control over spec/status. Pair with `childJobRaw()` below to build
+ * real ownerReferences-linked child Jobs.
+ */
+const cronJobRaw = (name: string, spec: any, status: any, uid = `${name}-uid`): ItemPlan => ({
+  kind: 'CronJob',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, uid },
+  spec,
+  status,
+});
+export { cronJobRaw };
+
+/**
+ * A Job owned by a CronJob (real ownerReferences shape: { kind: 'CronJob',
+ * uid }), for CronJob verdict contract tests that need real child-Job
+ * lookup/sort behavior (completionTime-based "latest run" selection).
+ */
+const childJobRaw = (name: string, cronUid: string, status: any): ItemPlan => ({
+  kind: 'Job',
+  metadata: {
+    name,
+    namespace: 'demo',
+    creationTimestamp: OLD,
+    ownerReferences: [{ kind: 'CronJob', uid: cronUid }],
+  },
+  status,
+});
+export { childJobRaw };
+
 const pvc = (name: string, phase: string, createdMsAgo = 60 * 60_000): ItemPlan => ({
   kind: 'PersistentVolumeClaim',
   metadata: { name, namespace: 'demo', creationTimestamp: iso(createdMsAgo) },
   status: { phase },
 });
+
+/**
+ * Raw PVC fixture for the fine-grained PVC verdict contract tests — full
+ * control over status/metadata (deletionTimestamp, conditions, missing
+ * status/phase) that the simple `pvc()` helper above doesn't expose.
+ */
+const pvcRaw = (name: string, status: any, metaExtra: Record<string, any> = {}): ItemPlan => ({
+  kind: 'PersistentVolumeClaim',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD, ...metaExtra },
+  status,
+});
+export { pvcRaw };
 
 const endpoints = (name: string, addressCount: number): ItemPlan => ({
   kind: 'Endpoints',
@@ -188,6 +322,13 @@ const endpoints = (name: string, addressCount: number): ItemPlan => ({
       : [],
 });
 
+const endpointsRaw = (name: string, subsets: any[]): ItemPlan => ({
+  kind: 'Endpoints',
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD },
+  subsets,
+});
+export { endpointsRaw };
+
 const hpa = (name: string, active: boolean, reason?: string): ItemPlan => ({
   kind: 'HorizontalPodAutoscaler',
   metadata: { name, namespace: 'demo', creationTimestamp: OLD },
@@ -202,9 +343,14 @@ const hpa = (name: string, active: boolean, reason?: string): ItemPlan => ({
   },
 });
 
-const ingress = (name: string, hasLb: boolean, createdMsAgo = 60 * 60_000): ItemPlan => ({
+const ingress = (name: string, backendNames: string[], hasLb = false): ItemPlan => ({
   kind: 'Ingress',
-  metadata: { name, namespace: 'demo', creationTimestamp: iso(createdMsAgo) },
+  metadata: { name, namespace: 'demo', creationTimestamp: OLD },
+  spec: {
+    rules: backendNames.map(serviceName => ({
+      http: { paths: [{ backend: { service: { name: serviceName, port: { number: 80 } } } }] },
+    })),
+  },
   status: {
     loadBalancer: hasLb ? { ingress: [{ hostname: 'lb.example.com' }] } : { ingress: [] },
   },
@@ -225,7 +371,7 @@ export const allHealthySingleCluster: Scenario = {
     cm('cfg'),
     job('one-shot', { failed: 0, succeeded: 1 }),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // health.txt example non-regression: wnv7a0vbgw0013c-shape
@@ -242,7 +388,7 @@ export const wnv7a0vbgw0013cStyle: Scenario = {
     cm('config'),
     job('backup-ok', { failed: 0, succeeded: 1 }),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const allHealthyMultiCluster: Scenario = {
@@ -255,7 +401,7 @@ export const allHealthyMultiCluster: Scenario = {
     { ...deployment('web-2', 3, 3) },
     { ...svc('web-2') },
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── 10-15: workload breakage ───────────────────────────────────────────
@@ -265,7 +411,7 @@ export const deployment2Of3Ready: Scenario = {
   expected: {
     status: 'warning',
     label: 'Degraded',
-    rank: 2,
+    rank: 3,
     reasonsIncludes: ['Deployment/demo/web: 2/3 ready'],
   },
 };
@@ -276,7 +422,7 @@ export const deployment0Of3Created: Scenario = {
   expected: {
     status: 'error',
     label: 'Unhealthy',
-    rank: 3,
+    rank: 4,
     reasonsIncludes: ['Deployment/demo/web: 0/3 pods created'],
   },
 };
@@ -284,19 +430,19 @@ export const deployment0Of3Created: Scenario = {
 export const deploymentScaledToZero: Scenario = {
   name: 'deploymentScaledToZero',
   items: [deployment('web', 0, 0, 0), svc('web')],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const statefulSet0Of2Ready: Scenario = {
   name: 'statefulSet0Of2Ready',
   items: [statefulSet('db', 2, 0)],
-  expected: { status: 'warning', label: 'Degraded', rank: 2 },
+  expected: { status: 'warning', label: 'Degraded', rank: 3 },
 };
 
 export const daemonSetPartial: Scenario = {
   name: 'daemonSetPartial',
   items: [daemonSet('node-agent', 5, 3)],
-  expected: { status: 'warning', label: 'Degraded', rank: 2 },
+  expected: { status: 'warning', label: 'Degraded', rank: 3 },
 };
 
 // ─── DaemonSet-specific rules (caveman weak-spot #1) ────────────────────
@@ -307,7 +453,7 @@ export const daemonSetPartial: Scenario = {
 export const daemonSetAllReadyRealShape: Scenario = {
   name: 'daemonSetAllReadyRealShape',
   items: [daemonSet('fluent-bit', 5, 5)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const daemonSetNoMatchingNodes: Scenario = {
@@ -315,7 +461,7 @@ export const daemonSetNoMatchingNodes: Scenario = {
   // e.g. a GPU-only DaemonSet on a CPU cluster.
   name: 'daemonSetNoMatchingNodes',
   items: [deployment('web', 1, 1), daemonSet('gpu-agent', 0, 0)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const daemonSetZeroScheduledDesiredPositive: Scenario = {
@@ -326,23 +472,26 @@ export const daemonSetZeroScheduledDesiredPositive: Scenario = {
   expected: {
     status: 'error',
     label: 'Unhealthy',
-    rank: 3,
+    rank: 4,
     reasonsIncludes: ['0/3 pods scheduled'],
   },
 };
 
 export const daemonSetPartialScheduling: Scenario = {
-  // desired 5, scheduler placed only 3, all 3 ready. The badge must say
-  // Degraded (real health), and the popover Inventory row must say
-  // "3/5 ready" — NOT the misleading "3/3 ready" the old sumWorkload
-  // (via shared getTotalReplicas fallback to currentNumberScheduled)
-  // produced before the A2 inline fix.
+  // desired 5, scheduler placed only 3 (all 3 already ready and already on
+  // the current revision: updatedNumberScheduled defaults to scheduled=3).
+  // This is a scheduling gap — 2 nodes have NO pod at all — not a rollout
+  // (nothing is being replaced; updated === scheduled). Correctly Degraded
+  // at the item level: updated(3) < scheduled(3) is false, so it falls
+  // through to ready(3) < desired(5) → warning. The popover Inventory row
+  // still correctly reports "3/5 ready" — that comes from
+  // sumWorkload()/getResourceBreakdown(), untouched by this task.
   name: 'daemonSetPartialScheduling',
   items: [daemonSet('csi-driver', 5, 3, { scheduled: 3 })],
   expected: {
     status: 'warning',
     label: 'Degraded',
-    rank: 2,
+    rank: 3,
     reasonsIncludes: ['3/5 ready'],
   },
 };
@@ -355,7 +504,7 @@ export const daemonSetMisscheduled: Scenario = {
   expected: {
     status: 'warning',
     label: 'Degraded',
-    rank: 2,
+    rank: 3,
     reasonsIncludes: ['1 misscheduled'],
   },
 };
@@ -363,7 +512,7 @@ export const daemonSetMisscheduled: Scenario = {
 export const replicaSetPartial: Scenario = {
   name: 'replicaSetPartial',
   items: [replicaSet('web-abc', 3, 1)],
-  expected: { status: 'warning', label: 'Degraded', rank: 2 },
+  expected: { status: 'warning', label: 'Degraded', rank: 3 },
 };
 
 // ─── 20-30: Pod-only scenarios (payoff of p17's local Pod fetch) ────────
@@ -373,7 +522,7 @@ export const podFailed: Scenario = {
   expected: {
     status: 'error',
     label: 'Unhealthy',
-    rank: 3,
+    rank: 4,
     reasonsIncludes: ['Pod/demo/bare-1: Failed'],
   },
 };
@@ -390,7 +539,7 @@ export const podCrashLoopBackOff: Scenario = {
   expected: {
     status: 'error',
     label: 'Unhealthy',
-    rank: 3,
+    rank: 4,
     reasonsIncludes: ['CrashLoopBackOff'],
   },
 };
@@ -407,7 +556,7 @@ export const podImagePullBackOff: Scenario = {
   expected: {
     status: 'error',
     label: 'Unhealthy',
-    rank: 3,
+    rank: 4,
     reasonsIncludes: ['ImagePullBackOff'],
   },
 };
@@ -421,7 +570,7 @@ export const podErrImagePull: Scenario = {
       waitingReason: 'ErrImagePull',
     }),
   ],
-  expected: { status: 'error', label: 'Unhealthy', rank: 3 },
+  expected: { status: 'error', label: 'Unhealthy', rank: 4 },
 };
 
 export const podCreateContainerConfigError: Scenario = {
@@ -433,7 +582,7 @@ export const podCreateContainerConfigError: Scenario = {
       waitingReason: 'CreateContainerConfigError',
     }),
   ],
-  expected: { status: 'error', label: 'Unhealthy', rank: 3 },
+  expected: { status: 'error', label: 'Unhealthy', rank: 4 },
 };
 
 export const podInvalidImageName: Scenario = {
@@ -445,76 +594,88 @@ export const podInvalidImageName: Scenario = {
       waitingReason: 'InvalidImageName',
     }),
   ],
-  expected: { status: 'error', label: 'Unhealthy', rank: 3 },
+  expected: { status: 'error', label: 'Unhealthy', rank: 4 },
 };
 
 export const podRunningNotReady: Scenario = {
+  // Running but not Ready, with no fatal container reason reported by the
+  // API — Degraded (partial/no-traffic), not an automatic Unhealthy. A
+  // stronger Kubernetes signal (fatal container state, PodScheduled=False)
+  // still wins over this rule; see the Pod verdict contract tests below.
   name: 'podRunningNotReady',
   items: [pod('starting', { phase: 'Running', ready: false })],
   expected: {
-    status: 'error',
-    label: 'Unhealthy',
+    status: 'warning',
+    label: 'Degraded',
     rank: 3,
-    reasonsIncludes: ['Running but NotReady'],
+    reasonsIncludes: ['Not Ready'],
   },
 };
 
+// Pending Pod verdict no longer depends on Pod age (removed hardcoded
+// "> 5 minutes = Unhealthy" rule). Two Pods with identical current API
+// state but different creationTimestamp must report the identical verdict
+// — see the "age no longer affects Pod verdict" test in localHealth.test.ts.
 export const podPendingOld: Scenario = {
   name: 'podPendingOld',
   items: [pod('stuck', { phase: 'Pending', ready: false, createdMsAgo: 10 * 60_000 })],
-  expected: {
-    status: 'error',
-    label: 'Unhealthy',
-    rank: 3,
-    reasonsIncludes: ['Pending > 5m'],
-  },
+  expected: { status: 'progressing', label: 'Progressing', rank: 2 },
 };
 
 export const podPendingYoung: Scenario = {
   name: 'podPendingYoung',
   items: [pod('warming', { phase: 'Pending', ready: false, createdMsAgo: 30_000 })],
-  expected: {
-    status: 'warning',
-    label: 'Degraded',
-    rank: 2,
-    reasonsIncludes: ['Pending'],
-  },
+  expected: { status: 'progressing', label: 'Progressing', rank: 2 },
 };
 
 export const podSucceeded: Scenario = {
   name: 'podSucceeded',
   items: [pod('done', { phase: 'Succeeded', ready: false })],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const podRunningReady: Scenario = {
   name: 'podRunningReady',
   items: [pod('happy', { phase: 'Running', ready: true })],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── 40-52: batch (Job / CronJob) ───────────────────────────────────────
+// Job is NON_HEALTH_BEARING (see NON_HEALTH_BEARING_KINDS in localHealth.ts):
+// its verdict is surfaced in needsAttention[] only and never enters the
+// app-level Healthy/Degraded/Unhealthy tally, by design (a failed Helm
+// test-hook Job shouldn't drag down an otherwise-healthy app). A lone Job
+// item therefore ALWAYS rolls up as app-level Healthy regardless of its own
+// verdict — see the dedicated needsAttention assertion below for the real
+// per-Job severity/message check (same pattern already used for CronJob).
 export const jobAllRetriesFailed: Scenario = {
+  // Real live shape (wnv7a0vbgw0013c-sbc-healthcheck-job): backoffLimit
+  // exceeded sets a Failed condition — status.failed alone never does.
   name: 'jobAllRetriesFailed',
-  items: [job('backup', { failed: 7, succeeded: 0, backoffLimit: 6 })],
-  expected: {
-    status: 'error',
-    label: 'Unhealthy',
-    rank: 3,
-    reasonsIncludes: ['failed (7/7)'],
-  },
+  items: [
+    jobRaw(
+      'backup',
+      { backoffLimit: 6 },
+      {
+        failed: 7,
+        succeeded: 0,
+        conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+      }
+    ),
+  ],
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const jobFailedRetriesLeft: Scenario = {
   name: 'jobFailedRetriesLeft',
   items: [job('backup', { failed: 3, succeeded: 0, backoffLimit: 6 })],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const jobSucceeded: Scenario = {
   name: 'jobSucceeded',
   items: [job('one-shot', { failed: 0, succeeded: 1 })],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const cronJobPileup: Scenario = {
@@ -523,20 +684,20 @@ export const cronJobPileup: Scenario = {
   expected: {
     status: 'success',
     label: 'Healthy',
-    rank: 1,
+    rank: 0,
   },
 };
 
 export const cronJobForbidPileup: Scenario = {
   name: 'cronJobForbidPileup',
   items: [cronJob('report', 2, 'Forbid')],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const cronJobActiveOne: Scenario = {
   name: 'cronJobActiveOne',
   items: [cronJob('report', 1)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── 60-63: PVC ─────────────────────────────────────────────────────────
@@ -549,37 +710,31 @@ export const pvcLost: Scenario = {
   expected: {
     status: 'error',
     label: 'Unhealthy',
-    rank: 3,
+    rank: 4,
     reasonsIncludes: ['PersistentVolumeClaim/demo/data: Lost'],
   },
 };
 
+// Pending PVC verdict no longer depends on age (removed the hardcoded
+// "> 2 minutes = Unhealthy" timer — same fix already applied to Pod's
+// "Pending > 5m" and CronJob's fabricated cap). A WaitForFirstConsumer
+// StorageClass legitimately stays Pending until a Pod consumes it; Pending
 export const pvcPendingOld: Scenario = {
   name: 'pvcPendingOld',
   items: [deployment('web', 1, 1), pvc('data', 'Pending', 10 * 60_000)],
-  expected: {
-    status: 'error',
-    label: 'Unhealthy',
-    rank: 3,
-    reasonsIncludes: ['Pending > 2m'],
-  },
+  expected: { status: 'progressing', label: 'Progressing', rank: 2 },
 };
 
 export const pvcPendingYoung: Scenario = {
   name: 'pvcPendingYoung',
   items: [deployment('web', 1, 1), pvc('data', 'Pending', 30_000)],
-  expected: {
-    status: 'warning',
-    label: 'Degraded',
-    rank: 2,
-    reasonsIncludes: ['Pending'],
-  },
+  expected: { status: 'progressing', label: 'Progressing', rank: 2 },
 };
 
 export const pvcBound: Scenario = {
   name: 'pvcBound',
   items: [deployment('web', 1, 1), pvc('data', 'Bound')],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── 70-75: Endpoints (paired-with-Service rule) ────────────────────────
@@ -590,7 +745,7 @@ export const endpointsEmptyOrphan: Scenario = {
   // Empty Endpoints with NO paired Service → not our problem.
   name: 'endpointsEmptyOrphan',
   items: [deployment('web', 1, 1), endpoints('some-svc', 0)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const endpointsHeadlessSvc: Scenario = {
@@ -605,7 +760,7 @@ export const endpointsHeadlessSvc: Scenario = {
     },
     endpoints('stateful-svc', 0),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const endpointsExternalNameSvc: Scenario = {
@@ -620,7 +775,7 @@ export const endpointsExternalNameSvc: Scenario = {
     },
     endpoints('ext', 0),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const endpointsSelectorlessSvc: Scenario = {
@@ -636,7 +791,7 @@ export const endpointsSelectorlessSvc: Scenario = {
     },
     endpoints('manual', 0),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const endpointsPairedRealSvc: Scenario = {
@@ -664,8 +819,8 @@ export const endpointsPairedRealSvc: Scenario = {
   expected: {
     status: 'warning',
     label: 'Degraded',
-    rank: 2,
-    reasonsIncludes: ['no ready pods behind this Service'],
+    rank: 3,
+    reasonsIncludes: ['no pods behind this Service'],
   },
 };
 
@@ -682,7 +837,7 @@ export const endpointsOrphanServiceWithSelector: Scenario = {
     },
     endpoints('unused-svc', 0),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const endpointsStatefulSetPerPod: Scenario = {
@@ -702,61 +857,62 @@ export const endpointsStatefulSetPerPod: Scenario = {
     },
     endpoints('esymacservice-9', 0),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const endpointsWithAddresses: Scenario = {
   name: 'endpointsWithAddresses',
   items: [deployment('web', 1, 1), endpoints('demo-svc', 2)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── 80-82: HPA ─────────────────────────────────────────────────────────
 export const hpaFailedGetMetrics: Scenario = {
   name: 'hpaFailedGetMetrics',
   items: [deployment('web', 1, 1), hpa('web-hpa', false, 'FailedGetMetrics')],
-  expected: {
-    status: 'warning',
-    label: 'Degraded',
-    rank: 2,
-    reasonsIncludes: ['FailedGetMetrics'],
-  },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const hpaScalingDisabled: Scenario = {
   name: 'hpaScalingDisabled',
   items: [deployment('web', 1, 1), hpa('web-hpa', false, 'ScalingDisabled')],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const hpaScalingActive: Scenario = {
   name: 'hpaScalingActive',
   items: [deployment('web', 1, 1), hpa('web-hpa', true)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
-// ─── 90-92: Ingress ─────────────────────────────────────────────────────
-export const ingressNoLbOld: Scenario = {
-  name: 'ingressNoLbOld',
-  items: [deployment('web', 1, 1), ingress('web', false, 10 * 60_000)],
+// ─── 90-93: Ingress ─────────────────────────────────────────────────────
+export const ingressBackendExists: Scenario = {
+  name: 'ingressBackendExists',
+  items: [deployment('web', 1, 1), ingress('web', ['web']), svc('web')],
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
+};
+
+export const ingressBackendMissing: Scenario = {
+  name: 'ingressBackendMissing',
+  items: [deployment('web', 1, 1), ingress('web', ['missing'])],
   expected: {
     status: 'warning',
     label: 'Degraded',
-    rank: 2,
-    reasonsIncludes: ['no address'],
+    rank: 3,
+    reasonsIncludes: ['backend Service not found: missing'],
   },
 };
 
-export const ingressNoLbYoung: Scenario = {
-  name: 'ingressNoLbYoung',
-  items: [deployment('web', 1, 1), ingress('web', false, 60_000)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+export const ingressNoBackend: Scenario = {
+  name: 'ingressNoBackend',
+  items: [deployment('web', 1, 1), ingress('web', [])],
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const ingressWithLb: Scenario = {
   name: 'ingressWithLb',
-  items: [deployment('web', 1, 1), ingress('web', true)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  items: [deployment('web', 1, 1), ingress('web', ['web'], true), svc('web')],
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── Silent-success kinds + Passive detection ───────────────────────────
@@ -790,7 +946,7 @@ export const passiveWakesUpWithWorkload: Scenario = {
   // Same supporting bag + one healthy Deployment → app is Healthy.
   name: 'passiveWakesUpWithWorkload',
   items: [cm('c1'), secret('s1'), svc('web'), deployment('worker', 1, 1)],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── Aggregation (worst-of) ─────────────────────────────────────────────
@@ -804,7 +960,7 @@ export const mixOneErrorTwoWarn: Scenario = {
     cm('cfg'),
     secret('sec'),
   ],
-  expected: { status: 'error', label: 'Unhealthy', rank: 3 },
+  expected: { status: 'error', label: 'Unhealthy', rank: 4 },
 };
 
 export const mixWarningOnly: Scenario = {
@@ -816,7 +972,7 @@ export const mixWarningOnly: Scenario = {
     svc('web'),
     cm('cfg'),
   ],
-  expected: { status: 'warning', label: 'Degraded', rank: 2 },
+  expected: { status: 'warning', label: 'Degraded', rank: 3 },
 };
 
 export const mixAllHealthy: Scenario = {
@@ -830,7 +986,7 @@ export const mixAllHealthy: Scenario = {
     secret('sec'),
     pod('happy', { phase: 'Running', ready: true }),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 // ─── Reason cap ─────────────────────────────────────────────────────────
@@ -843,7 +999,7 @@ export const reasonCap15FailingPods: Scenario = {
       waitingReason: 'CrashLoopBackOff',
     })
   ),
-  expected: { status: 'error', label: 'Unhealthy', rank: 3 },
+  expected: { status: 'error', label: 'Unhealthy', rank: 4 },
 };
 
 // ─── Multi-cluster collapse (worst-of across clusters) ──────────────────
@@ -860,13 +1016,13 @@ export const multiClusterAllHealthy: Scenario = {
     deployment('web-b', 1, 1),
     svc('web-b'),
   ],
-  expected: { status: 'success', label: 'Healthy', rank: 1 },
+  expected: { status: 'success', label: 'Healthy', rank: 0 },
 };
 
 export const multiClusterOneDegraded: Scenario = {
   name: 'multiClusterOneDegraded',
   items: [deployment('web-a', 3, 3), deployment('web-b', 3, 1)],
-  expected: { status: 'warning', label: 'Degraded', rank: 2 },
+  expected: { status: 'warning', label: 'Degraded', rank: 3 },
 };
 
 export const multiClusterOneUnhealthy: Scenario = {
@@ -879,7 +1035,7 @@ export const multiClusterOneUnhealthy: Scenario = {
       waitingReason: 'CrashLoopBackOff',
     }),
   ],
-  expected: { status: 'error', label: 'Unhealthy', rank: 3 },
+  expected: { status: 'error', label: 'Unhealthy', rank: 4 },
 };
 
 // Suppress unused var complaints on helpers reserved for future scenarios.

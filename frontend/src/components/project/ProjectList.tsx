@@ -139,6 +139,10 @@ function statusColor(theme: any, status: LocalHealthResult['status']): string {
       return theme.palette.warning.main;
     case 'success':
       return theme.palette.success.main;
+    case 'progressing':
+      return theme.palette.info.main;
+    case 'unknown':
+      return theme.palette.text.secondary;
     case 'unavailable':
       return theme.palette.error.main;
     case 'passive':
@@ -199,6 +203,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
 
   const errors = health.evidence.filter(e => e.severity === 'error');
   const warnings = health.evidence.filter(e => e.severity === 'warning');
+  const isNewState = health.status === 'progressing' || health.status === 'unknown';
   const totalItems = items?.length ?? 0;
   const color = statusColor(theme, health.status);
   // StatusLabel only knows success | warning | error | '' (grey).
@@ -208,7 +213,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
       ? 'success'
       : health.status === 'warning'
       ? 'warning'
-      : health.status === 'passive' || health.status === 'empty'
+      : health.status === 'passive'
       ? ''
       : 'error';
   return (
@@ -232,10 +237,19 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
             '&:focus-visible': { outline: `2px solid ${theme.palette.primary.main}` },
           }}
         >
-          <StatusLabel status={summaryStatusLabel}>
-            <Icon icon={health.icon} style={{ fontSize: 24 }} />
-            {t(health.label)}
-          </StatusLabel>
+          {isNewState ? (
+            <Box display="flex" alignItems="center" gap={0.5} sx={{ color }}>
+              <Icon icon={health.icon} style={{ fontSize: 24 }} />
+              <Typography component="span" variant="body2">
+                {t(health.label)}
+              </Typography>
+            </Box>
+          ) : (
+            <StatusLabel status={summaryStatusLabel}>
+              <Icon icon={health.icon} style={{ fontSize: 24 }} />
+              {t(health.label)}
+            </StatusLabel>
+          )}
         </Box>
       </Tooltip>
       <Popover
@@ -293,9 +307,34 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                   />
                 </>
               )}
-              {health.needsAttention.length > 0 && (
+              {health.progressing.length > 0 && (
                 <>
                   {(errors.length > 0 || warnings.length > 0) && <Divider sx={{ my: 1 }} />}
+                  <EvidenceSection
+                    title={t('Progressing')}
+                    color={theme.palette.info.main}
+                    evidence={health.progressing}
+                  />
+                </>
+              )}
+              {health.unknownItems.length > 0 && (
+                <>
+                  {(errors.length > 0 || warnings.length > 0 || health.progressing.length > 0) && (
+                    <Divider sx={{ my: 1 }} />
+                  )}
+                  <EvidenceSection
+                    title={t('Unknown / Updating')}
+                    color={theme.palette.text.secondary}
+                    evidence={health.unknownItems}
+                  />
+                </>
+              )}
+              {health.needsAttention.length > 0 && (
+                <>
+                  {(errors.length > 0 ||
+                    warnings.length > 0 ||
+                    health.progressing.length > 0 ||
+                    health.unknownItems.length > 0) && <Divider sx={{ my: 1 }} />}
                   <EvidenceSection
                     title={t('Needs Attention')}
                     color={theme.palette.text.secondary}
@@ -303,9 +342,11 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                   />
                 </>
               )}
-              {(errors.length > 0 || warnings.length > 0 || health.needsAttention.length > 0) && (
-                <Divider sx={{ my: 1 }} />
-              )}
+              {(errors.length > 0 ||
+                warnings.length > 0 ||
+                health.progressing.length > 0 ||
+                health.unknownItems.length > 0 ||
+                health.needsAttention.length > 0) && <Divider sx={{ my: 1 }} />}
               <StatsSection stats={health.stats} t={t} totalItems={totalItems} />
             </>
           )}
