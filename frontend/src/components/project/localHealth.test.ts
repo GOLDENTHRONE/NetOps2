@@ -2180,3 +2180,117 @@ describe('localGetItemStatus — PVC verdict contract', () => {
     expect(v.message).toBe('Resizing');
   });
 });
+
+// Live-verified regression: namespace wnv7a0vbgw0013c showed Unhealthy driven
+// solely by a Failed `helm.sh/hook: post-upgrade` Pod (ownerReferences kind
+// 'Job', exitCode 1) while every Deployment/StatefulSet/DaemonSet was Ready.
+// Job is already NON_HEALTH_BEARING; its Pod must be advisory too. The
+// regression cases below are the guard against over-fixing into a false
+// negative: only 'Job' ownership is advisory.
+describe('Job-owned Pods are advisory (needsAttention), never badge-driving', () => {
+  const jobOwned = (name: string, status: any) =>
+    podRaw(name, status, { ownerReferences: [{ kind: 'Job', name: 'hook-job' }] });
+  const failedStatus = {
+    phase: 'Failed',
+    reason: 'Error',
+    containerStatuses: [{ name: 'main', state: { terminated: { exitCode: 1, reason: 'Error' } } }],
+  };
+  const healthyDeployment = deploymentRaw(
+    'web',
+    { replicas: 3 },
+    { replicas: 3, readyReplicas: 3, updatedReplicas: 3 }
+  );
+
+  it('1. wnv7a0vbgw0013c repro: healthy Deployment + Failed Job-owned Pod + failed Jobs → Healthy', () => {
+    const h = getLocalHealth([
+      healthyDeployment,
+      jobOwned('post-upgrade-hook-8kw2h', failedStatus),
+      jobRaw(
+        'sbc-healthcheck-job',
+        {},
+        {
+          conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+        }
+      ),
+      jobRaw(
+        'post-upgrade-ztspostquites',
+        {},
+        {
+          conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+        }
+      ),
+      jobRaw(
+        'scm-test-alarm',
+        {},
+        {
+          conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+        }
+      ),
+    ]);
+    expect(h).toMatchObject({ status: 'success', label: 'Healthy', rank: 0 });
+    expect(h.evidence).toEqual([]);
+    expect(
+      h.needsAttention.some(e => e.kind === 'Pod' && e.name === 'post-upgrade-hook-8kw2h')
+    ).toBe(true);
+  });
+
+  it('2. REGRESSION: ReplicaSet-owned Pod in CrashLoopBackOff → still Unhealthy', () => {
+    const h = getLocalHealth([
+      healthyDeployment,
+      podRaw(
+        'app-abc',
+        {
+          phase: 'Running',
+          conditions: [{ type: 'Ready', status: 'False' }],
+          containerStatuses: [{ name: 'main', state: { waiting: { reason: 'CrashLoopBackOff' } } }],
+        },
+        { ownerReferences: [{ kind: 'ReplicaSet', name: 'web-1' }] }
+      ),
+    ]);
+    expect(h).toMatchObject({ status: 'error', label: 'Unhealthy', rank: 4 });
+  });
+
+  it('3. REGRESSION: StatefulSet-owned Pod Failed → still Unhealthy', () => {
+    const h = getLocalHealth([
+      healthyDeployment,
+      podRaw('db-0', failedStatus, { ownerReferences: [{ kind: 'StatefulSet', name: 'db' }] }),
+    ]);
+    expect(h).toMatchObject({ status: 'error', label: 'Unhealthy', rank: 4 });
+  });
+
+  it('4. REGRESSION: bare Pod (no ownerReferences) Failed → still Unhealthy', () => {
+    const h = getLocalHealth([healthyDeployment, podRaw('standalone', failedStatus)]);
+    expect(h).toMatchObject({ status: 'error', label: 'Unhealthy', rank: 4 });
+  });
+
+  it('5. Failed Job-owned Pod as the ONLY item → Healthy, advisory only', () => {
+    const h = getLocalHealth([jobOwned('hook-only', failedStatus)]);
+    expect(h).toMatchObject({ status: 'success', label: 'Healthy', rank: 0 });
+    expect(h.evidence).toEqual([]);
+    expect(h.needsAttention).toHaveLength(1);
+    expect(h.needsAttention[0]).toMatchObject({ kind: 'Pod', severity: 'error' });
+  });
+
+  it('6. Degraded Deployment (2/3) + failed Job-owned Pod → Degraded from the Deployment only', () => {
+    const h = getLocalHealth([
+      deploymentRaw('web', { replicas: 3 }, { replicas: 3, readyReplicas: 2, updatedReplicas: 3 }),
+      jobOwned('hook', failedStatus),
+    ]);
+    expect(h).toMatchObject({ status: 'warning', label: 'Degraded', rank: 3 });
+    expect(h.evidence).toHaveLength(1);
+    expect(h.evidence[0]).toMatchObject({ kind: 'Deployment', name: 'web' });
+  });
+
+  it('7. Running Job-owned Pod + healthy app → Healthy, nothing surfaced', () => {
+    const h = getLocalHealth([
+      healthyDeployment,
+      jobOwned('hook-running', {
+        phase: 'Running',
+        conditions: [{ type: 'Ready', status: 'True' }],
+        containerStatuses: [{ name: 'main', state: { running: {} } }],
+      }),
+    ]);
+    expect(h).toMatchObject({ status: 'success', label: 'Healthy', rank: 0 });
+    expect(h.needsAttention).toEqual([]);
+  });
+});

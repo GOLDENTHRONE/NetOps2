@@ -136,6 +136,21 @@ function isDeploymentOwnedReplicaSet(o: KubeObject): boolean {
 }
 
 /**
+ * A Pod created by a Job (Helm post-upgrade/test hooks, one-shot migrations).
+ * Job is already NON_HEALTH_BEARING; its Pod carries the same one-shot
+ * semantics and must not drive the badge either — live case: a Failed
+ * `helm.sh/hook: post-upgrade` Pod turned an app Unhealthy while every
+ * Deployment/StatefulSet/DaemonSet was fully Ready. Only 'Job' ownership
+ * counts: ReplicaSet/StatefulSet/DaemonSet-owned and bare Pods stay
+ * health-bearing.
+ */
+function isJobOwnedPod(o: KubeObject): boolean {
+  if (o.kind !== 'Pod') return false;
+  const refs = (o as any).metadata?.ownerReferences;
+  return Array.isArray(refs) && refs.some((r: any) => r?.kind === 'Job');
+}
+
+/**
  * Look up the Service that shares the same namespace + name + cluster as an
  * Endpoints object. Endpoints objects are always paired 1:1 with a Service of
  * the same name (Kubernetes convention).
@@ -1082,11 +1097,13 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     const verdict = localGetItemStatus(item, items);
     const meta = (item as any).metadata ?? {};
 
-    if (NON_HEALTH_BEARING_KINDS.has(item.kind)) {
+    if (NON_HEALTH_BEARING_KINDS.has(item.kind) || isJobOwnedPod(item)) {
       // Surfaced for visibility only — never enters perSeverity/tally, so it
       // can't move the Healthy/Degraded/Unhealthy badge. CronJobs are allowed
       // to report their state in the popover, including active/suspended
-      // progress messages, without affecting the app designation.
+      // progress messages, without affecting the app designation. Job-owned
+      // Pods ride the same path so a failed hook stays visible without
+      // reddening an app whose real workloads are all Ready.
       if (
         (verdict.severity === 'error' ||
           verdict.severity === 'warning' ||
