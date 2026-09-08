@@ -39,11 +39,23 @@ vi.mock('./useProjectResources', () => ({
 }));
 
 import App from '../../App';
+import { ApiError } from '../../lib/k8s/api/v2/ApiError';
+import { ApiResource } from '../../lib/k8s/api/v2/ApiResource';
 import { createMuiTheme } from '../../lib/themes';
 import { TestContext } from '../../test';
 import * as F from './__fixtures__/healthScenarios';
 import { LocalHealthCell } from './ProjectList';
 import { useLocalHealthItems } from './useLocalHealthItems';
+
+// Same resource shape useKubeLists.ts actually returns per failed kind.
+const PODS_RESOURCE: ApiResource = {
+  apiVersion: 'v1',
+  version: 'v1',
+  pluralName: 'pods',
+  singularName: 'pod',
+  kind: 'Pod',
+  isNamespaced: true,
+};
 
 // cyclic imports fix — same trick ProjectList.test.tsx uses.
 // eslint-disable-next-line no-unused-vars
@@ -69,6 +81,28 @@ function mountWith(items: any[]) {
       <ThemeProvider theme={createMuiTheme('light')}>
         <TestContext>
           <LocalHealthCell project={fakeProject} />
+        </TestContext>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+}
+
+// Mounts with the real { resource, errors: ApiError[] }[] shape useKubeLists.ts
+// produces, so the unavailable popover is exercised through its actual data path.
+function mountWithFetchErrors(apiErrors: ApiError[], onRank?: (id: string, rank: number) => void) {
+  (useLocalHealthItems as any).mockReturnValue({
+    items: [],
+    isLoading: false,
+    errors: [{ resource: PODS_RESOURCE, errors: apiErrors }],
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <ThemeProvider theme={createMuiTheme({ name: 'light', base: 'light' })}>
+        <TestContext>
+          <LocalHealthCell project={fakeProject} onRank={onRank} />
         </TestContext>
       </ThemeProvider>
     </QueryClientProvider>
@@ -133,5 +167,101 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     // Real stats appear — the fixture has one Deployment 3/3 ready.
     expect(screen.getByText(/1 Deployment/i)).toBeInTheDocument();
     expect(screen.getByText(/3\/3 ready/)).toBeInTheDocument();
+  });
+
+  describe('unavailable popover — truthful wording regression', () => {
+    it('HTTP 401: shows neutral summary + code + reported error, no cluster row, no old wording', async () => {
+      const u = userEvent.setup();
+      mountWithFetchErrors([new ApiError('Authentication required', { status: 401 })]);
+      expect(screen.getByText('Unavailable')).toBeInTheDocument();
+      await u.click(screen.getByRole('button', { name: /Unavailable/i }));
+
+      expect(
+        await screen.findByText('Application health could not be determined.')
+      ).toBeInTheDocument();
+      expect(screen.getByText('401')).toBeInTheDocument();
+      expect(screen.getByText('Authentication required')).toBeInTheDocument();
+      expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
+      expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Retry when connectivity is restored/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Reachable/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Not reachable/i)).not.toBeInTheDocument();
+    });
+
+    it('HTTP 403: shows neutral summary + code + reported error, no cluster row / old caption', async () => {
+      const u = userEvent.setup();
+      mountWithFetchErrors([new ApiError('Access denied', { status: 403 })]);
+      await u.click(screen.getByRole('button', { name: /Unavailable/i }));
+
+      expect(
+        await screen.findByText('Application health could not be determined.')
+      ).toBeInTheDocument();
+      expect(screen.getByText('403')).toBeInTheDocument();
+      expect(screen.getByText('Access denied')).toBeInTheDocument();
+      expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
+      expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument();
+    });
+
+    it('HTTP 5xx: shows neutral summary + raw code + reported error, no reachability conclusion', async () => {
+      const u = userEvent.setup();
+      mountWithFetchErrors([new ApiError('Bad Gateway', { status: 502 })]);
+      await u.click(screen.getByRole('button', { name: /Unavailable/i }));
+
+      expect(
+        await screen.findByText('Application health could not be determined.')
+      ).toBeInTheDocument();
+      expect(screen.getByText('502')).toBeInTheDocument();
+      expect(screen.getByText('Bad Gateway')).toBeInTheDocument();
+      expect(screen.queryByText(/Reachable/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Not reachable/i)).not.toBeInTheDocument();
+    });
+
+    it('no HTTP code: shows neutral summary + reported error, HTTP code and Cluster rows absent', async () => {
+      const u = userEvent.setup();
+      mountWithFetchErrors([new ApiError('Failed to fetch')]);
+      await u.click(screen.getByRole('button', { name: /Unavailable/i }));
+
+      expect(
+        await screen.findByText('Application health could not be determined.')
+      ).toBeInTheDocument();
+      expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
+      expect(screen.queryByText('HTTP code')).not.toBeInTheDocument();
+      expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
+    });
+
+    it('no HTTP code and no message: shows only the neutral summary, no blank detail rows', async () => {
+      const u = userEvent.setup();
+      mountWithFetchErrors([new ApiError('')]);
+      await u.click(screen.getByRole('button', { name: /Unavailable/i }));
+
+      expect(
+        await screen.findByText('Application health could not be determined.')
+      ).toBeInTheDocument();
+      expect(screen.queryByText('HTTP code')).not.toBeInTheDocument();
+      expect(screen.queryByText('Reported error')).not.toBeInTheDocument();
+      expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
+    });
+
+    it('regression: badge stays "Unavailable", rank is reported, popover opens and closes', async () => {
+      const u = userEvent.setup();
+      const onRank = vi.fn();
+      mountWithFetchErrors([new ApiError('Bad Gateway', { status: 502 })], onRank);
+
+      expect(screen.getByText('Unavailable')).toBeInTheDocument();
+      await waitFor(() => expect(onRank).toHaveBeenCalledWith('demo', 5));
+
+      const trigger = screen.getByRole('button', { name: /Unavailable/i });
+      await u.click(trigger);
+      expect(
+        await screen.findByText('Application health could not be determined.')
+      ).toBeInTheDocument();
+
+      await u.click(screen.getByRole('button', { name: 'Close' }));
+      await waitFor(() =>
+        expect(
+          screen.queryByText('Application health could not be determined.')
+        ).not.toBeInTheDocument()
+      );
+    });
   });
 });

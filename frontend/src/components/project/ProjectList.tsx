@@ -371,14 +371,9 @@ function UnavailableBody({
 }) {
   return (
     <>
-      <DetailRow
-        label={t('Cluster')}
-        value={
-          <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-            {health.cluster ?? '—'}
-          </Typography>
-        }
-      />
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        {t('Application health could not be determined.')}
+      </Typography>
       {health.httpCode !== undefined && (
         <DetailRow
           label={t('HTTP code')}
@@ -399,11 +394,6 @@ function UnavailableBody({
           }
         />
       )}
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-        {t(
-          'The cluster API server could not be reached, so the application’s real health is unknown. Retry when connectivity is restored.'
-        )}
-      </Typography>
     </>
   );
 }
