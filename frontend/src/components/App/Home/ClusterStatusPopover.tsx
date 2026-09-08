@@ -121,7 +121,7 @@ export default function ClusterStatusPopover({
 
   return (
     <>
-      <LightTooltip title={t('translation|Click to see why')}>
+      <LightTooltip title={t('translation|Click to see')}>
         <Box
           component="button"
           type="button"

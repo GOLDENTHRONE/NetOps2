@@ -191,6 +191,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
 
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const open = Boolean(anchor);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const closePopover = useCallback(() => setAnchor(null), []);
   const openPopover = useCallback(
     (e: React.MouseEvent<HTMLElement>) => setAnchor(e.currentTarget),
@@ -201,8 +202,6 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
     return <span>{t('No Resources')}</span>;
   }
 
-  const errors = health.evidence.filter(e => e.severity === 'error');
-  const warnings = health.evidence.filter(e => e.severity === 'warning');
   const isNewState = health.status === 'progressing' || health.status === 'unknown';
   const totalItems = items?.length ?? 0;
   const color = statusColor(theme, health.status);
@@ -218,12 +217,12 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
       : 'error';
   return (
     <>
-      <Tooltip title={t('Click to see why')}>
+      <Tooltip title={t('Click to see')}>
         <Box
           component="button"
           type="button"
           aria-haspopup="dialog"
-          aria-label={`${t(health.label)} — ${t('Click to see why')}`}
+          aria-label={`${t(health.label)} — ${t('Click to see')}`}
           onClick={openPopover}
           sx={{
             background: 'none',
@@ -274,9 +273,16 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
       >
         <Box px={2} pt={1.5} pb={1.25} display="flex" alignItems="center" gap={1}>
           <Icon icon={health.icon} width={20} color={color} />
-          <Typography variant="subtitle1" sx={{ color, fontWeight: 700, flexGrow: 1 }}>
-            {t(health.label)}
-          </Typography>
+          <Box sx={{ flexGrow: 1 }}>
+            <Typography variant="subtitle1" sx={{ color, fontWeight: 700 }}>
+              {t(health.label)}
+            </Typography>
+            {health.details.length > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                {t('{{count}} issue(s) found', { count: health.details.length })}
+              </Typography>
+            )}
+          </Box>
           <IconButton size="small" aria-label={t('Close')} onClick={closePopover}>
             <Icon icon="mdi:close" width={16} />
           </IconButton>
@@ -290,64 +296,38 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                 {t('No workloads are running here, so health cannot be determined.')}
               </Typography>
-              <StatsSection stats={health.stats} t={t} />
+              <InventorySection
+                stats={health.stats}
+                t={t}
+                totalItems={totalItems}
+                open={inventoryOpen}
+                onToggle={() => setInventoryOpen(value => !value)}
+              />
             </>
           ) : (
             <>
-              {errors.length > 0 && (
-                <EvidenceSection title={t('Errors')} color={color} evidence={errors} />
-              )}
-              {warnings.length > 0 && (
-                <>
-                  {errors.length > 0 && <Divider sx={{ my: 1 }} />}
-                  <EvidenceSection
-                    title={t('Warnings')}
-                    color={theme.palette.warning.main}
-                    evidence={warnings}
-                  />
-                </>
-              )}
-              {health.progressing.length > 0 && (
-                <>
-                  {(errors.length > 0 || warnings.length > 0) && <Divider sx={{ my: 1 }} />}
-                  <EvidenceSection
-                    title={t('Progressing')}
-                    color={theme.palette.info.main}
-                    evidence={health.progressing}
-                  />
-                </>
-              )}
-              {health.unknownItems.length > 0 && (
-                <>
-                  {(errors.length > 0 || warnings.length > 0 || health.progressing.length > 0) && (
-                    <Divider sx={{ my: 1 }} />
-                  )}
-                  <EvidenceSection
-                    title={t('Unknown / Updating')}
-                    color={theme.palette.text.secondary}
-                    evidence={health.unknownItems}
-                  />
-                </>
+              {health.details.length > 0 && (
+                <EvidenceSection title={t('Details')} evidence={health.details} showDetails />
               )}
               {health.needsAttention.length > 0 && (
                 <>
-                  {(errors.length > 0 ||
-                    warnings.length > 0 ||
-                    health.progressing.length > 0 ||
-                    health.unknownItems.length > 0) && <Divider sx={{ my: 1 }} />}
+                  {health.details.length > 0 && <Divider sx={{ my: 1 }} />}
                   <EvidenceSection
-                    title={t('Needs Attention')}
-                    color={theme.palette.text.secondary}
+                    title={`${t('Needs Attention')} ${t('(does not affect status)')}`}
                     evidence={health.needsAttention}
                   />
                 </>
               )}
-              {(errors.length > 0 ||
-                warnings.length > 0 ||
-                health.progressing.length > 0 ||
-                health.unknownItems.length > 0 ||
-                health.needsAttention.length > 0) && <Divider sx={{ my: 1 }} />}
-              <StatsSection stats={health.stats} t={t} totalItems={totalItems} />
+              {(health.details.length > 0 || health.needsAttention.length > 0) && (
+                <Divider sx={{ my: 1 }} />
+              )}
+              <InventorySection
+                stats={health.stats}
+                t={t}
+                totalItems={totalItems}
+                open={inventoryOpen}
+                onToggle={() => setInventoryOpen(value => !value)}
+              />
             </>
           )}
         </Box>
@@ -419,10 +399,25 @@ const KIND_TO_ROUTE: Record<string, string> = {
 };
 
 function EvidenceRow({ evidence }: { evidence: LocalHealthEvidence }) {
+  const theme = useTheme();
   const label = `${evidence.kind}/${evidence.namespace || '-'}/${evidence.name}`;
   const routeName = KIND_TO_ROUTE[evidence.kind];
   const cluster = (evidence.object as any)?.cluster;
   const canLink = Boolean(routeName && evidence.name);
+  const categoryIcon =
+    evidence.category === 'workload'
+      ? 'mdi:cog-outline'
+      : evidence.category === 'reachability'
+      ? 'mdi:lan-connect'
+      : undefined;
+  const severityColor =
+    evidence.severity === 'error'
+      ? theme.palette.error.main
+      : evidence.severity === 'warning'
+      ? theme.palette.warning.main
+      : evidence.severity === 'progressing'
+      ? theme.palette.info.main
+      : theme.palette.text.secondary;
 
   const primary = canLink ? (
     <Link
@@ -444,19 +439,68 @@ function EvidenceRow({ evidence }: { evidence: LocalHealthEvidence }) {
   );
 
   return (
-    <Box component="li" sx={{ py: 0.35, lineHeight: 1.4 }}>
-      {primary}
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-        {evidence.message}
-      </Typography>
+    <Box component="li" sx={{ py: 0.35, lineHeight: 1.4, listStyle: 'none' }}>
+      <Box display="flex" alignItems="baseline" gap={0.75}>
+        {categoryIcon && <Icon icon={categoryIcon} width={14} color={severityColor} />}
+        <Box>
+          {primary}
+          <Typography variant="caption" sx={{ display: 'block', color: severityColor }}>
+            {evidence.message}
+          </Typography>
+        </Box>
+      </Box>
     </Box>
+  );
+}
+
+function InventorySection({
+  stats,
+  totalItems,
+  t,
+  open,
+  onToggle,
+}: {
+  stats: LocalHealthStat[];
+  totalItems: number;
+  t: (k: string, opts?: any) => string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (!stats || stats.length === 0) return null;
+
+  return (
+    <>
+      <Box
+        component="button"
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.5,
+          width: '100%',
+          p: 0,
+          border: 0,
+          background: 'none',
+          color: 'text.secondary',
+          cursor: 'pointer',
+          textAlign: 'left',
+          font: 'inherit',
+        }}
+      >
+        <Icon icon={open ? 'mdi:chevron-down' : 'mdi:chevron-right'} width={18} />
+        <Typography variant="overline" sx={{ fontWeight: 700, lineHeight: 1.6 }}>
+          {t('Inventory ({{count}} resources)', { count: totalItems })}
+        </Typography>
+      </Box>
+      {open && <StatsSection stats={stats} t={t} />}
+    </>
   );
 }
 
 function StatsSection({
   stats,
-  totalItems,
-  t,
 }: {
   stats: LocalHealthStat[];
   totalItems?: number;
@@ -480,19 +524,6 @@ function StatsSection({
 
   return (
     <>
-      <Typography
-        variant="overline"
-        sx={{
-          color: theme.palette.text.secondary,
-          fontWeight: 700,
-          display: 'block',
-          lineHeight: 1.6,
-        }}
-      >
-        {totalItems !== undefined
-          ? t('Inventory ({{count}} resources)', { count: totalItems })
-          : t('Inventory')}
-      </Typography>
       <Box
         component="table"
         sx={{
@@ -527,24 +558,24 @@ function StatsSection({
 
 function EvidenceSection({
   title,
-  color,
   evidence,
+  showDetails = false,
 }: {
   title: string;
-  color: string;
   evidence: LocalHealthEvidence[];
+  showDetails?: boolean;
 }) {
   return (
     <>
-      <Typography
-        variant="overline"
-        sx={{ color, fontWeight: 700, display: 'block', lineHeight: 1.6 }}
-      >
+      <Typography variant="overline" sx={{ fontWeight: 700, display: 'block', lineHeight: 1.6 }}>
         {title}
       </Typography>
       <Box component="ul" sx={{ pl: 2, m: 0 }}>
         {evidence.map((e, i) => (
-          <EvidenceRow key={`${e.kind}/${e.namespace}/${e.name}/${i}`} evidence={e} />
+          <EvidenceRow
+            key={`${e.kind}/${e.namespace}/${e.name}/${i}`}
+            evidence={showDetails ? e : { ...e, severity: 'info' }}
+          />
         ))}
       </Box>
     </>

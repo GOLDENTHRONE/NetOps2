@@ -106,6 +106,114 @@ describe('getLocalHealth — fake cluster simulator', () => {
     expect(h.evidence[h.evidence.length - 1].severity).toBe('warning');
   });
 
+  it('merges details worst-first and tags workload versus reachability', () => {
+    const h = getLocalHealth([
+      podRaw('error-pod', {
+        phase: 'Running',
+        conditions: [{ type: 'Ready', status: 'False', reason: 'NotReady' }],
+        containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }],
+      }),
+      deploymentRaw(
+        'warning-deployment',
+        { replicas: 2 },
+        { replicas: 2, readyReplicas: 1, updatedReplicas: 2 }
+      ),
+      {
+        kind: 'Service',
+        metadata: { name: 'api', namespace: 'demo' },
+        spec: { selector: { app: 'api' } },
+      },
+      deploymentRaw(
+        'api',
+        { replicas: 1, template: { metadata: { labels: { app: 'api' } } } },
+        { replicas: 1, readyReplicas: 1, updatedReplicas: 1 }
+      ),
+      endpointsRaw('api', [{ notReadyAddresses: [{ ip: '10.0.0.1' }] }]),
+      deploymentRaw(
+        'progressing-deployment',
+        { replicas: 2 },
+        { replicas: 2, readyReplicas: 1, updatedReplicas: 1 }
+      ),
+      podRaw('unknown-pod', { phase: 'Unknown' }),
+    ]);
+
+    expect(h.details).toHaveLength(5);
+    expect(h.details.map(item => item.severity)).toEqual([
+      'error',
+      'warning',
+      'warning',
+      'progressing',
+      'unknown',
+    ]);
+    expect(h.details[0]).toMatchObject({ kind: 'Pod', category: 'workload' });
+    expect(h.details[1]).toMatchObject({ kind: 'Deployment', category: 'workload' });
+    expect(h.details[2]).toMatchObject({ kind: 'Endpoints', category: 'reachability' });
+    expect(h.details[3]).toMatchObject({ kind: 'Deployment', category: 'workload' });
+    expect(h.details[4]).toMatchObject({ kind: 'Pod', category: 'workload' });
+  });
+
+  it('healthy app has no details', () => {
+    const h = getLocalHealth(F.allHealthySingleCluster.items);
+    expect(h.details).toEqual([]);
+  });
+
+  it('needs-attention-only Job stays outside details with no category', () => {
+    const h = getLocalHealth([
+      jobRaw(
+        'failed-job',
+        { backoffLimit: 1 },
+        { conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }] }
+      ),
+    ]);
+
+    expect(h.details).toEqual([]);
+    expect(h.needsAttention).toHaveLength(1);
+    expect(h.needsAttention[0]).toMatchObject({ kind: 'Job', severity: 'error' });
+    expect(h.needsAttention[0]?.category).toBeUndefined();
+  });
+
+  it('keeps evidence, progressing, and unknownItems additive and unchanged', () => {
+    const h = getLocalHealth([
+      podRaw('error-pod', {
+        phase: 'Failed',
+        reason: 'Evicted',
+      }),
+      deploymentRaw(
+        'warning-deployment',
+        { replicas: 2 },
+        { replicas: 2, readyReplicas: 1, updatedReplicas: 2 }
+      ),
+      deploymentRaw(
+        'progressing-deployment',
+        { replicas: 2 },
+        { replicas: 2, readyReplicas: 1, updatedReplicas: 1 }
+      ),
+      podRaw('unknown-pod', { phase: 'Unknown' }),
+    ]);
+
+    expect(
+      h.evidence.map(({ severity, kind, name, message }) => ({ severity, kind, name, message }))
+    ).toEqual([
+      { severity: 'error', kind: 'Pod', name: 'error-pod', message: 'Evicted' },
+      { severity: 'warning', kind: 'Deployment', name: 'warning-deployment', message: '1/2 ready' },
+    ]);
+    expect(
+      h.progressing.map(({ severity, kind, name, message }) => ({ severity, kind, name, message }))
+    ).toEqual([
+      {
+        severity: 'progressing',
+        kind: 'Deployment',
+        name: 'progressing-deployment',
+        message: 'Rolling out 1/2',
+      },
+    ]);
+    expect(
+      h.unknownItems.map(({ severity, kind, name, message }) => ({ severity, kind, name, message }))
+    ).toEqual([
+      { severity: 'unknown', kind: 'Pod', name: 'unknown-pod', message: 'Pod phase Unknown' },
+    ]);
+  });
+
   it('non-regression: wnv7a0vbgw0013c-style still reports Healthy', () => {
     const h = getLocalHealth(F.wnv7a0vbgw0013cStyle.items);
     expect(h.status).toBe('success');

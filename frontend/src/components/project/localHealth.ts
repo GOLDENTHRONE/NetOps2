@@ -42,6 +42,7 @@ export type LocalHealthBadge =
 
 export interface LocalHealthEvidence {
   severity: 'error' | 'warning' | 'progressing' | 'info' | 'unknown';
+  category?: 'workload' | 'reachability';
   kind: string;
   namespace: string;
   name: string;
@@ -81,6 +82,7 @@ export interface LocalHealthResult {
   evidence: LocalHealthEvidence[];
   progressing: LocalHealthEvidence[];
   unknownItems: LocalHealthEvidence[];
+  details: LocalHealthEvidence[];
   /** Breakdown of the observed resource inventory, per kind, in a fixed
    *  reading order. Empty when the badge is 'unavailable' or 'empty'. */
   stats: LocalHealthStat[];
@@ -120,13 +122,34 @@ const WORKLOAD_KINDS = new Set([
 // app badge or rank.
 const NON_HEALTH_BEARING_KINDS = new Set(['Job', 'CronJob', 'HorizontalPodAutoscaler']);
 
+const SEVERITY_ORDER = { error: 0, warning: 1, progressing: 2, unknown: 3, info: 4 };
+
+function evidenceCategory(kind: string): LocalHealthEvidence['category'] {
+  if (
+    [
+      'Pod',
+      'Deployment',
+      'ReplicaSet',
+      'StatefulSet',
+      'DaemonSet',
+      'PersistentVolumeClaim',
+    ].includes(kind)
+  ) {
+    return 'workload';
+  }
+  if (['Endpoints', 'Ingress'].includes(kind)) return 'reachability';
+  return undefined;
+}
+
 export interface ItemVerdict {
   severity: LocalHealthSeverity;
   message?: string;
 }
 
 function get(o: KubeObject, path: string): any {
-  return path.split('.').reduce<any>((v, k) => (v == null ? v : v[k]), o as any);
+  return path
+    .split('.')
+    .reduce<any>((v, k) => (v === null || v === undefined ? v : v[k]), o as any);
 }
 
 function isDeploymentOwnedReplicaSet(o: KubeObject): boolean {
@@ -1032,6 +1055,7 @@ export interface LocalHealthUnavailability {
   icon: string;
   reasons: string[];
   evidence: [];
+  details: [];
   stats: [];
   needsAttention: [];
   /** First cluster whose fetch failed, if known. */
@@ -1060,6 +1084,7 @@ export function getUnavailableHealth(details: {
     evidence: [],
     progressing: [],
     unknownItems: [],
+    details: [],
     stats: [],
     needsAttention: [],
     cluster: details.cluster,
@@ -1079,6 +1104,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       evidence: [],
       progressing: [],
       unknownItems: [],
+      details: [],
       stats: [],
       needsAttention: [],
     };
@@ -1128,6 +1154,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     if ((verdict.severity === 'error' || verdict.severity === 'warning') && verdict.message) {
       evidence.push({
         severity: verdict.severity,
+        category: evidenceCategory(item.kind),
         kind: item.kind,
         namespace: meta.namespace ?? '',
         name: meta.name ?? '',
@@ -1138,6 +1165,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     if (verdict.severity === 'progressing' && verdict.message) {
       progressing.push({
         severity: verdict.severity,
+        category: evidenceCategory(item.kind),
         kind: item.kind,
         namespace: meta.namespace ?? '',
         name: meta.name ?? '',
@@ -1148,6 +1176,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     if (verdict.severity === 'unknown' && verdict.message) {
       unknownItems.push({
         severity: verdict.severity,
+        category: evidenceCategory(item.kind),
         kind: item.kind,
         namespace: meta.namespace ?? '',
         name: meta.name ?? '',
@@ -1177,6 +1206,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       evidence: [],
       progressing: [],
       unknownItems: [],
+      details: [],
       stats,
       needsAttention,
     };
@@ -1188,6 +1218,10 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     if (a.severity === b.severity) return 0;
     return a.severity === 'error' ? -1 : 1;
   });
+
+  const details = [...evidence, ...progressing, ...unknownItems].sort(
+    (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]
+  );
 
   const reasons = evidence.map(e => `${e.kind}/${e.namespace}/${e.name}: ${e.message}`);
   const cappedReasons = reasons.slice(0, REASON_CAP);
@@ -1205,6 +1239,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       evidence,
       progressing,
       unknownItems,
+      details,
       stats,
       needsAttention,
     };
@@ -1219,6 +1254,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       evidence,
       progressing,
       unknownItems,
+      details,
       stats,
       needsAttention,
     };
@@ -1233,6 +1269,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       evidence: [],
       progressing,
       unknownItems,
+      details,
       stats,
       needsAttention,
     };
@@ -1247,6 +1284,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
       evidence: [],
       progressing,
       unknownItems,
+      details,
       stats,
       needsAttention,
     };
@@ -1260,6 +1298,7 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     evidence: [],
     progressing,
     unknownItems,
+    details,
     stats,
     needsAttention,
   };

@@ -137,7 +137,7 @@ export const StatusLabel = forwardRef<HTMLSpanElement, StatusLabelProps>((props,
         whiteSpace: 'nowrap',
         alignItems: 'normal',
         gap: theme.spacing(0.5),
-        borderRadius: theme.shape.borderRadius + 'px',
+        borderRadius: '18px',
         ...sx,
       }}
       className={className}

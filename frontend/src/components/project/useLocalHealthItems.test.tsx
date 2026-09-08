@@ -130,12 +130,12 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     expect(screen.getByText('Unhealthy')).toBeInTheDocument();
   });
 
-  it('shows tooltip prompt "Click to see why" on hover', async () => {
+  it('shows tooltip prompt "Click to see" on hover', async () => {
     const u = userEvent.setup();
     mountWith(F.podCrashLoopBackOff.items);
     const trigger = screen.getByRole('button', { name: /Unhealthy/i });
     await u.hover(trigger);
-    await waitFor(() => expect(screen.getByText('Click to see why')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Click to see')).toBeInTheDocument());
   });
 
   it('opens popover on click and lists CrashLoopBackOff evidence', async () => {
@@ -147,24 +147,25 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     expect(screen.getByText(/Pod\/demo\/crasher/)).toBeInTheDocument();
   });
 
-  it('groups errors above warnings in the popover', async () => {
+  it('groups health issues in the Details section', async () => {
     const u = userEvent.setup();
     mountWith([...F.deployment2Of3Ready.items, ...F.podFailed.items]);
     await u.click(screen.getByRole('button', { name: /Unhealthy/i }));
-    const errorsHeading = await screen.findByText('Errors');
-    const warningsHeading = await screen.findByText('Warnings');
-    expect(errorsHeading.compareDocumentPosition(warningsHeading)).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(await screen.findByText('Details')).toBeInTheDocument();
+    expect(screen.queryByText('Errors')).not.toBeInTheDocument();
+    expect(screen.queryByText('Warnings')).not.toBeInTheDocument();
   });
 
-  it('popover on a Healthy row shows the resource inventory / stats', async () => {
+  it('popover on a Healthy row collapses Inventory by default and expands on click', async () => {
     const u = userEvent.setup();
     mountWith(F.allHealthySingleCluster.items);
     await u.click(screen.getByRole('button', { name: /Healthy/i }));
-    // Inventory heading is present
-    expect(await screen.findByText(/Inventory/i)).toBeInTheDocument();
-    // Real stats appear — the fixture has one Deployment 3/3 ready.
+    const inventoryToggle = await screen.findByRole('button', { name: /Inventory/i });
+    expect(inventoryToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText(/3\/3 ready/)).not.toBeInTheDocument();
+
+    await u.click(inventoryToggle);
+    expect(inventoryToggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(/1 Deployment/i)).toBeInTheDocument();
     expect(screen.getByText(/3\/3 ready/)).toBeInTheDocument();
   });

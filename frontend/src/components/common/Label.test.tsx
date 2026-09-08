@@ -18,7 +18,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { timeAgo } from '../../lib/util';
 import { TestContext } from '../../test';
-import { DateLabel } from './Label';
+import { DateLabel, StatusLabel } from './Label';
 
 vi.mock('../../lib/util', async importOriginal => {
   const actual = await importOriginal<typeof import('../../lib/util')>();
@@ -51,5 +51,17 @@ describe('DateLabel', () => {
     expect(screen.getByText(`time ago for ${secondDate}`)).toBeInTheDocument();
     expect(screen.queryByText(`time ago for ${firstDate}`)).not.toBeInTheDocument();
     expect(timeAgo).toHaveBeenLastCalledWith(secondDate, { format: 'brief' });
+  });
+});
+
+describe('StatusLabel', () => {
+  it('uses the shared pill radius', () => {
+    render(
+      <TestContext>
+        <StatusLabel status="success">Healthy</StatusLabel>
+      </TestContext>
+    );
+
+    expect(screen.getByText('Healthy')).toHaveStyle({ borderRadius: '18px' });
   });
 });

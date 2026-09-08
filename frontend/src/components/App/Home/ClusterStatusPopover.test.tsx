@@ -53,7 +53,7 @@ function openPopover(error: ApiError | null | undefined, statusText: string) {
       <span>{statusText}</span>
     </ClusterStatusPopover>
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Click to see why' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Click to see' }));
 }
 
 describe('ClusterStatusPopover', () => {
