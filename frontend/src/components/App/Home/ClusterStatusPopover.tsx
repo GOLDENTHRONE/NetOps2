@@ -21,8 +21,9 @@ import IconButton from '@mui/material/IconButton';
 import Popover from '@mui/material/Popover';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { ClusterStatusTiming } from '../../../lib/k8s';
 import type { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import type { Cluster } from '../../../lib/k8s/cluster';
 import { LightTooltip } from '../../common/Tooltip';
@@ -71,10 +72,29 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function formatRelativeTime(t: Translate, timestamp: number, now: number) {
+  const diff = timestamp - now;
+  const diffSeconds = Math.trunc(diff / 1000);
+  const absSeconds = Math.abs(diffSeconds);
+  if (absSeconds === 0) {
+    return t('translation|just now');
+  }
+
+  const value = `${absSeconds}s`;
+
+  if (diffSeconds < 0) {
+    return t('translation|{{value}} ago').replace('{{value}}', value);
+  }
+
+  return t('translation|in {{value}}').replace('{{value}}', value);
+}
+
 export interface ClusterStatusPopoverProps {
   cluster: Cluster;
   /** Result of the last cluster version request: undefined while pending, null when it succeeded. */
   error?: ApiError | null;
+  /** Timing for the Kubernetes /version status check that drives the status cell. */
+  statusTiming?: ClusterStatusTiming;
   /** Status kind used to colour the header, matching the table cell. */
   statusKind: keyof typeof STATUS_VARIANTS;
   /** Status label shown in the table cell. */
@@ -90,6 +110,7 @@ export interface ClusterStatusPopoverProps {
 export default function ClusterStatusPopover({
   cluster,
   error,
+  statusTiming,
   statusKind,
   statusText,
   children,
@@ -98,6 +119,7 @@ export default function ClusterStatusPopover({
   const theme = useTheme();
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [copied, setCopied] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const variant = STATUS_VARIANTS[statusKind];
   const color = theme.palette.home.status[variant.colorKey];
@@ -109,6 +131,16 @@ export default function ClusterStatusPopover({
   // answered, but the row is still an error.
   const summaryColor = reachability === 'unknown' ? theme.palette.text.secondary : color;
 
+  useEffect(() => {
+    if (!anchorEl) {
+      return;
+    }
+
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [anchorEl]);
+
   function copyServer() {
     if (!server) {
       return;
@@ -118,6 +150,14 @@ export default function ClusterStatusPopover({
       window.setTimeout(() => setCopied(false), 1500);
     });
   }
+
+  const closePopover = () => {
+    // MUI restores focus to the trigger button on close, which keeps the row's
+    // `:focus-within` hover-tint stuck on until focus moves elsewhere. Blur it
+    // so the row goes back to its normal (unhovered) look.
+    anchorEl?.blur();
+    setAnchorEl(null);
+  };
 
   return (
     <>
@@ -145,7 +185,8 @@ export default function ClusterStatusPopover({
       <Popover
         open={Boolean(anchorEl)}
         anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
+        onClose={closePopover}
+        disableRestoreFocus
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{
@@ -167,11 +208,7 @@ export default function ClusterStatusPopover({
             <Typography variant="subtitle1" sx={{ color, fontWeight: 700, flexGrow: 1 }}>
               {statusText}
             </Typography>
-            <IconButton
-              size="small"
-              aria-label={t('translation|Close')}
-              onClick={() => setAnchorEl(null)}
-            >
+            <IconButton size="small" aria-label={t('translation|Close')} onClick={closePopover}>
               <Icon icon="mdi:close" width={16} />
             </IconButton>
           </Box>
@@ -246,6 +283,40 @@ export default function ClusterStatusPopover({
               }
             />
           )}
+          <DetailRow
+            label={t('translation|Status checked')}
+            value={
+              <Typography variant="body2" color="text.secondary">
+                {statusTiming?.lastStatusCheckAt
+                  ? formatRelativeTime(t, statusTiming.lastStatusCheckAt, now)
+                  : t('translation|Checking…')}
+              </Typography>
+            }
+          />
+          {statusTiming?.lastStatusCheckAt && statusTiming.isFetching && (
+            <DetailRow
+              label={t('translation|Status check')}
+              value={
+                <Typography variant="body2" color="text.secondary">
+                  {t('translation|Checking now…')}
+                </Typography>
+              }
+            />
+          )}
+          {statusTiming?.lastStatusCheckAt &&
+            !statusTiming.isFetching &&
+            statusTiming.nextStatusCheckAt && (
+              <DetailRow
+                label={t('translation|Next status check')}
+                value={
+                  <Typography variant="body2" color="text.secondary">
+                    {statusTiming.nextStatusCheckAt <= now
+                      ? t('translation|due now')
+                      : '~' + formatRelativeTime(t, statusTiming.nextStatusCheckAt, now)}
+                  </Typography>
+                }
+              />
+            )}
         </Box>
       </Popover>
     </>

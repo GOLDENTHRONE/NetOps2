@@ -24,7 +24,7 @@ import { TestContext } from '../../../test';
 // auto-connects to. Home must only poll recently-used clusters, not all.
 vi.mock('../../../lib/k8s', () => ({
   useClustersConf: vi.fn(() => ({})),
-  useClustersVersion: vi.fn(() => [{}, {}]),
+  useClustersVersion: vi.fn(() => [{}, {}, {}]),
   useClustersOcpVersion: vi.fn(() => ({})),
 }));
 

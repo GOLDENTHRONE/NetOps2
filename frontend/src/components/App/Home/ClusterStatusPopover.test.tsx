@@ -56,7 +56,31 @@ function openPopover(error: ApiError | null | undefined, statusText: string) {
   fireEvent.click(screen.getByRole('button', { name: 'Click to see' }));
 }
 
+function openPopoverWithTiming(statusTiming: {
+  lastStatusCheckAt?: number;
+  nextStatusCheckAt?: number;
+  intervalMs: number;
+  isFetching: boolean;
+}) {
+  renderPopover(
+    <ClusterStatusPopover
+      cluster={cluster}
+      error={null}
+      statusTiming={statusTiming}
+      statusKind="active"
+      statusText="Active"
+    >
+      <span>Active</span>
+    </ClusterStatusPopover>
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Click to see' }));
+}
+
 describe('ClusterStatusPopover', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('shows the HTTP code and message for an authentication error', () => {
     openPopover(new ApiError('Unauthorized', { status: 401 }), 'Authentication required');
 
@@ -97,5 +121,119 @@ describe('ClusterStatusPopover', () => {
     expect(screen.getByText('https://api.example.com:6443')).toBeInTheDocument();
     // A successful request carries no status code, so the row is left out.
     expect(screen.queryByText('HTTP code')).not.toBeInTheDocument();
+  });
+
+  it('shows status timing when the status check has completed', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 8_000,
+      nextStatusCheckAt: 28_000,
+      intervalMs: 20_000,
+      isFetching: false,
+    });
+
+    expect(screen.getByText('Status checked')).toBeInTheDocument();
+    expect(screen.getByText('12s ago')).toBeInTheDocument();
+    expect(screen.getByText('Next status check')).toBeInTheDocument();
+    expect(screen.getByText('~in 8s')).toBeInTheDocument();
+  });
+
+  it('shows just now when the status check completed within the current second', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 19_900,
+      nextStatusCheckAt: 30_000,
+      intervalMs: 10_000,
+      isFetching: false,
+    });
+
+    expect(screen.getByText('just now')).toBeInTheDocument();
+    expect(screen.queryByText('in 0s')).not.toBeInTheDocument();
+    expect(screen.queryByText('-1s')).not.toBeInTheDocument();
+  });
+
+  it('shows just now when the completed status timestamp is slightly ahead of now', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 20_250,
+      nextStatusCheckAt: 30_250,
+      intervalMs: 10_000,
+      isFetching: false,
+    });
+
+    expect(screen.getByText('just now')).toBeInTheDocument();
+    expect(screen.queryByText('in 1s')).not.toBeInTheDocument();
+  });
+
+  it('does not overstate a ten-second next-check countdown due to captured-now skew', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 20_250,
+      nextStatusCheckAt: 30_250,
+      intervalMs: 10_000,
+      isFetching: false,
+    });
+
+    expect(screen.getByText('~in 10s')).toBeInTheDocument();
+    expect(screen.queryByText('~in 11s')).not.toBeInTheDocument();
+  });
+
+  it('shows checking and omits next check when status has never been checked', () => {
+    openPopoverWithTiming({ intervalMs: 10_000, isFetching: true });
+
+    expect(screen.getByText('Status checked')).toBeInTheDocument();
+    expect(screen.getByText('Checking…')).toBeInTheDocument();
+    expect(screen.queryByText('Next status check')).not.toBeInTheDocument();
+  });
+
+  it('shows due now when the estimated next status check is in the past', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 8_000,
+      nextStatusCheckAt: 19_000,
+      intervalMs: 10_000,
+      isFetching: false,
+    });
+
+    expect(screen.getByText('Next status check')).toBeInTheDocument();
+    expect(screen.getByText('due now')).toBeInTheDocument();
+  });
+
+  it('shows checking now instead of a future countdown while refetching', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 8_000,
+      nextStatusCheckAt: 28_000,
+      intervalMs: 20_000,
+      isFetching: true,
+    });
+
+    expect(screen.getByText('Status checked')).toBeInTheDocument();
+    expect(screen.getByText('12s ago')).toBeInTheDocument();
+    expect(screen.getByText('Status check')).toBeInTheDocument();
+    expect(screen.getByText('Checking now…')).toBeInTheDocument();
+    expect(screen.queryByText('Next status check')).not.toBeInTheDocument();
+    expect(screen.queryByText('~in 8s')).not.toBeInTheDocument();
+  });
+
+  it('shows checking now instead of due now while refetching', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(20_000);
+
+    openPopoverWithTiming({
+      lastStatusCheckAt: 8_000,
+      nextStatusCheckAt: 19_000,
+      intervalMs: 10_000,
+      isFetching: true,
+    });
+
+    expect(screen.getByText('Checking now…')).toBeInTheDocument();
+    expect(screen.queryByText('Next status check')).not.toBeInTheDocument();
+    expect(screen.queryByText('due now')).not.toBeInTheDocument();
   });
 });

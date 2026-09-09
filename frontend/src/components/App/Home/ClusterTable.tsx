@@ -73,11 +73,13 @@ import RegisteredClusterEmptyState from './RegisteredClusterEmptyState';
 function ClusterStatus({
   error,
   cluster,
+  statusTiming,
   isConnected,
   onConnect,
 }: {
   error?: ApiError | null;
   cluster: Cluster;
+  statusTiming?: ReturnType<typeof useClustersVersion>[2][string];
   /** Whether the cluster is in the auto-connect set (i.e. being polled). */
   isConnected: boolean;
   /** Connect to the cluster on demand so its status is loaded. */
@@ -126,6 +128,7 @@ function ClusterStatus({
       <ClusterStatusPopover
         cluster={cluster}
         error={error}
+        statusTiming={statusTiming}
         statusKind="unknown"
         statusText={t('translation|Connecting…')}
       >
@@ -158,7 +161,13 @@ function ClusterStatus({
   );
 
   return (
-    <ClusterStatusPopover cluster={cluster} error={error} statusKind={kind} statusText={text}>
+    <ClusterStatusPopover
+      cluster={cluster}
+      error={error}
+      statusTiming={statusTiming}
+      statusKind={kind}
+      statusText={text}
+    >
       {statusContent}
     </ClusterStatusPopover>
   );
@@ -173,6 +182,8 @@ export interface ClusterTableProps {
   ocpVersions?: ReturnType<typeof useClustersOcpVersion>;
   /** Errors for each cluster. */
   errors: ReturnType<typeof useClustersVersion>[1];
+  /** Status check timing for each cluster. */
+  statusTiming?: ReturnType<typeof useClustersVersion>[2];
   /** Clusters configuration. */
   clusters: ReturnType<typeof useClustersConf>;
   /** Warnings for each cluster. */
@@ -196,6 +207,7 @@ export default function ClusterTable({
   versions,
   ocpVersions = {},
   errors,
+  statusTiming = {},
   clusters,
   warningLabels,
   connectedClusterNames,
@@ -206,6 +218,12 @@ export default function ClusterTable({
 
   const isClusterConnected = (clusterName: string) =>
     connectedClusterNames ? connectedClusterNames.has(clusterName) : true;
+
+  function getPlainStatusText(cluster: Cluster) {
+    return !isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined
+      ? t('translation|Not connected')
+      : getClusterStatusAccessor(cluster, errors[cluster?.name], t) ?? '';
+  }
 
   const [columnVisibility, setColumnVisibility] = useState<MRT_VisibilityState>(() => {
     const visibility: Record<string, boolean> = {};
@@ -371,13 +389,28 @@ export default function ClusterTable({
           accessorFn: cluster =>
             // When the cluster is not yet connected (no polling), the cell shows
             // "Not connected". Match the accessor so sorting/filtering is consistent.
-            !isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined
-              ? t('translation|Not connected')
-              : getClusterStatusAccessor(cluster, errors[cluster?.name], t),
+            `${getPlainStatusText(cluster)}|${
+              statusTiming[cluster.name]?.lastStatusCheckAt ?? ''
+            }|${statusTiming[cluster.name]?.isFetching ? 'fetching' : 'idle'}`,
+          sortingFn: (rowA, rowB) => {
+            const statusCompare = getPlainStatusText(rowA.original).localeCompare(
+              getPlainStatusText(rowB.original)
+            );
+            if (statusCompare !== 0) {
+              return statusCompare;
+            }
+
+            return rowA.original.name.localeCompare(rowB.original.name);
+          },
+          filterFn: (row, _columnId, filterValue) =>
+            getPlainStatusText(row.original)
+              .toLowerCase()
+              .includes(String(filterValue).toLowerCase()),
           Cell: ({ row: { original } }) => (
             <ClusterStatus
               error={errors[original.name]}
               cluster={original}
+              statusTiming={statusTiming[original.name]}
               isConnected={isClusterConnected(original.name)}
               onConnect={onConnectCluster ?? (() => {})}
             />

@@ -122,6 +122,10 @@ export default function ClusterContextMenu({
   }
 
   function handleMenuClose() {
+    // MUI restores focus to the trigger button on close, which keeps the row's
+    // `:focus-within` hover-tint stuck on until focus moves elsewhere. Blur it
+    // so the row goes back to its normal (unhovered) look.
+    anchorEl?.blur();
     setAnchorEl(null);
   }
 
@@ -144,6 +148,7 @@ export default function ClusterContextMenu({
         id={menuId}
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
+        disableRestoreFocus
         onClose={() => {
           handleMenuClose();
         }}

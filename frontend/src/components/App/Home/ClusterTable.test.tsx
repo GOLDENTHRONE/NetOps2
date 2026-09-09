@@ -95,7 +95,7 @@ vi.mock('../../common/Table', () => ({
               data-testid={`cluster-row-${cluster.name}`}
               data-status-accessor={statusColumn.accessorFn(cluster) ?? ''}
             >
-              <td>{originColumn.Cell({ row: { original: cluster } })}</td>
+              <td>{originColumn?.Cell({ row: { original: cluster } })}</td>
               <td>{statusColumn.Cell({ row: { original: cluster } })}</td>
             </tr>
           ))}
@@ -344,7 +344,7 @@ describe('ClusterTable', () => {
     expect(screen.getByText('Unavailable')).toBeInTheDocument();
     expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
       'data-status-accessor',
-      'Unavailable'
+      'Unavailable||idle'
     );
   });
 
@@ -372,8 +372,64 @@ describe('ClusterTable', () => {
     expect(screen.getByText('Insufficient permissions')).toBeInTheDocument();
     expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
       'data-status-accessor',
-      'Insufficient permissions'
+      'Insufficient permissions||idle'
     );
+  });
+
+  it('changes only the status accessor render identity when fetching changes', () => {
+    const cluster = { name: 'spoke-a', auth_type: '' } as Cluster;
+    const props = {
+      customNameClusters: [cluster],
+      clusters: { 'spoke-a': cluster },
+      versions: {},
+      errors: { 'spoke-a': null },
+      warningLabels: {},
+    };
+
+    const { rerender } = renderWithTheme(
+      <MemoryRouter>
+        <ClusterTable
+          {...props}
+          statusTiming={{
+            'spoke-a': {
+              lastStatusCheckAt: 10_000,
+              nextStatusCheckAt: 20_000,
+              intervalMs: 10_000,
+              isFetching: false,
+            },
+          }}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
+      'data-status-accessor',
+      'Active|10000|idle'
+    );
+
+    rerender(
+      <ThemeProvider theme={theme}>
+        <MemoryRouter>
+          <ClusterTable
+            {...props}
+            statusTiming={{
+              'spoke-a': {
+                lastStatusCheckAt: 10_000,
+                nextStatusCheckAt: 20_000,
+                intervalMs: 10_000,
+                isFetching: true,
+              },
+            }}
+          />
+        </MemoryRouter>
+      </ThemeProvider>
+    );
+
+    expect(screen.getByTestId('cluster-row-spoke-a')).toHaveAttribute(
+      'data-status-accessor',
+      'Active|10000|fetching'
+    );
+    expect(screen.getByText('Active')).toBeInTheDocument();
   });
 
   it('shows a Connect action for clusters that are not auto-connected', () => {

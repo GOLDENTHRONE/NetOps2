@@ -139,7 +139,7 @@ function HomeComponent(props: HomeComponentProps) {
     [clusters, connectedClusters]
   );
 
-  const [versions, errors] = useClustersVersion(autoConnectClusters);
+  const [versions, errors, statusTiming] = useClustersVersion(autoConnectClusters);
   const ocpVersions = useClustersOcpVersion(autoConnectClusters);
 
   const clusterNames = React.useMemo(
@@ -190,6 +190,7 @@ function HomeComponent(props: HomeComponentProps) {
           versions={versions}
           ocpVersions={ocpVersions}
           errors={errors}
+          statusTiming={statusTiming}
           warningLabels={warningLabels}
           clusters={clusters}
           connectedClusterNames={connectedClusters}
@@ -202,6 +203,7 @@ function HomeComponent(props: HomeComponentProps) {
       errors,
       versions,
       ocpVersions,
+      statusTiming,
       warningLabels,
       clusters,
       connectedClusters,

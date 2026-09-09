@@ -317,6 +317,13 @@ export const versionFetchInterval = 10000; // ms
 // versionFetchInterval forever.
 export const maxVersionFetchInterval = versionFetchInterval * 6;
 
+export interface ClusterStatusTiming {
+  lastStatusCheckAt?: number;
+  nextStatusCheckAt?: number;
+  intervalMs: number;
+  isFetching: boolean;
+}
+
 /**
  * Refetch interval for cluster version queries (K8s and OCP): polls at the normal
  * `versionFetchInterval` while healthy, and backs off exponentially (capped at
@@ -367,6 +374,9 @@ export function useClustersVersion(clusters: Cluster[]) {
   // can't be used for this). Updated synchronously by queryFn itself, so the next
   // refetchInterval computation always sees the latest count.
   const consecutiveFailuresRef = React.useRef<{ [clusterName: string]: number }>({});
+  // A refetch after a failed query temporarily has no current error. Keep the last
+  // settled result so its status and completion time remain available while fetching.
+  const lastStatusErrorsRef = React.useRef<{ [clusterName: string]: ApiError | null }>({});
 
   const queries = React.useMemo(
     () =>
@@ -393,27 +403,49 @@ export function useClustersVersion(clusters: Cluster[]) {
   );
 
   const results = useQueries({ queries });
+  const timingSignature = results
+    .map(r => `${r.dataUpdatedAt}:${r.errorUpdatedAt}:${r.fetchStatus}`)
+    .join('|');
 
   return React.useMemo<
-    [{ [clusterName: string]: StringDict }, { [clusterName: string]: VersionInfo['error'] }]
+    [
+      { [clusterName: string]: StringDict },
+      { [clusterName: string]: VersionInfo['error'] },
+      { [clusterName: string]: ClusterStatusTiming }
+    ]
   >(() => {
     const versionsInfo: { [clusterName: string]: StringDict } = {};
     const errorsInfo: { [clusterName: string]: VersionInfo['error'] } = {};
+    const timingInfo: { [clusterName: string]: ClusterStatusTiming } = {};
 
     clusterNames.forEach((clusterName, i) => {
-      const { data, error } = results[i];
+      const { data, dataUpdatedAt, error, errorUpdatedAt } = results[i];
       if (data) {
         versionsInfo[clusterName] = data;
       }
       // Only set the error key once the query has resolved. An absent key (undefined)
       // signals "still loading" to getClusterStatus; null means the cluster is active.
       if (!results[i].isPending) {
-        errorsInfo[clusterName] = (error as ApiError | null) ?? null;
+        lastStatusErrorsRef.current[clusterName] = (error as ApiError | null) ?? null;
       }
+      const lastStatusError = lastStatusErrorsRef.current[clusterName];
+      if (lastStatusError !== undefined) {
+        errorsInfo[clusterName] = lastStatusError;
+      }
+
+      const intervalMs = versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0);
+      const updated = Math.max(dataUpdatedAt, errorUpdatedAt);
+      const lastStatusCheckAt = updated > 0 ? updated : undefined;
+      timingInfo[clusterName] = {
+        lastStatusCheckAt,
+        nextStatusCheckAt: lastStatusCheckAt ? lastStatusCheckAt + intervalMs : undefined,
+        intervalMs,
+        isFetching: results[i].isFetching,
+      };
     });
 
-    return [versionsInfo, errorsInfo];
-  }, [clusterNames, results]);
+    return [versionsInfo, errorsInfo, timingInfo];
+  }, [clusterNames, timingSignature]);
 }
 
 /** Hook to get the OpenShift (OCP) ClusterVersion of the clusters given by the parameter.

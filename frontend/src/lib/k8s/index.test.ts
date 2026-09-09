@@ -270,6 +270,7 @@ describe('useClustersVersion', () => {
 
   test('returns versions and errors by cluster name', async () => {
     const request = vi.mocked(clusterRequest);
+    vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 0));
     request.mockImplementation((_path, params) => {
       if (params?.cluster === 'unavailable') {
         return Promise.reject(new Error('unavailable'));
@@ -284,6 +285,66 @@ describe('useClustersVersion', () => {
 
     expect(result.current[0]).toEqual({ available: { gitVersion: 'v1.32.0' } });
     expect(result.current[1].available).toBeNull();
+    expect(result.current[2].available.intervalMs).toBe(versionFetchInterval);
+    expect(result.current[2].available.lastStatusCheckAt).toBeGreaterThan(0);
+    expect(result.current[2].available.nextStatusCheckAt).toBe(
+      result.current[2].available.lastStatusCheckAt! + versionFetchInterval
+    );
+    expect(result.current[2].unavailable.intervalMs).toBe(20_000);
+    expect(result.current[2].unavailable.lastStatusCheckAt).toBeGreaterThan(0);
+    expect(result.current[2].unavailable.nextStatusCheckAt).toBe(
+      result.current[2].unavailable.lastStatusCheckAt! + 20_000
+    );
+  });
+
+  test('updates per-cluster timing while a version request is fetching', async () => {
+    let resolveRequest: (value: { gitVersion: string }) => void;
+    const request = vi.mocked(clusterRequest).mockImplementation(
+      () =>
+        new Promise<{ gitVersion: string }>(resolve => {
+          resolveRequest = resolve;
+        })
+    );
+
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(result.current[2].cluster.isFetching).toBe(true));
+    expect(result.current[2].cluster.lastStatusCheckAt).toBeUndefined();
+
+    await act(async () => resolveRequest!({ gitVersion: 'v1.32.0' }));
+    await vi.waitFor(() => expect(result.current[2].cluster.isFetching).toBe(false));
+    expect(result.current[2].cluster.intervalMs).toBe(versionFetchInterval);
+    expect(result.current[2].cluster.lastStatusCheckAt).toBeGreaterThan(0);
+  });
+
+  test('keeps a failed status and timing while its next request is fetching', async () => {
+    let rejectRequest: (reason?: Error) => void;
+    const request = vi.mocked(clusterRequest).mockImplementation(
+      () =>
+        new Promise<{ gitVersion: string }>((_resolve, reject) => {
+          rejectRequest = reject;
+        })
+    );
+    const queryKey = ['clusterVersion', 'cluster'];
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+    await act(async () => rejectRequest!(new Error('unavailable')));
+    await vi.waitFor(() => expect(result.current[1].cluster).toBeInstanceOf(Error));
+    const lastStatusCheckAt = result.current[2].cluster.lastStatusCheckAt;
+
+    void queryClient.refetchQueries({ queryKey });
+    await vi.waitFor(() => expect(result.current[2].cluster.isFetching).toBe(true));
+    expect(result.current[1].cluster).toBeInstanceOf(Error);
+    expect(result.current[2].cluster.lastStatusCheckAt).toBe(lastStatusCheckAt);
+
+    await act(async () => rejectRequest!(new Error('unavailable')));
+    await vi.waitFor(() => expect(result.current[2].cluster.isFetching).toBe(false));
   });
 
   test('pauses polling while hidden and refetches immediately when visible', async () => {
@@ -327,11 +388,17 @@ describe('useClustersVersion', () => {
 
     // Cluster recovers: version is displayed, error clears, and (per versionRefetchInterval,
     // tested in isolation below) polling would return to the normal cadence.
+    vi.setSystemTime(new Date(2026, 0, 1, 0, 0, 10));
     request.mockResolvedValue({ gitVersion: 'v1.32.0' });
     await act(() => queryClient.refetchQueries({ queryKey }));
     expect(request).toHaveBeenCalledTimes(5);
     await vi.waitFor(() => expect(result.current[0].cluster).toEqual({ gitVersion: 'v1.32.0' }));
     expect(result.current[1].cluster).toBeNull();
+    expect(result.current[2].cluster.intervalMs).toBe(versionFetchInterval);
+    expect(result.current[2].cluster.lastStatusCheckAt).toBeGreaterThan(0);
+    expect(result.current[2].cluster.nextStatusCheckAt).toBe(
+      result.current[2].cluster.lastStatusCheckAt! + versionFetchInterval
+    );
   });
 });
 
