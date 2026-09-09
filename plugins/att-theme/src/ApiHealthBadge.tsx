@@ -1,101 +1,77 @@
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
-import Divider from '@mui/material/Divider';
+import IconButton from '@mui/material/IconButton';
 import Popover from '@mui/material/Popover';
+import { useTheme } from '@mui/material/styles';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import React, { useEffect, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
+import React, { useState } from 'react';
 
-const THIS_PLUGIN = 'att-theme';
-const CHECK_INTERVAL_MS = 60000;
+export type ApiHealthStatus = 'healthy' | 'degraded' | 'down' | 'unknown' | 'checking';
 
-function relativeTime(from: number | null): string {
-  if (!from) {
-    return 'never';
-  }
-  const secs = Math.floor((Date.now() - from) / 1000);
-  if (secs < 5) {
-    return 'just now';
-  }
-  if (secs < 60) {
-    return `${secs}s ago`;
-  }
-  const mins = Math.floor(secs / 60);
-  return `${mins}m ago`;
+export interface ApiHealthMetaItem {
+  label: string;
+  value: string;
 }
 
-// Names of plugin packages that actually executed in the browser.
-function activePluginNames(): string[] {
-  const reg = (window as any).plugins;
-  return reg && typeof reg === 'object' ? Object.keys(reg) : [];
+export interface ApiHealth {
+  status: ApiHealthStatus;
+  label: string;
+  lastCheckedAt: string | null;
+  meta: ApiHealthMetaItem[];
 }
 
-export function ApiHealthBadge() {
-  const [anchorEl, setAnchorEl] = useState<HTMLDivElement | null>(null);
-  const [backendUp, setBackendUp] = useState<boolean>(false);
-  const [backendPluginCount, setBackendPluginCount] = useState<number | null>(null);
-  const [checkedAt, setCheckedAt] = useState<number | null>(null);
-  const [checking, setChecking] = useState<boolean>(false);
-  // Re-render every second so the "X ago" label stays truthful without any network call.
-  const [, forceTick] = useState(0);
-  const inFlight = useRef(false);
+const apiHealth: ApiHealth = {
+  status: 'unknown',
+  label: 'Under construction',
+  lastCheckedAt: null,
+  meta: [],
+};
 
-  // Real: plugins finished executing (Redux, no network).
-  const pluginsLoaded = useSelector((state: any) => Boolean(state.plugins?.loaded));
-  const activeNames = activePluginNames();
-  const thisPluginActive = activeNames.some(n => n.toLowerCase().includes(THIS_PLUGIN));
+const lightTokens = {
+  '--api-pill-bg': '#F4F6F8',
+  '--api-pill-text': '#344054',
+  '--api-popover-bg': '#FFFFFF',
+  '--api-popover-border': '#E5E7EB',
+  '--api-popover-shadow': '0 14px 34px rgba(15, 23, 42, 0.16)',
+  '--api-text': '#1F2937',
+  '--api-muted-text': '#8A94A6',
+  '--api-meta-bg': '#F3F4F6',
+  '--api-meta-label': '#9AA3B2',
+  '--api-meta-value': '#344054',
+  '--status-unknown': '#8C96A6',
+} as React.CSSProperties;
 
-  const checkHealth = async () => {
-    if (inFlight.current) {
-      return; // guard against overlapping calls (no extra burden)
-    }
-    inFlight.current = true;
-    setChecking(true);
-    try {
-      // /plugins is unauthenticated and returns the JSON list the backend serves.
-      const res = await fetch('/plugins', { method: 'GET' });
-      setBackendUp(res.ok);
-      if (res.ok) {
-        try {
-          const list = await res.json();
-          setBackendPluginCount(Array.isArray(list) ? list.length : null);
-        } catch {
-          setBackendPluginCount(null);
-        }
-      }
-      setCheckedAt(Date.now());
-    } catch {
-      setBackendUp(false);
-      setCheckedAt(Date.now());
-    } finally {
-      inFlight.current = false;
-      setChecking(false);
-    }
-  };
+const darkTokens = {
+  '--api-pill-bg': '#1F2933',
+  '--api-pill-text': '#D7DEE8',
+  '--api-popover-bg': '#121820',
+  '--api-popover-border': '#2E3742',
+  '--api-popover-shadow': '0 18px 42px rgba(0, 0, 0, 0.42)',
+  '--api-text': '#E5E7EB',
+  '--api-muted-text': '#9AA3B2',
+  '--api-meta-bg': '#202833',
+  '--api-meta-label': '#8C96A6',
+  '--api-meta-value': '#D7DEE8',
+  '--status-unknown': '#8C96A6',
+} as React.CSSProperties;
 
-  useEffect(() => {
-    checkHealth();
-    const interval = setInterval(checkHealth, CHECK_INTERVAL_MS);
-    const tick = setInterval(() => forceTick(t => t + 1), 1000);
-    return () => {
-      clearInterval(interval);
-      clearInterval(tick);
-    };
-  }, []);
-
-  // Overall health = backend reachable AND plugin system executed.
-  const isHealthy = backendUp && pluginsLoaded;
-
-  const handleClick = (event: React.MouseEvent<HTMLDivElement>) => setAnchorEl(event.currentTarget);
+export function ApiStatusIndicator() {
+  const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
+  const theme = useTheme();
+  const tokens = theme.palette.mode === 'dark' ? darkTokens : lightTokens;
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => setAnchorEl(event.currentTarget);
   const handleClose = () => setAnchorEl(null);
   const open = Boolean(anchorEl);
 
   return (
     <>
       <Box
+        component="button"
+        type="button"
         onClick={handleClick}
+        aria-label={`API status: ${apiHealth.label}`}
+        style={tokens}
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -104,10 +80,12 @@ export function ApiHealthBadge() {
           px: 1.5,
           py: 0.5,
           borderRadius: '16px',
-          backgroundColor: isHealthy ? 'rgba(76, 175, 80, 0.08)' : 'rgba(244, 67, 54, 0.08)',
+          border: 'none',
+          backgroundColor: 'var(--api-pill-bg)',
+          color: 'var(--api-pill-text)',
           cursor: 'pointer',
           '&:hover': {
-            backgroundColor: isHealthy ? 'rgba(76, 175, 80, 0.16)' : 'rgba(244, 67, 54, 0.16)',
+            filter: 'brightness(0.96)',
           },
         }}
       >
@@ -116,10 +94,10 @@ export function ApiHealthBadge() {
             width: 8,
             height: 8,
             borderRadius: '50%',
-            backgroundColor: isHealthy ? '#4caf50' : '#f44336',
+            backgroundColor: 'var(--status-unknown)',
           }}
         />
-        <Typography variant="caption" fontWeight={600} color="text.primary">
+        <Typography variant="caption" fontWeight={600}>
           API
         </Typography>
       </Box>
@@ -131,112 +109,41 @@ export function ApiHealthBadge() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         PaperProps={{
+          style: tokens,
           sx: {
-            p: 2.5,
-            width: 320,
-            borderRadius: '16px',
-            boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+            p: 2,
+            width: 360,
+            borderRadius: '12px',
+            backgroundColor: 'var(--api-popover-bg)',
+            borderColor: 'var(--api-popover-border)',
+            boxShadow: 'var(--api-popover-shadow)',
           },
         }}
       >
-        <Box display="flex" flexDirection="column" gap={2}>
+        <Box display="flex" flexDirection="column" gap={1.5}>
           <Box display="flex" justifyContent="space-between" alignItems="center">
             <Box display="flex" alignItems="center" gap={1}>
               <Icon
-                icon={isHealthy ? 'mdi:check-circle' : 'mdi:alert-circle'}
-                color={isHealthy ? '#4caf50' : '#f44336'}
+                icon="mdi:progress-wrench"
+                color="var(--status-unknown)"
                 width={22}
               />
               <Typography variant="subtitle1" fontWeight={700}>
-                {isHealthy ? 'Healthy' : 'Degraded'}
+                {apiHealth.label}
               </Typography>
             </Box>
-            <Button
-              size="small"
-              onClick={checkHealth}
-              disabled={checking}
-              startIcon={<Icon icon="mdi:refresh" className={checking ? 'spin' : undefined} />}
-            >
-              {checking ? 'Checking' : 'Refresh'}
-            </Button>
+            <Tooltip title="API health is not configured">
+              <span>
+                <IconButton disabled aria-label="Refresh API health" size="small">
+                  <Icon icon="mdi:refresh" width={20} />
+                </IconButton>
+              </span>
+            </Tooltip>
           </Box>
 
-          <Typography variant="caption" color="text.secondary">
-            Last checked: {relativeTime(checkedAt)}
+          <Typography variant="caption" sx={{ color: 'var(--api-muted-text)' }}>
+            Health checks are under construction.
           </Typography>
-
-          <Divider />
-
-          <Typography variant="caption" fontWeight={700} color="text.secondary">
-            LIVE CHECKS
-          </Typography>
-
-          <Box display="flex" flexDirection="column" gap={1}>
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Box display="flex" alignItems="center" gap={1}>
-                <Icon icon="mdi:server-network" width={18} />
-                <Typography variant="body2">Backend (/plugins)</Typography>
-              </Box>
-              <Chip
-                label={backendUp ? 'Reachable' : 'Down'}
-                color={backendUp ? 'success' : 'error'}
-                size="small"
-                variant="outlined"
-              />
-            </Box>
-
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Box display="flex" alignItems="center" gap={1}>
-                <Icon icon="mdi:puzzle" width={18} />
-                <Typography variant="body2">Plugin system</Typography>
-              </Box>
-              <Chip
-                label={pluginsLoaded ? 'Loaded' : 'Loading'}
-                color={pluginsLoaded ? 'success' : 'warning'}
-                size="small"
-                variant="outlined"
-              />
-            </Box>
-
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Box display="flex" alignItems="center" gap={1}>
-                <Icon icon="mdi:server" width={18} />
-                <Typography variant="body2">Served by backend</Typography>
-              </Box>
-              <Chip
-                label={backendPluginCount === null ? 'unknown' : `${backendPluginCount} plugins`}
-                color="info"
-                size="small"
-                variant="outlined"
-              />
-            </Box>
-
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Box display="flex" alignItems="center" gap={1}>
-                <Icon icon="mdi:application-cog" width={18} />
-                <Typography variant="body2">Active in browser</Typography>
-              </Box>
-              <Chip
-                label={`${activeNames.length} plugins`}
-                color="info"
-                size="small"
-                variant="outlined"
-              />
-            </Box>
-
-            <Box display="flex" justifyContent="space-between" alignItems="center">
-              <Box display="flex" alignItems="center" gap={1}>
-                <Icon icon="mdi:palette" width={18} />
-                <Typography variant="body2">att-theme</Typography>
-              </Box>
-              <Chip
-                label={thisPluginActive ? 'Active' : 'Not found'}
-                color={thisPluginActive ? 'success' : 'error'}
-                size="small"
-                variant="outlined"
-              />
-            </Box>
-          </Box>
         </Box>
       </Popover>
     </>

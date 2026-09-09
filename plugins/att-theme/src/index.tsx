@@ -1,4 +1,5 @@
 import { registerAppBarAction, registerAppTheme } from '@kinvolk/headlamp-plugin/lib';
+import { ApiStatusIndicator } from './ApiHealthBadge';
 import { attDarkTheme, attLightTheme } from './themes';
 import { ThemeToggle } from './ThemeToggle';
 import { UserProfileAvatar } from './UserProfileAvatar';
@@ -12,8 +13,7 @@ if (!(window as any).__attThemePluginRegistered) {
   registerAppTheme(attLightTheme);
   registerAppTheme(attDarkTheme);
 
-  // API health badge intentionally not registered: no real metric has been
-  // defined to track yet. Do not show fabricated/placeholder status.
+  registerAppBarAction(ApiStatusIndicator);
   registerAppBarAction(ThemeToggle);
   registerAppBarAction(UserProfileAvatar);
 }

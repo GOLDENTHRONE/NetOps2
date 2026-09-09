@@ -15,6 +15,16 @@ export interface AppTheme {
     surface?: string;
     muted?: string;
   };
+  table?: {
+    rowHover?: string;
+    rowSelected?: string;
+  };
+  status?: {
+    success?: StatusTheme;
+    warning?: StatusTheme;
+    error?: StatusTheme;
+    neutral?: StatusTheme;
+  };
   sidebar?: {
     background?: string;
     color?: string;
@@ -38,6 +48,12 @@ export interface AppTheme {
   };
 }
 
+interface StatusTheme {
+  background?: string;
+  text?: string;
+  border?: string;
+}
+
 export const attLightTheme: AppTheme = {
   name: 'AT&T Light',
   base: 'light',
@@ -54,12 +70,23 @@ export const attLightTheme: AppTheme = {
     surface: '#ffffff',
     muted: '#e9eff5',
   },
+  table: {
+    rowHover: '#E4F2FA',
+    rowSelected: '#E6F4FF',
+  },
+  status: {
+    success: { background: '#DFF7E8', text: '#17643A', border: '#9BE7B2' },
+    warning: { background: '#FFF4BF', text: '#5F4B00', border: '#FFE066' },
+    error: { background: '#FDE2E1', text: '#8F1D1B', border: '#F7A8A6' },
+    neutral: { background: '#EEF2F6', text: '#394150', border: '#CDD5DF' },
+  },
   sidebar: {
-    background: '#0f1f2e',
-    color: '#eaf2fb',
+    background: '#ffffff',
+    color: '#31465a',
     selectedBackground: '#009fdb',
-    selectedColor: '#ffffff',
-    actionBackground: '#162334',
+    // also used as text color for selected sub-items, so must contrast with the light sidebar
+    selectedColor: '#0079ad',
+    actionBackground: '#e9eff5',
   },
   navbar: {
     background: '#ffffff',
@@ -95,19 +122,29 @@ export const attDarkTheme: AppTheme = {
     color: '#009fdb',
   },
   background: {
-    default: '#0b131c',
-    surface: '#101a26',
-    muted: '#162334',
+    default: '#0B121A',
+    surface: '#101820',
+    muted: '#17212B',
+  },
+  table: {
+    rowHover: '#152534',
+    rowSelected: '#18314A',
+  },
+  status: {
+    success: { background: '#123522', text: '#9BE7B2', border: '#2F7D4D' },
+    warning: { background: '#332B08', text: '#FFE680', border: '#75640D' },
+    error: { background: '#4A1716', text: '#FFB4B1', border: '#8F3431' },
+    neutral: { background: '#242A32', text: '#D7DEE8', border: '#46505C' },
   },
   sidebar: {
-    background: '#0b131c',
+    background: '#101820',
     color: '#b8c8da',
     selectedBackground: '#009fdb',
     selectedColor: '#ffffff',
-    actionBackground: '#162334',
+    actionBackground: '#17212B',
   },
   navbar: {
-    background: '#101a26',
+    background: '#101820',
     color: '#eaf2fb',
     searchHint: '#b8c8da',
   },

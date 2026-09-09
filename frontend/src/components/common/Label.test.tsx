@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
+import { ThemeProvider } from '@mui/material/styles';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { createMuiTheme } from '../../lib/themes';
 import { timeAgo } from '../../lib/util';
 import { TestContext } from '../../test';
 import { DateLabel, StatusLabel } from './Label';
@@ -63,5 +65,24 @@ describe('StatusLabel', () => {
     );
 
     expect(screen.getByText('Healthy')).toHaveStyle({ borderRadius: '18px' });
+  });
+
+  it('uses custom status tokens when supplied by the app theme', () => {
+    render(
+      <ThemeProvider
+        theme={createMuiTheme({
+          name: 'Custom Theme',
+          status: { success: { background: '#d9f3ed', text: '#075e54', border: '#9edfd2' } },
+        })}
+      >
+        <StatusLabel status="success">Healthy</StatusLabel>
+      </ThemeProvider>
+    );
+
+    expect(screen.getByText('Healthy')).toHaveStyle({
+      backgroundColor: '#d9f3ed',
+      color: '#075e54',
+      borderColor: '#9edfd2',
+    });
   });
 });

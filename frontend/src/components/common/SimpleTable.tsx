@@ -409,6 +409,14 @@ export default function SimpleTable(props: SimpleTableProps) {
                 wordWrap: 'break-word',
               },
               '& .MuiTableBody-root': {
+                ...(theme.palette.table.rowHover
+                  ? {
+                      '& .MuiTableRow-root:hover .MuiTableCell-root, & .MuiTableRow-root:focus-within .MuiTableCell-root':
+                        {
+                          background: theme.palette.table.rowHover,
+                        },
+                    }
+                  : {}),
                 '& .MuiTableRow-root:last-child': {
                   '& .MuiTableCell-root': {
                     borderBottom: 'none',

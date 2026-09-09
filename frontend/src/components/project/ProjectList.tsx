@@ -22,6 +22,7 @@ import React, { ReactNode, useCallback, useEffect, useMemo, useState } from 'rea
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
 import Namespace from '../../lib/k8s/namespace';
+import { getKubeObjectCategory } from '../../lib/k8s/ResourceCategory';
 import { HeadlampEventType, useEventCallback } from '../../redux/headlampEventSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { ProjectDefinition } from '../../redux/projectsSlice';
@@ -192,7 +193,13 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const open = Boolean(anchor);
   const [inventoryOpen, setInventoryOpen] = useState(false);
-  const closePopover = useCallback(() => setAnchor(null), []);
+  const closePopover = useCallback(() => {
+    // MUI restores focus to the trigger button on close, which keeps the row's
+    // `:focus-within` hover-tint stuck on until focus moves elsewhere. Blur it
+    // so the row goes back to its normal (unhovered) look.
+    anchor?.blur();
+    setAnchor(null);
+  }, [anchor]);
   const openPopover = useCallback(
     (e: React.MouseEvent<HTMLElement>) => setAnchor(e.currentTarget),
     []
@@ -255,6 +262,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
         open={open}
         anchorEl={anchor}
         onClose={closePopover}
+        disableRestoreFocus
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         slotProps={{
@@ -307,7 +315,12 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
           ) : (
             <>
               {health.details.length > 0 && (
-                <EvidenceSection title={t('Details')} evidence={health.details} showDetails />
+                <EvidenceSection
+                  title={t('Details')}
+                  evidence={health.details}
+                  projectId={project.id}
+                  showDetails
+                />
               )}
               {health.needsAttention.length > 0 && (
                 <>
@@ -315,6 +328,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                   <EvidenceSection
                     title={`${t('Needs Attention')} ${t('(does not affect status)')}`}
                     evidence={health.needsAttention}
+                    projectId={project.id}
                   />
                 </>
               )}
@@ -398,11 +412,16 @@ const KIND_TO_ROUTE: Record<string, string> = {
   HorizontalPodAutoscaler: 'horizontalPodAutoscaler',
 };
 
-function EvidenceRow({ evidence }: { evidence: LocalHealthEvidence }) {
+function EvidenceRow({
+  evidence,
+  projectId,
+}: {
+  evidence: LocalHealthEvidence;
+  projectId: string;
+}) {
   const theme = useTheme();
   const label = `${evidence.kind}/${evidence.namespace || '-'}/${evidence.name}`;
   const routeName = KIND_TO_ROUTE[evidence.kind];
-  const cluster = (evidence.object as any)?.cluster;
   const canLink = Boolean(routeName && evidence.name);
   const categoryIcon =
     evidence.category === 'workload'
@@ -420,12 +439,16 @@ function EvidenceRow({ evidence }: { evidence: LocalHealthEvidence }) {
       : theme.palette.text.secondary;
 
   const primary = canLink ? (
+    // The standalone per-resource route (e.g. /jobs/:namespace/:name) doesn't
+    // resolve for resources scoped to a project's clusters, so send users to
+    // the project's own Resources tab instead, deep-linked to this resource.
     <Link
-      routeName={routeName}
-      params={{
-        name: evidence.name,
-        namespace: evidence.namespace,
-        ...(cluster ? { cluster } : {}),
+      routeName="projectDetails"
+      params={{ name: projectId }}
+      search={{
+        tab: 'resources',
+        ...(evidence.object ? { category: getKubeObjectCategory(evidence.object).label } : {}),
+        resource: evidence.name,
       }}
     >
       <Typography component="span" variant="body2" sx={{ fontWeight: 500 }}>
@@ -559,10 +582,12 @@ function StatsSection({
 function EvidenceSection({
   title,
   evidence,
+  projectId,
   showDetails = false,
 }: {
   title: string;
   evidence: LocalHealthEvidence[];
+  projectId: string;
   showDetails?: boolean;
 }) {
   return (
@@ -575,6 +600,7 @@ function EvidenceSection({
           <EvidenceRow
             key={`${e.kind}/${e.namespace}/${e.name}/${i}`}
             evidence={showDetails ? e : { ...e, severity: 'info' }}
+            projectId={projectId}
           />
         ))}
       </Box>

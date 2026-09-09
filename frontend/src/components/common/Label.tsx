@@ -122,6 +122,17 @@ export const StatusLabel = forwardRef<HTMLSpanElement, StatusLabelProps>((props,
     };
   }
 
+  const statusKey = status === '' ? 'neutral' : (status as 'success' | 'warning' | 'error');
+  const customStatus = theme.palette.status?.[statusKey];
+  if (customStatus) {
+    params = {
+      ...params,
+      ...(customStatus.background ? { backgroundColor: customStatus.background } : {}),
+      ...(customStatus.text ? { color: customStatus.text } : {}),
+      ...(customStatus.border ? { borderColor: customStatus.border } : {}),
+    };
+  }
+
   const label = (
     <Typography
       ref={ref}
@@ -131,8 +142,8 @@ export const StatusLabel = forwardRef<HTMLSpanElement, StatusLabelProps>((props,
         fontSize: theme.typography.pxToRem(14),
         paddingLeft: theme.spacing(1),
         paddingRight: theme.spacing(1),
-        paddingTop: theme.spacing(0.5),
-        paddingBottom: theme.spacing(0.5),
+        paddingTop: '1px',
+        paddingBottom: '1px',
         display: 'inline-flex',
         whiteSpace: 'nowrap',
         alignItems: 'normal',

@@ -43,6 +43,18 @@ export interface AppTheme {
     /** Shaded background color */
     muted?: string;
   };
+  table?: {
+    /** Background color for table rows on hover or keyboard focus. */
+    rowHover?: string;
+    /** Background color for selected table rows. */
+    rowSelected?: string;
+  };
+  status?: {
+    success?: StatusTheme;
+    warning?: StatusTheme;
+    error?: StatusTheme;
+    neutral?: StatusTheme;
+  };
   sidebar?: {
     /** Background color of the sidebar */
     background?: string;
@@ -122,4 +134,10 @@ export interface AppTheme {
   buttonTextTransform?: 'uppercase' | 'none';
   /** Font family of the app */
   fontFamily?: string[];
+}
+
+export interface StatusTheme {
+  background?: string;
+  text?: string;
+  border?: string;
 }

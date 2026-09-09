@@ -172,8 +172,16 @@ const StyledHeadRow = styled('tr')(({ theme }) => ({
 }));
 const StyledRow = styled('tr')(({ theme }) => ({
   display: 'contents',
+  ...(theme.palette.table.rowHover
+    ? {
+        '&:not([data-selected=true]):hover > .MuiTableCell-root, &:not([data-selected=true]):focus-within > .MuiTableCell-root':
+          {
+            background: theme.palette.table.rowHover,
+          },
+      }
+    : {}),
   '&[data-selected=true]': {
-    background: alpha(theme.palette.primary.main, 0.2),
+    background: theme.palette.table.rowSelected ?? alpha(theme.palette.primary.main, 0.2),
   },
 }));
 const StyledBody = styled('tbody')({ display: 'contents' });

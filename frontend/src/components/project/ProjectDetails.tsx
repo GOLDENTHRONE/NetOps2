@@ -26,7 +26,7 @@ import React, {
   useState,
 } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { KubeObject } from '../../lib/k8s/KubeObject';
 import ResourceQuota from '../../lib/k8s/resourceQuota';
 import Role from '../../lib/k8s/role';
@@ -356,7 +356,7 @@ function ProjectResources({
   if (!detailsContext) {
     throw new Error('Missing ProjectDetailsContext');
   }
-  const { selectedCategoryName, setSelectedCategoryName } = detailsContext;
+  const { selectedCategoryName, setSelectedCategoryName, highlightResourceName } = detailsContext;
 
   return (
     <ProjectResourcesTab
@@ -364,6 +364,7 @@ function ProjectResources({
       showClusterColumn={project.clusters.length > 1}
       selectedCategoryName={selectedCategoryName}
       setSelectedCategoryName={setSelectedCategoryName}
+      highlightResourceName={highlightResourceName}
     />
   );
 }
@@ -399,6 +400,7 @@ const ProjectDetailsContext = createContext<
       selectedCategoryName?: string;
       setSelectedCategoryName: (c: string | undefined) => void;
       setSelectedTab: (tab: string | undefined) => void;
+      highlightResourceName?: string;
     }
   | undefined
 >(undefined);
@@ -417,8 +419,20 @@ export function ProjectDetailsContent({ project }: { project: ProjectDefinition 
   >(() => ProjectDeleteButton);
 
   const [headerActions, setHeaderActions] = useState<ReactNode[]>([]);
-  const [selectedTab, setSelectedTab] = useState<string>();
-  const [selectedCategoryName, setSelectedCategoryName] = React.useState<string>();
+  const location = useLocation();
+  // Deep-link support: ?tab=resources&category=Workloads&resource=my-job lets
+  // links from elsewhere (e.g. the health evidence popover) land directly on
+  // the resource instead of the broken standalone resource details route.
+  const deepLinkParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const [selectedTab, setSelectedTab] = useState<string | undefined>(() =>
+    deepLinkParams.get('tab') === 'resources' ? TAB_IDS.RESOURCES : undefined
+  );
+  const [selectedCategoryName, setSelectedCategoryName] = React.useState<string | undefined>(
+    () => deepLinkParams.get('category') ?? undefined
+  );
+  const [highlightResourceName] = useState<string | undefined>(
+    () => deepLinkParams.get('resource') ?? undefined
+  );
   const [allTabs, setAllTabs] = useState<Record<string, ProjectDetailsTab>>(DEFAULT_TABS);
 
   // Load custom delete button
@@ -591,8 +605,9 @@ export function ProjectDetailsContent({ project }: { project: ProjectDefinition 
       setSelectedCategoryName,
       selectedCategoryName,
       setSelectedTab,
+      highlightResourceName,
     }),
-    [setSelectedCategoryName, selectedCategoryName, setSelectedTab]
+    [setSelectedCategoryName, selectedCategoryName, setSelectedTab, highlightResourceName]
   );
 
   if (isLoading) {

@@ -79,6 +79,8 @@ interface ProjectResourcesTabProps {
   showClusterColumn?: boolean;
   selectedCategoryName?: string;
   setSelectedCategoryName: (name: string) => void;
+  /** Resource name to prefill the table search with, e.g. deep-linked from a health popover. */
+  highlightResourceName?: string;
 }
 
 export const resourcePaneStyles = (theme: Theme) => ({
@@ -99,6 +101,7 @@ export function ProjectResourcesTab({
   showClusterColumn,
   selectedCategoryName,
   setSelectedCategoryName,
+  highlightResourceName,
 }: ProjectResourcesTabProps) {
   const { t } = useTranslation();
 
@@ -438,6 +441,10 @@ export function ProjectResourcesTab({
                     columnVisibility: {
                       cluster: !!showClusterColumn,
                     },
+                  }}
+                  initialState={{
+                    globalFilter: highlightResourceName,
+                    showGlobalFilter: !!highlightResourceName,
                   }}
                 />
               )}

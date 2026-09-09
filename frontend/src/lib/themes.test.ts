@@ -90,6 +90,22 @@ describe('themes.ts', () => {
       expect(theme.palette.secondary.contrastText).toBe('#ffffff');
     });
 
+    it('should expose optional table and status tokens unchanged', () => {
+      const theme = createMuiTheme({
+        name: 'Custom Theme',
+        table: { rowHover: '#abcdef', rowSelected: '#fedcba' },
+        status: { success: { background: '#123456', text: '#ffffff', border: '#654321' } },
+      });
+
+      expect(theme.palette.table.rowHover).toBe('#abcdef');
+      expect(theme.palette.table.rowSelected).toBe('#fedcba');
+      expect(theme.palette.status.success).toEqual({
+        background: '#123456',
+        text: '#ffffff',
+        border: '#654321',
+      });
+    });
+
     it('should use black contrast text by default for custom secondary colors', () => {
       const theme = createMuiTheme({
         base: 'light',

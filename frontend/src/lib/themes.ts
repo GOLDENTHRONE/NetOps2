@@ -17,7 +17,7 @@
 import { green, grey, orange, pink, red } from '@mui/material/colors';
 import { createTheme, getContrastRatio, useTheme } from '@mui/material/styles';
 import React from 'react';
-import type { AppTheme } from './AppTheme';
+import type { AppTheme, StatusTheme } from './AppTheme';
 
 export interface HeadlampChartStyles {
   defaultFillColor: string;
@@ -139,6 +139,18 @@ export interface HeadlampTerminal {
   };
 }
 
+export interface HeadlampStatus {
+  success?: StatusTheme;
+  warning?: StatusTheme;
+  error?: StatusTheme;
+  neutral?: StatusTheme;
+}
+
+export interface HeadlampTable {
+  rowHover?: string;
+  rowSelected?: string;
+}
+
 declare module '@mui/material/styles/createPalette.d' {
   interface Palette {
     success: PaletteColor;
@@ -154,6 +166,8 @@ declare module '@mui/material/styles/createPalette.d' {
     squareButton: HeadlampSquareButton;
     resourceToolTip: HeadlampResourceToolTip;
     terminal: HeadlampTerminal;
+    status: HeadlampStatus;
+    table: HeadlampTable;
     normalEventBg: string;
     metadataBgColor: string;
     notificationBorderColor: string;
@@ -172,6 +186,8 @@ declare module '@mui/material/styles/createPalette.d' {
     squareButton?: Partial<HeadlampSquareButton>;
     resourceToolTip?: Partial<HeadlampResourceToolTip>;
     terminal?: HeadlampTerminal;
+    status?: HeadlampStatus;
+    table?: HeadlampTable;
     normalEventBg?: string;
     metadataBgColor?: string;
     notificationBorderColor?: string;
@@ -326,6 +342,8 @@ export function createMuiTheme(currentTheme: AppTheme) {
       },
       notificationBorderColor: 'rgba(0,0,0,0.12)',
       terminal: currentTheme.terminal ?? {},
+      status: currentTheme.status ?? {},
+      table: currentTheme.table ?? {},
       background: {
         default: currentTheme.background?.default ?? '#fff',
         paper: currentTheme.background?.surface ?? '#FFF',
