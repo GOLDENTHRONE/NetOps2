@@ -38,7 +38,7 @@ export function TileChart(props: TileChartProps) {
     <Paper
       variant="outlined"
       sx={theme => ({
-        background: theme.palette.background.muted,
+        background: theme.palette.background.paper,
         padding: theme.spacing(2),
         height: '100%',
         maxWidth: '300px',

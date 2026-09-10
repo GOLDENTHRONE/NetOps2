@@ -18,6 +18,8 @@ export interface AppTheme {
   table?: {
     rowHover?: string;
     rowSelected?: string;
+    border?: string;
+    shadow?: string;
   };
   status?: {
     success?: StatusTheme;
@@ -60,28 +62,30 @@ export const attLightTheme: AppTheme = {
   primary: '#009fdb',
   secondary: '#f3f5f8',
   text: {
-    primary: '#0f1f2e',
+    primary: '#1F2D3D',
   },
   link: {
     color: '#009fdb',
   },
   background: {
-    default: '#f3f5f8',
-    surface: '#ffffff',
-    muted: '#e9eff5',
+    default: '#F4F7FA',
+    surface: '#FFFFFF',
+    muted: '#F5F8FA',
   },
   table: {
-    rowHover: '#E4F2FA',
+    rowHover: '#eaf8fc',
     rowSelected: '#E6F4FF',
+    border: '#DDE7EF',
+    shadow: '0 2px 8px rgba(31, 45, 61, 0.06)',
   },
   status: {
     success: { background: '#DFF7E8', text: '#17643A', border: '#9BE7B2' },
     warning: { background: '#FFF4BF', text: '#5F4B00', border: '#FFE066' },
     error: { background: '#FDE2E1', text: '#8F1D1B', border: '#F7A8A6' },
-    neutral: { background: '#EEF2F6', text: '#394150', border: '#CDD5DF' },
+    neutral: { background: '#F2F4F7', text: '#344054', border: '#EAECF0' },
   },
   sidebar: {
-    background: '#ffffff',
+    background: '#F3F5F8',
     color: '#31465a',
     selectedBackground: '#009fdb',
     // also used as text color for selected sub-items, so must contrast with the light sidebar
@@ -116,7 +120,7 @@ export const attDarkTheme: AppTheme = {
   primary: '#009fdb',
   secondary: '#162334',
   text: {
-    primary: '#eaf2fb',
+    primary: '#E5EDF5',
   },
   link: {
     color: '#009fdb',
@@ -127,8 +131,10 @@ export const attDarkTheme: AppTheme = {
     muted: '#17212B',
   },
   table: {
-    rowHover: '#152534',
+    rowHover: '#152C3A',
     rowSelected: '#18314A',
+    border: '#2E3A46',
+    shadow: '0 2px 10px rgba(0, 0, 0, 0.28)',
   },
   status: {
     success: { background: '#123522', text: '#9BE7B2', border: '#2F7D4D' },

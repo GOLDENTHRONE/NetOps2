@@ -247,6 +247,7 @@ export function PureNamespacesAutocomplete({
             InputLabelProps={{ shrink: true }}
             style={{ marginTop: 0 }}
             placeholder={[...filter.namespaces.values()].length > 0 ? '' : t('Filter')}
+            sx={{ bgcolor: 'background.paper' }}
           />
         </Box>
       )}

@@ -149,6 +149,8 @@ export interface HeadlampStatus {
 export interface HeadlampTable {
   rowHover?: string;
   rowSelected?: string;
+  border?: string;
+  shadow?: string;
 }
 
 declare module '@mui/material/styles/createPalette.d' {
@@ -334,7 +336,7 @@ export function createMuiTheme(currentTheme: AppTheme) {
         head: {
           background: '#faf9f8',
           color: '#242424',
-          borderColor: 'rgba(0,0,0,0.12)',
+          borderColor: currentTheme.table?.border ?? 'rgba(0,0,0,0.12)',
         },
         body: {
           background: '#fff',
@@ -440,7 +442,7 @@ export function createMuiTheme(currentTheme: AppTheme) {
           head: {
             background: '#000',
             color: '#aeaeae',
-            borderColor: 'rgba(255,255,255,0.12)',
+            borderColor: currentTheme.table?.border ?? 'rgba(255,255,255,0.12)',
           },
           body: {
             background: '#1B1A19',

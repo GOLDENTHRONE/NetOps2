@@ -389,7 +389,7 @@ describe('Table states and options', () => {
     expect(updater).not.toHaveBeenCalled();
   });
 
-  it('hides lower-priority columns when the container is narrow', () => {
+  it('keeps all columns when narrow and scrolls horizontally instead of hiding', () => {
     const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(150);
 
     renderTable({
@@ -404,12 +404,9 @@ describe('Table states and options', () => {
       state: { columnVisibility: { detail: false } },
     });
 
-    expect(tableMocks.options.state.columnVisibility).toMatchObject({
-      '1': false,
-      '2': false,
-      '3': false,
-      detail: false,
-    });
+    // Auto-hide is disabled: only the caller's explicit hidden column stays,
+    // no columns are dropped due to narrow width.
+    expect(tableMocks.options.state.columnVisibility).toEqual({ detail: false });
 
     clientWidth.mockRestore();
   });

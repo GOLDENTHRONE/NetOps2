@@ -29,8 +29,9 @@ const apiHealth: ApiHealth = {
 };
 
 const lightTokens = {
-  '--api-pill-bg': '#F4F6F8',
+  '--api-pill-bg': '#F2F4F7',
   '--api-pill-text': '#344054',
+  '--api-pill-border': '#EAECF0',
   '--api-popover-bg': '#FFFFFF',
   '--api-popover-border': '#E5E7EB',
   '--api-popover-shadow': '0 14px 34px rgba(15, 23, 42, 0.16)',
@@ -45,6 +46,7 @@ const lightTokens = {
 const darkTokens = {
   '--api-pill-bg': '#1F2933',
   '--api-pill-text': '#D7DEE8',
+  '--api-pill-border': '#2E3742',
   '--api-popover-bg': '#121820',
   '--api-popover-border': '#2E3742',
   '--api-popover-shadow': '0 18px 42px rgba(0, 0, 0, 0.42)',
@@ -80,7 +82,7 @@ export function ApiStatusIndicator() {
           px: 1.5,
           py: 0.5,
           borderRadius: '16px',
-          border: 'none',
+          border: '1px solid var(--api-pill-border, transparent)',
           backgroundColor: 'var(--api-pill-bg)',
           color: 'var(--api-pill-text)',
           cursor: 'pointer',

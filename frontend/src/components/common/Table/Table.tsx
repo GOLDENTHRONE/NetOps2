@@ -314,57 +314,13 @@ export default function Table<RowItem extends Record<string, any>>({
     return ids;
   }, [tableProps.columns, tableProps.enableRowActions, tableProps.enableRowSelection]);
 
-  // Decide which columns to hide based on the available width. Columns are hidden by
-  // ascending `responsivePriority` (least important first), then right-to-left among
-  // equal priority. The first column is never hidden. When everything fits, nothing
-  // is hidden and the table renders as usual.
-  const responsiveHidden = useMemo(() => {
-    const result: Record<string, boolean> = {};
-    if (!containerWidth) {
-      return result;
-    }
-
-    const callerVisibility = tableProps.state?.columnVisibility;
-    const dataCols = tableColumns.filter(col => callerVisibility?.[col.id ?? ''] !== false);
-
-    let reserved = 0;
-    if (tableProps.enableRowSelection) {
-      reserved += 44; // selection checkbox column
-    }
-    if (tableProps.enableRowActions) {
-      reserved += 52; // row actions column
-    }
-
-    const available = containerWidth - reserved;
-    let total = dataCols.length * DEFAULT_MIN_COLUMN_WIDTH;
-    if (total <= available) {
-      return result;
-    }
-
-    // Columns we're allowed to hide, ordered by what to drop first.
-    dataCols
-      .map((col, index) => ({ col, index }))
-      .filter(({ index }) => index !== 0)
-      .sort((a, b) => {
-        const priorityDiff = (a.col.responsivePriority ?? 0) - (b.col.responsivePriority ?? 0);
-        return priorityDiff !== 0 ? priorityDiff : b.index - a.index;
-      })
-      .forEach(({ col }) => {
-        if (total <= available) {
-          return;
-        }
-        // MRT visibility semantics: `false` means the column is hidden.
-        result[col.id ?? ''] = false;
-        total -= DEFAULT_MIN_COLUMN_WIDTH;
-      });
-    return result;
-  }, [
-    containerWidth,
-    tableColumns,
-    tableProps.state?.columnVisibility,
-    tableProps.enableRowSelection,
-    tableProps.enableRowActions,
-  ]);
+  // Auto-hide disabled: always keep every column and let the table scroll
+  // horizontally on narrow screens (see gridTemplateColumns minmax floors)
+  // instead of dropping columns.
+  const responsiveHidden = useMemo<Record<string, boolean>>(() => {
+    void containerWidth;
+    return {};
+  }, [containerWidth]);
 
   const mergedColumnVisibility = useMemo(
     () => ({
@@ -558,10 +514,16 @@ export default function Table<RowItem extends Record<string, any>>({
         return !isHidden;
       })
       .map(it => {
+        // Give flexible (fr) columns a pixel floor via minmax so the grid can
+        // overflow and show a horizontal scrollbar on narrow screens instead of
+        // shrinking columns to nothing. Explicit string templates are untouched.
         if (typeof it.gridTemplate === 'number') {
-          return `${it.gridTemplate}fr`;
+          return `minmax(${DEFAULT_MIN_COLUMN_WIDTH}px, ${it.gridTemplate}fr)`;
         }
-        return it.gridTemplate ?? '1fr';
+        if (it.gridTemplate === undefined) {
+          return `minmax(${DEFAULT_MIN_COLUMN_WIDTH}px, 1fr)`;
+        }
+        return it.gridTemplate;
       })
       .join(' ');
     if (tableProps.enableRowActions) {
@@ -572,6 +534,28 @@ export default function Table<RowItem extends Record<string, any>>({
     }
 
     return preGridTemplateColumns;
+  }, [
+    tableProps.columns,
+    mergedColumnVisibility,
+    tableProps.enableRowActions,
+    tableProps.enableRowSelection,
+  ]);
+
+  // Minimum overall table width (px) so the table overflows its scroll wrapper
+  // and shows a horizontal scrollbar on narrow screens, for every column type.
+  const minTableWidth = useMemo(() => {
+    const visibleDataCols = tableProps.columns.filter((it, i) => {
+      const id = it.id ?? String(i);
+      return mergedColumnVisibility?.[id] !== false;
+    }).length;
+    let width = visibleDataCols * DEFAULT_MIN_COLUMN_WIDTH;
+    if (tableProps.enableRowSelection) {
+      width += 44;
+    }
+    if (tableProps.enableRowActions) {
+      width += 52;
+    }
+    return width;
   }, [
     tableProps.columns,
     mergedColumnVisibility,
@@ -656,47 +640,51 @@ export default function Table<RowItem extends Record<string, any>>({
     content = (
       <>
         {(tableProps.enableTopToolbar ?? true) && <MRT_TopToolbar table={table} />}
-        <MuiTable
-          sx={{
-            display: 'grid',
-            border: '1px solid',
-            borderColor: theme.palette.tables.head.borderColor,
-            borderRadius: 1,
-            borderBottom: 'none',
-            overflowX: 'auto',
-            width: '100%',
-            gridTemplateColumns,
-          }}
-        >
-          <TableHead sx={{ display: 'contents' }}>
-            <StyledHeadRow>
-              {headerGroups[0].headers.map(header => (
-                <MemoHeadCell
-                  key={header.id}
-                  header={header as MRT_Header<Record<string, any>>}
+        <Box sx={{ overflowX: 'auto', width: '100%' }}>
+          <MuiTable
+            sx={{
+              display: 'grid',
+              border: '1px solid',
+              borderColor: theme.palette.tables.head.borderColor,
+              borderRadius: 1,
+              borderBottom: 'none',
+              boxShadow: theme.palette.table.shadow,
+              background: theme.palette.background.paper,
+              width: '100%',
+              minWidth: `${minTableWidth}px`,
+              gridTemplateColumns,
+            }}
+          >
+            <TableHead sx={{ display: 'contents' }}>
+              <StyledHeadRow>
+                {headerGroups[0].headers.map(header => (
+                  <MemoHeadCell
+                    key={header.id}
+                    header={header as MRT_Header<Record<string, any>>}
+                    table={table as MRT_TableInstance<Record<string, any>>}
+                    isFiltered={header.column.getIsFiltered()}
+                    sorting={header.column.getIsSorted()}
+                    showColumnFilters={table.getState().showColumnFilters}
+                    selected={table.getSelectedRowModel().flatRows.length}
+                    filterValue={header.column.getFilterValue()}
+                  />
+                ))}
+              </StyledHeadRow>
+            </TableHead>
+            <StyledBody>
+              {rows.map((row, index) => (
+                <Row
+                  key={row.id}
+                  rowIndex={index}
+                  cells={row.getVisibleCells() as MRT_Cell<Record<string, any>, unknown>[]}
                   table={table as MRT_TableInstance<Record<string, any>>}
-                  isFiltered={header.column.getIsFiltered()}
-                  sorting={header.column.getIsSorted()}
-                  showColumnFilters={table.getState().showColumnFilters}
-                  selected={table.getSelectedRowModel().flatRows.length}
-                  filterValue={header.column.getFilterValue()}
+                  isSelected={row.getIsSelected()}
+                  onRowClick={handleRowClick}
                 />
               ))}
-            </StyledHeadRow>
-          </TableHead>
-          <StyledBody>
-            {rows.map((row, index) => (
-              <Row
-                key={row.id}
-                rowIndex={index}
-                cells={row.getVisibleCells() as MRT_Cell<Record<string, any>, unknown>[]}
-                table={table as MRT_TableInstance<Record<string, any>>}
-                isSelected={row.getIsSelected()}
-                onRowClick={handleRowClick}
-              />
-            ))}
-          </StyledBody>
-        </MuiTable>
+            </StyledBody>
+          </MuiTable>
+        </Box>
         <MRT_BottomToolbar table={table} />
       </>
     );

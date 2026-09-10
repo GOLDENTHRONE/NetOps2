@@ -48,6 +48,10 @@ export interface AppTheme {
     rowHover?: string;
     /** Background color for selected table rows. */
     rowSelected?: string;
+    /** Border/grid line color for table headers and outer borders. */
+    border?: string;
+    /** Box-shadow for the table wrapper (CSS box-shadow value). */
+    shadow?: string;
   };
   status?: {
     success?: StatusTheme;

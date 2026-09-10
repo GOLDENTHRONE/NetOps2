@@ -19,7 +19,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
-import { Theme } from '@mui/material/styles';
+import { Theme, useTheme } from '@mui/material/styles';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -168,6 +168,7 @@ export default function SimpleTable(props: SimpleTableProps) {
     className,
     sx,
   } = props;
+  const theme = useTheme();
   const shouldReflectInURL = reflectInURL !== undefined && reflectInURL !== false;
   const prefix = reflectInURL === true ? '' : reflectInURL || '';
   const [page, setPage] = usePageURLState(shouldReflectInURL ? 'p' : '', prefix, initialPage);
@@ -363,10 +364,13 @@ export default function SimpleTable(props: SimpleTableProps) {
       content = (
         <TableContainer
           className={className}
-          sx={{
-            overflowY: 'hidden',
-            ...sx,
-          }}
+          sx={[
+            {
+              overflowY: 'hidden',
+              boxShadow: theme.palette.table.shadow,
+            },
+            ...(Array.isArray(sx) ? sx : [sx]),
+          ]}
           component={Paper}
           variant="outlined"
           tabIndex={0}
@@ -395,7 +399,7 @@ export default function SimpleTable(props: SimpleTableProps) {
               width: 'auto',
               display: 'grid',
               gridTemplateColumns: gridTemplateColumns || '1fr',
-              background: theme.palette.background.default,
+              background: theme.palette.background.paper,
               [theme.breakpoints.down('sm')]: {
                 overflowX: 'auto', // make it responsive
               },

@@ -98,7 +98,7 @@ export function GlobalSearch({ isIconButton }: { isIconButton?: boolean }) {
       placeholder={t('Search')}
       InputProps={{
         sx: theme => ({
-          background: theme.palette.background.default,
+          background: theme.palette.background.paper,
         }),
         startAdornment: (
           <InputAdornment position="start" sx={{ pointerEvents: 'none' }}>
