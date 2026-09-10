@@ -172,24 +172,65 @@ const StyledHeadRow = styled('tr')(({ theme }) => ({
 }));
 const StyledRow = styled('tr')(({ theme }) => ({
   display: 'contents',
+  '--headlamp-table-row-bg': theme.palette.background.paper,
+  '& > .MuiTableCell-root': {
+    background: 'var(--headlamp-table-row-bg)',
+  },
   ...(theme.palette.table.rowHover
     ? {
-        '&:not([data-selected=true]):hover > .MuiTableCell-root, &:not([data-selected=true]):focus-within > .MuiTableCell-root':
-          {
-            background: theme.palette.table.rowHover,
-          },
+        '&:not([data-selected=true]):hover, &:not([data-selected=true]):focus-within': {
+          '--headlamp-table-row-bg': theme.palette.table.rowHover,
+        },
       }
     : {}),
   '&[data-selected=true]': {
-    background: theme.palette.table.rowSelected ?? alpha(theme.palette.primary.main, 0.2),
+    '--headlamp-table-row-bg':
+      theme.palette.table.rowSelected ?? alpha(theme.palette.primary.main, 0.2),
   },
 }));
 const StyledBody = styled('tbody')({ display: 'contents' });
+
+const stickyActionsCellStyles = {
+  position: 'sticky',
+  right: 0,
+  zIndex: 2,
+  backgroundClip: 'padding-box',
+};
 
 /**
  * Approximate minimum width (px) used to decide whether a column still fits.
  */
 const DEFAULT_MIN_COLUMN_WIDTH = 100;
+const AUTO_MIN_COLUMN_WIDTH = 240;
+
+function getGridTemplateColumn(column: Pick<TableColumn<any>, 'gridTemplate'>) {
+  const gridTemplate = column.gridTemplate;
+  const minWidth = getGridTemplateColumnMinWidth(column);
+  if (typeof gridTemplate === 'number') {
+    return `minmax(${minWidth}px, ${gridTemplate}fr)`;
+  }
+  if (gridTemplate === undefined) {
+    return `minmax(${minWidth}px, 1fr)`;
+  }
+  if (gridTemplate.includes('minmax(')) {
+    return gridTemplate;
+  }
+  return `minmax(${minWidth}px, ${gridTemplate === 'auto' ? '1fr' : gridTemplate})`;
+}
+
+function getGridTemplateColumnMinWidth(column: Pick<TableColumn<any>, 'gridTemplate'>) {
+  const gridTemplate = column.gridTemplate;
+  if (typeof gridTemplate === 'string') {
+    const minmaxMatch = gridTemplate.match(/^minmax\((\d+)px,/);
+    if (minmaxMatch) {
+      return Number(minmaxMatch[1]);
+    }
+    if (gridTemplate === 'auto') {
+      return AUTO_MIN_COLUMN_WIDTH;
+    }
+  }
+  return DEFAULT_MIN_COLUMN_WIDTH;
+}
 
 /**
  * Tracks the current width of an element using a ResizeObserver.
@@ -516,14 +557,8 @@ export default function Table<RowItem extends Record<string, any>>({
       .map(it => {
         // Give flexible (fr) columns a pixel floor via minmax so the grid can
         // overflow and show a horizontal scrollbar on narrow screens instead of
-        // shrinking columns to nothing. Explicit string templates are untouched.
-        if (typeof it.gridTemplate === 'number') {
-          return `minmax(${DEFAULT_MIN_COLUMN_WIDTH}px, ${it.gridTemplate}fr)`;
-        }
-        if (it.gridTemplate === undefined) {
-          return `minmax(${DEFAULT_MIN_COLUMN_WIDTH}px, 1fr)`;
-        }
-        return it.gridTemplate;
+        // shrinking columns to nothing. Explicit minmax templates keep their floor.
+        return getGridTemplateColumn(it);
       })
       .join(' ');
     if (tableProps.enableRowActions) {
@@ -544,11 +579,13 @@ export default function Table<RowItem extends Record<string, any>>({
   // Minimum overall table width (px) so the table overflows its scroll wrapper
   // and shows a horizontal scrollbar on narrow screens, for every column type.
   const minTableWidth = useMemo(() => {
-    const visibleDataCols = tableProps.columns.filter((it, i) => {
-      const id = it.id ?? String(i);
-      return mergedColumnVisibility?.[id] !== false;
-    }).length;
-    let width = visibleDataCols * DEFAULT_MIN_COLUMN_WIDTH;
+    let width = tableProps.columns.reduce((total, column, i) => {
+      const id = column.id ?? String(i);
+      if (mergedColumnVisibility?.[id] === false) {
+        return total;
+      }
+      return total + getGridTemplateColumnMinWidth(column);
+    }, 0);
     if (tableProps.enableRowSelection) {
       width += 44;
     }
@@ -719,7 +756,12 @@ const MemoHeadCell = memo(
         key={header.id}
         staticColumnIndex={-1}
         table={table}
-        sx={theme => ({ borderColor: theme.palette.divider })}
+        sx={theme => ({
+          borderColor: theme.palette.divider,
+          ...(header.column.id === 'mrt-row-actions'
+            ? { ...stickyActionsCellStyles, background: theme.palette.background.muted }
+            : {}),
+        })}
       />
     );
   },
@@ -784,6 +826,7 @@ const MemoCell = memo(
             minWidth: 'unset',
             wordBreak: column.gridTemplate === 'min-content' ? 'normal' : 'break-word',
             borderColor: theme.palette.divider,
+            ...(cell.column.id === 'mrt-row-actions' ? stickyActionsCellStyles : {}),
             ...(column.muiTableBodyCellProps as TableCellProps)?.sx,
           } as any)
         }

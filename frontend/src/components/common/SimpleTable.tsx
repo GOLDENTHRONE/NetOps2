@@ -94,6 +94,38 @@ interface ColumnSortButtonProps {
   clickHandler: (isIncreasingOrder: boolean) => void;
 }
 
+const DEFAULT_MIN_COLUMN_WIDTH = 100;
+const AUTO_MIN_COLUMN_WIDTH = 240;
+
+function getGridTemplateColumnMinWidth(column: Pick<SimpleTableColumn, 'gridTemplate'>) {
+  const gridTemplate = column.gridTemplate;
+  if (typeof gridTemplate === 'string') {
+    const minmaxMatch = gridTemplate.match(/^minmax\((\d+)px,/);
+    if (minmaxMatch) {
+      return Number(minmaxMatch[1]);
+    }
+    if (gridTemplate === 'auto') {
+      return AUTO_MIN_COLUMN_WIDTH;
+    }
+  }
+  return DEFAULT_MIN_COLUMN_WIDTH;
+}
+
+function getGridTemplateColumn(column: Pick<SimpleTableColumn, 'gridTemplate'>) {
+  const gridTemplate = column.gridTemplate;
+  const minWidth = getGridTemplateColumnMinWidth(column);
+  if (typeof gridTemplate === 'number') {
+    return `minmax(${minWidth}px, ${gridTemplate}fr)`;
+  }
+  if (gridTemplate === undefined) {
+    return `minmax(${minWidth}px, 1fr)`;
+  }
+  if (gridTemplate.includes('minmax(')) {
+    return gridTemplate;
+  }
+  return `minmax(${minWidth}px, ${gridTemplate === 'auto' ? '1fr' : gridTemplate})`;
+}
+
 function ColumnSortButtons(props: ColumnSortButtonProps) {
   const { t } = useTranslation();
   const { isDefaultSorted, isIncreasingOrder, clickHandler } = props;
@@ -183,18 +215,12 @@ export default function SimpleTable(props: SimpleTableProps) {
     prefix,
   });
   const gridTemplateColumns = React.useMemo(() => {
-    const columnsTemplates = columns.map(column => column.gridTemplate || 1);
-    const templates: string[] = [];
-    columnsTemplates.forEach(template => {
-      if (typeof template === 'number') {
-        templates.push(`${template}fr`);
-      } else if (typeof template === 'string') {
-        templates.push(template);
-      }
-    });
-
-    return templates.join(' ');
+    return columns.map(getGridTemplateColumn).join(' ');
   }, [columns]);
+  const minTableWidth = React.useMemo(
+    () => columns.reduce((total, column) => total + getGridTemplateColumnMinWidth(column), 0),
+    [columns]
+  );
   const [isIncreasingOrder, setIsIncreasingOrder] = React.useState(
     !defaultSortingColumn || defaultSortingColumn > 0
   );
@@ -395,7 +421,7 @@ export default function SimpleTable(props: SimpleTableProps) {
           }
           <Table
             sx={theme => ({
-              minWidth: '100%',
+              minWidth: `${minTableWidth}px`,
               width: 'auto',
               display: 'grid',
               gridTemplateColumns: gridTemplateColumns || '1fr',
@@ -415,12 +441,17 @@ export default function SimpleTable(props: SimpleTableProps) {
               '& .MuiTableBody-root': {
                 ...(theme.palette.table.rowHover
                   ? {
-                      '& .MuiTableRow-root:hover .MuiTableCell-root, & .MuiTableRow-root:focus-within .MuiTableCell-root':
-                        {
-                          background: theme.palette.table.rowHover,
-                        },
+                      '& .MuiTableRow-root:hover, & .MuiTableRow-root:focus-within': {
+                        '--headlamp-simple-table-row-bg': theme.palette.table.rowHover,
+                      },
                     }
                   : {}),
+                '& .MuiTableRow-root': {
+                  '--headlamp-simple-table-row-bg': theme.palette.background.paper,
+                },
+                '& .MuiTableRow-root .MuiTableCell-root': {
+                  background: 'var(--headlamp-simple-table-row-bg)',
+                },
                 '& .MuiTableRow-root:last-child': {
                   '& .MuiTableCell-root': {
                     borderBottom: 'none',
