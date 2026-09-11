@@ -30,6 +30,7 @@ import { getRouteUseClusterURL } from '../../lib/router/getRouteUseClusterURL';
 import { Route as RouteType } from '../../lib/router/Route';
 import { useTypedSelector } from '../../redux/hooks';
 import { uiSlice } from '../../redux/uiSlice';
+import ClusterConnecting from '../cluster/ClusterConnecting';
 import ErrorBoundary from '../common/ErrorBoundary';
 import ErrorComponent from '../common/ErrorPage';
 import { useSidebarItem } from '../Sidebar';
@@ -229,6 +230,17 @@ function AuthRoute(props: AuthRouteProps) {
           }}
         />
       );
+    }
+
+    // Auth/status check still in flight (e.g. opened a cluster whose status
+    // hadn't loaded yet, or a deep link / bookmark). Show an explicit
+    // "connecting" screen and stay on it until the check resolves, instead of a
+    // blank page that would otherwise fall through to the auth screen while the
+    // API server is still being reached. Once it resolves we render the cluster
+    // (success) or redirect to the normal auth flow (error) via the branches
+    // above.
+    if (cluster && requiresAuth) {
+      return <ClusterConnecting clusterName={cluster} />;
     }
 
     return null;

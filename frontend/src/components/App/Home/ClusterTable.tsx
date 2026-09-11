@@ -347,6 +347,47 @@ export default function ClusterTable({
           gridTemplate: 2,
           Cell: ({ row: { original } }) => {
             const appearance = getClusterAppearanceFromMeta(original.name);
+            const badge = (
+              <ClusterBadge
+                name={original.name}
+                icon={appearance.icon}
+                accentColor={appearance.accentColor}
+              />
+            );
+
+            // While the cluster is connected/being polled but hasn't reported a
+            // status yet (errors[name] === undefined => "Connecting…"), don't let
+            // the user open it: navigating now would run testAuth against an API
+            // server that isn't reachable yet and drop them on the ambiguous
+            // "Failed to get authentication information" screen. The link is
+            // re-enabled automatically once the status resolves to any state
+            // (Active, Unavailable, Authentication required, …).
+            const isStatusLoading =
+              isClusterConnected(original.name) && errors[original.name] === undefined;
+
+            if (isStatusLoading) {
+              return (
+                <LightTooltip
+                  title={t(
+                    'translation|Connecting… you can open this cluster once its status has loaded.'
+                  )}
+                >
+                  <Box
+                    component="span"
+                    aria-disabled="true"
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      opacity: 0.6,
+                      cursor: 'not-allowed',
+                    }}
+                  >
+                    {badge}
+                  </Box>
+                </LightTooltip>
+              );
+            }
+
             return (
               <LightTooltip title={original.name}>
                 {/* Record as recently-used on open so it auto-connects on return.
@@ -362,11 +403,7 @@ export default function ClusterTable({
                   }}
                 >
                   <Link routeName="cluster" params={{ cluster: original.name }}>
-                    <ClusterBadge
-                      name={original.name}
-                      icon={appearance.icon}
-                      accentColor={appearance.accentColor}
-                    />
+                    {badge}
                   </Link>
                 </span>
               </LightTooltip>
