@@ -184,7 +184,7 @@ const defaultRoutes: { [routeName: string]: Route } = {
     ),
   },
   projectDetails: {
-    path: '/project/:name',
+    path: '/project/:cluster/:name',
     exact: true,
     name: 'Project Details',
     sidebar: {

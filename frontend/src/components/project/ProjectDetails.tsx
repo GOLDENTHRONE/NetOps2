@@ -56,6 +56,7 @@ import { ResourceCategoriesList } from './ResourceCategoriesList';
 import { useProjectItems } from './useProjectResources';
 
 interface ProjectDetailsParams {
+  cluster: string;
   name: string;
 }
 
@@ -97,8 +98,8 @@ const DEFAULT_TABS: Record<string, ProjectDetailsTab> = {
 
 export default function ProjectDetails() {
   const { t } = useTranslation();
-  const { name } = useParams<ProjectDetailsParams>();
-  const { project, isLoading: isProjectLoading } = useProject(name);
+  const { cluster, name } = useParams<ProjectDetailsParams>();
+  const { project, isLoading: isProjectLoading } = useProject(cluster, name);
 
   const pluginApiResources = useTypedSelector(state => state.projects.apiResources);
 
@@ -633,7 +634,7 @@ export function ProjectDetailsContent({ project }: { project: ProjectDefinition 
           title={
             <Box display="flex" alignItems="center" gap={1} sx={{ py: 2 }}>
               <Typography variant="h5" component="span" sx={{ mr: 'auto' }}>
-                {project.id}
+                {project.namespaces[0] ?? project.id}
               </Typography>
 
               {headerActions}
