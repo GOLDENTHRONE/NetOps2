@@ -1,0 +1,132 @@
+================================================================================
+p1.txt — VERIFICATION TASK
+Goal: prove the planned "one row per (cluster, namespace)" change to the
+Applications tab is ISOLATED and does NOT affect the All Clusters tab or any
+other tab/functionality. Run this in a session that has the real cluster(s)
+connected on branch GT_D_V1, then paste the results back.
+================================================================================
+
+------------------------------------------------------------------------------
+IMPORTANT — SAFETY / PRIVACY (read first)
+------------------------------------------------------------------------------
+- Do NOT paste any secrets into your results: no tokens, passwords, kubeconfig
+  contents, real cluster API hostnames/IPs, or real/internal namespace names.
+  Replace any such value with a GENERIC placeholder (e.g. cluster-A, ns-foo,
+  <redacted>). If a test log prints a secret, redact it before sharing.
+- Do a scratch/throwaway branch for any code you write. Do NOT push to GT_D_V1.
+- Do NOT open a pull request. This task only produces a written report.
+
+------------------------------------------------------------------------------
+BACKGROUND (what is changing and why)
+------------------------------------------------------------------------------
+The Applications tab lives at:
+  - list:    route "/projects"        -> frontend/src/components/project/ProjectList.tsx
+  - details: route "/project/:name"   -> frontend/src/components/project/ProjectDetails.tsx
+  - route def: frontend/src/lib/router/index.tsx  (key: projectDetails)
+
+Today an "application" = a namespace name. Namespaces with the SAME NAME across
+multiple clusters are COLLAPSED into one row, and health is computed over the
+pooled resources of all those clusters (one worst-wins verdict). See
+discoverProjectsFromNamespaces() in ProjectList.tsx.
+
+PLANNED CHANGE (the "flat" model):
+  One row per (cluster, namespace). Each row = one application instance in
+  exactly ONE cluster and ONE namespace, with its OWN independent health.
+  i.e. discoverProjectsFromNamespaces() should emit one ProjectDefinition per
+  (cluster, namespace): id = `${cluster}/${namespace}`, clusters:[cluster],
+  namespaces:[namespace]. Plus a "Cluster" table column. The health logic
+  (localHealth.ts / getLocalHealth / localGetItemStatus) needs NO change.
+
+The concern we are verifying: does this touch the "All Clusters" tab (Home,
+route "/") or any other tab? Prove yes/no with evidence.
+
+------------------------------------------------------------------------------
+PART A — STATIC ISOLATION (no code change; read-only analysis)
+------------------------------------------------------------------------------
+A1. List EVERY file that imports from `components/project/` OR references any of:
+    discoverProjectsFromNamespaces, useProject, useProjects, PROJECT_ID_LABEL.
+    Command hint:
+      grep -rn "components/project\|discoverProjectsFromNamespaces\|useProjects\?\b" frontend/src --include=*.ts --include=*.tsx
+    REPORT the full file list. EXPECTED: only files inside
+    frontend/src/components/project/ (and their tests). Flag anything else.
+
+A2. Confirm the All Clusters tab does NOT depend on project code.
+    - Open frontend/src/components/App/Home/index.tsx (route "/") and its
+      imported children. Confirm none import from components/project/.
+    - Command hint:
+      grep -rn "components/project" frontend/src/components/App/Home/
+    REPORT: PASS (no matches) or FAIL (list matches).
+
+A3. List every file that would need editing for the flat model and confirm each
+    is Applications-scoped. EXPECTED edit set:
+      - frontend/src/components/project/ProjectList.tsx (discovery + Cluster column)
+      - frontend/src/components/project/ProjectDetails.tsx (resolve composite id)
+      - frontend/src/lib/router/index.tsx (ONLY the projectDetails route entry)
+    Confirm no OTHER route entry in router/index.tsx is affected, and that the
+    home "/" route is untouched.
+
+A4. Find every consumer of the projectDetails route / project.id OUTSIDE the
+    project/ folder:
+      grep -rn "routeName=\"projectDetails\"\|createRouteURL('projectDetails'\|/project/" frontend/src --include=*.tsx --include=*.ts
+    REPORT the list. (These are the places that must keep working after the id
+    becomes `${cluster}/${namespace}`.)
+
+A5. Confirm the shared hooks are only CALLED, never required to change:
+    - frontend/src/components/advancedSearch/utils/useKubeLists.ts (shared with
+      Advanced Search) — confirm the flat model does not need to modify it.
+    - Namespace.useList (frontend/src/lib/k8s/namespace.ts) — same.
+    REPORT: confirmed / concerns.
+
+------------------------------------------------------------------------------
+PART B — BASELINE GREEN (unchanged code)
+------------------------------------------------------------------------------
+Run each and REPORT pass/fail + first error lines (redacted):
+  B1. Type check:        (repo's typecheck, e.g. `make frontend-typecheck` or
+                          `cd frontend && npm run tsc` — use what the repo has)
+  B2. Lint:              (repo's frontend lint)
+  B3. Project tests:     cd frontend && npm test -- project
+                          (ProjectList.test, ProjectDetails.test,
+                           localHealth.test, useLocalHealthItems.test)
+  B4. Production build:  (repo's frontend build)
+This establishes everything is green BEFORE any change.
+
+------------------------------------------------------------------------------
+PART C — RUNTIME VERIFICATION WITH THE CHANGE (throwaway branch)
+------------------------------------------------------------------------------
+C1. Create a scratch branch off GT_D_V1 (e.g. verify/flat-app-rows). Implement
+    the minimal flat model:
+      - discoverProjectsFromNamespaces(): one ProjectDefinition per
+        (cluster, namespace); id = `${cluster}/${namespace}`.
+      - Add a "Cluster" column to the table in ProjectList.tsx.
+      - Make the details route carry the cluster and make useProject() resolve
+        by the composite id; update the projectDetails Link/createRouteURL calls
+        to pass it. Encode the "/" safely (e.g. encodeURIComponent) so the
+        route param does not break.
+    Keep the change MINIMAL and inside the files listed in A3.
+
+C2. Re-run B1–B4. REPORT results. KEY SIGNAL: did anything OUTSIDE the
+    project/ folder (other than the single projectDetails route entry) fail to
+    compile or need changing? If yes, list it — that is the real risk.
+
+C3. Run the app against the connected cluster(s). Verify and REPORT PASS/FAIL
+    with a one-line note each:
+      a. All Clusters tab ("/") loads; clicking into a cluster still works.
+      b. 2-3 other tabs still work (e.g. Workloads/Pods, Services, and one
+         resource Details page).
+      c. Applications tab now shows ONE ROW PER (cluster, namespace). If the
+         same namespace name exists in 2 clusters, it appears as 2 SEPARATE
+         rows, each with its own Status.
+      d. Clicking a row's name opens the CORRECT instance's details page — the
+         right cluster, not a collision to a same-named namespace elsewhere.
+      e. The health Status column still renders (Healthy/Degraded/Unhealthy/
+         Progressing/No Workloads/Unavailable) and the evidence popover opens.
+
+------------------------------------------------------------------------------
+OUTPUT FORMAT (paste this back)
+------------------------------------------------------------------------------
+For every item A1..A5, B1..B4, C1..C3: write the ID, PASS or FAIL, and 1-3 lines
+of evidence (redacted). End with:
+  - "FILES CHANGED OUTSIDE project/ (besides projectDetails route): <list or NONE>"
+  - "VERDICT: isolated & safe? YES / NO / PARTIAL — <one sentence why>"
+Remember: redact all secrets and real names before sharing the report.
+================================================================================
