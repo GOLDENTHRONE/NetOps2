@@ -25,6 +25,47 @@ SAFETY / PRIVACY (read first)
 - This task produces only a written report (+ screenshots if possible).
 
 ------------------------------------------------------------------------------
+ACCESS PREFLIGHT HELPER — run this FIRST (~2 min). It tells you, BEFORE the
+big run, whether any cluster will actually return live data (HTTP 200). The
+last runs failed here: the UI showed CACHED rows while the live API returned
+403 Forbidden (token expired / no RBAC) and 502 (local clusters not running).
+The app reads clusters through the same kubeconfig kubectl uses, so these
+checks mirror what the app will get.
+------------------------------------------------------------------------------
+H1. List the configured clusters/contexts:
+       kubectl config get-contexts
+H2. For EACH context, try the exact call the app makes — list namespaces:
+       kubectl --context <ctx> get ns
+    Read the result:
+      * A LIST of namespaces  = HTTP 200  -> USABLE. Note this context/cluster;
+        the whole p3 run can proceed against it.
+      * "Forbidden" / "403"   = authenticated but NOT allowed (RBAC) OR the
+        token is EXPIRED. FIX:
+          - OpenShift (api-...:6443): re-login to refresh the token, e.g.
+              oc login <api-url> -u <user>        (or --token=<fresh-token>)
+            then re-run H2. A login page appearing in the app = this is needed.
+          - Non-OpenShift: refresh that kubeconfig user's credentials.
+          - Or pick a cluster/namespace where you DO have list permission.
+      * "Unable to connect" / "connection refused" / timeout / 502 = the
+        cluster is NOT RUNNING / unreachable. FIX:
+          - minikube:        minikube start
+          - docker-desktop:  enable Kubernetes in Docker Desktop settings
+            then re-run H2.
+H3. STOP-GATE: do NOT start the R checks until at least ONE context returns a
+    namespace LIST in H2. If none do, report the H2 status codes per context
+    and mark the run BLOCKED — that is the honest result.
+
+OPTIONAL (makes the duplicate-name + masking edge cases R4/R5/R8 testable):
+    On TWO usable contexts, create the SAME non-system namespace name in both,
+    and a tiny workload so a real Status shows, e.g.:
+       kubectl --context <A> create ns demo-shop
+       kubectl --context <B> create ns demo-shop
+       kubectl --context <A> -n demo-shop create deployment web --image=nginx
+    Now "demo-shop" should appear as TWO rows (one per cluster) in the
+    Applications tab — the exact case R4/R5 need. Delete them after:
+       kubectl --context <A> delete ns demo-shop ; kubectl --context <B> delete ns demo-shop
+
+------------------------------------------------------------------------------
 HARD PREFLIGHT — you MUST pass this before any R item below
 ------------------------------------------------------------------------------
 P0. Check out verify/flat-app-rows, install deps if needed, and start the
