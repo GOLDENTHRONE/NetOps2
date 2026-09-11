@@ -219,6 +219,14 @@ export default function ClusterTable({
   const isClusterConnected = (clusterName: string) =>
     connectedClusterNames ? connectedClusterNames.has(clusterName) : true;
 
+  // True while the cluster is being polled but hasn't reported a status yet
+  // (the "Connecting…" state). This is the only state in which we block opening
+  // the cluster from the Home page; once the status resolves to anything
+  // (Active, Unavailable, Authentication required, …) the link is enabled again.
+  function isClusterStatusLoading(cluster: Cluster) {
+    return isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined;
+  }
+
   function getPlainStatusText(cluster: Cluster) {
     return !isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined
       ? t('translation|Not connected')
@@ -343,7 +351,16 @@ export default function ClusterTable({
         {
           id: 'name',
           header: t('Name'),
-          accessorKey: 'name',
+          // The accessor value encodes the connecting state as well as the name.
+          // The table memoizes each body cell on its accessor value (see
+          // common/Table's MemoCell), so without the suffix the name cell would
+          // never re-render when the status resolves and the disabled link would
+          // stay stuck. Sorting/filtering remain name-based via the fns below.
+          accessorFn: cluster =>
+            `${cluster.name} ${isClusterStatusLoading(cluster) ? 'connecting' : 'ready'}`,
+          sortingFn: (rowA, rowB) => rowA.original.name.localeCompare(rowB.original.name),
+          filterFn: (row, _columnId, filterValue) =>
+            row.original.name.toLowerCase().includes(String(filterValue).toLowerCase()),
           gridTemplate: 2,
           Cell: ({ row: { original } }) => {
             const appearance = getClusterAppearanceFromMeta(original.name);
@@ -362,10 +379,7 @@ export default function ClusterTable({
             // "Failed to get authentication information" screen. The link is
             // re-enabled automatically once the status resolves to any state
             // (Active, Unavailable, Authentication required, …).
-            const isStatusLoading =
-              isClusterConnected(original.name) && errors[original.name] === undefined;
-
-            if (isStatusLoading) {
+            if (isClusterStatusLoading(original)) {
               return (
                 <LightTooltip
                   title={t(
