@@ -1,0 +1,303 @@
+================================================================================
+p4.txt — APPLICATIONS TAB: ONE ROW PER (CLUSTER, NAMESPACE)
+Complete record: agenda -> why -> what we found -> what we achieved ->
+how to implement -> how to verify -> what is still unproven.
+This file supersedes p1/p2/p3 (those were investigation steps).
+================================================================================
+
+--------------------------------------------------------------------------------
+0. SAFETY / PRIVACY (applies to everything below)
+--------------------------------------------------------------------------------
+- Never put secrets in code, tests, commits or reports: no tokens, passwords,
+  kubeconfig contents, real cluster API hostnames/IPs, or internal
+  cluster/namespace/person names. Use generic placeholders only
+  (cluster-a, cluster-b, ns-foo, app-prod, billing, <redacted>).
+- All test fixtures must be generic. Do not commit real environment names.
+- Do not open a pull request unless explicitly asked.
+- NOTE (pre-existing, unrelated to this work): the repo already contains some
+  non-generic hard-coded values worth cleaning up separately —
+  two entries in SYSTEM_NAMESPACE_NAMES (projectUtils.ts) look like an
+  organisation abbreviation and a person's name, and a comment in
+  localHealth.ts embeds an internal-looking job name. No credentials were
+  found anywhere. These were NOT changed as part of this work.
+
+--------------------------------------------------------------------------------
+1. AGENDA — what we are doing
+--------------------------------------------------------------------------------
+Change the Applications tab so that EVERY ROW IS EXACTLY ONE APPLICATION
+INSTANCE IN ONE CLUSTER AND ONE NAMESPACE, each with its own independently
+computed health status.
+
+Hard constraint: nothing else may change. No other tab (especially "All
+Clusters"), no shared hook, no other functionality.
+
+--------------------------------------------------------------------------------
+2. HOW THE APPLICATIONS TAB WORKS TODAY (established by reading the code)
+--------------------------------------------------------------------------------
+- Sidebar "Applications" -> route "/projects" -> components/project/ProjectList.tsx.
+  Details route "/project/:name" -> components/project/ProjectDetails.tsx.
+  Internally the code calls these "projects"; the UI calls them Applications.
+- There is no separate "application" object. An application IS a namespace:
+  discoverProjectsFromNamespaces() lists every namespace the token can see and
+  drops system/infrastructure ones (isSystemNamespace in projectUtils.ts).
+  Application name = namespace name.
+- Health is computed CLIENT-SIDE, in two layers (localHealth.ts):
+  (a) per resource — localGetItemStatus() returns
+      success | warning | error | progressing | unknown
+      (Pod CrashLoopBackOff/ImagePullBackOff -> error; Running-but-not-Ready ->
+       warning; Pending/rollout -> progressing; Deployment/StatefulSet/DaemonSet
+       compare desired vs ready/updated; Endpoints with no ready pods behind a
+       Service -> warning; PVC Lost -> error; etc.)
+  (b) per application — getLocalHealth() takes the WORST severity:
+      any error -> Unhealthy | any warning -> Degraded | any progressing ->
+      Progressing | any unknown -> Unknown | else Healthy.
+      No resources -> "No Resources"; resources but no workload -> "No Workloads";
+      fetch failed -> "Unavailable".
+  It is binary worst-case, not proportional: 1 bad pod out of 100 = Unhealthy.
+- Job, CronJob and HorizontalPodAutoscaler are NON_HEALTH_BEARING: their
+  problems appear under "Needs Attention" but never change the badge. Job-owned
+  Pods (Helm hooks) and Deployment-owned ReplicaSets are likewise excluded.
+- Refresh: 60-second POLLING, not a live watch (REFETCH_INTERVAL_MS = 60_000 in
+  useProjectResources.ts and useLocalHealthItems.ts; watch is disabled).
+  Health is computed lazily per VISIBLE row, so sorting only reflects rendered rows.
+- Caveat worth knowing: useKubeLists caps at MAX_ITEMS = 1000 per kind and DROPS
+  a kind entirely if it exceeds that, silently. Large namespaces can therefore be
+  judged on incomplete data. Pre-existing; not addressed here.
+
+--------------------------------------------------------------------------------
+3. THE PROBLEM — three real defects
+--------------------------------------------------------------------------------
+Today discoverProjectsFromNamespaces() GROUPS BY NAMESPACE NAME, so a namespace
+existing in several clusters collapses into ONE row spanning all of them, and
+health is computed over the POOLED resources of every cluster. Therefore:
+ (a) MASKING — healthy in cluster-A, one crashing pod in cluster-B reads as a
+     single "Unhealthy" row with no way to see which cluster is at fault.
+ (b) FALSE "UNAVAILABLE" — LocalHealthCell uses only the FIRST fetch error, so one
+     unreachable cluster marks the whole application Unavailable even when the
+     others are perfectly healthy.
+ (c) NO ATTRIBUTION — LocalHealthEvidence has kind/namespace/name but NO cluster,
+     so even the popover cannot say which cluster a failing resource is in.
+
+--------------------------------------------------------------------------------
+4. THE DECISION (and the alternative we rejected)
+--------------------------------------------------------------------------------
+Chosen: FLAT model — one row per (cluster, namespace).
+A deployed instance genuinely lives in exactly one cluster + one namespace, so
+this is the most truthful representation, and the health algorithm needs NO
+change: each row fetches a single cluster + namespace, so getLocalHealth()
+already describes exactly one instance.
+
+Considered and rejected for now: a GROUPED/expandable model (parent row per
+logical app with per-cluster child rows). It preserves a fleet-wide "is this app
+OK everywhere?" line, but it is more work and was explicitly not wanted.
+Honest trade-off accepted: with the flat model there is NO fleet rollup row, and
+the list is longer on multi-cluster fleets. A grouped parent row can be added
+later on top of these instance rows — additive, not a rewrite.
+
+Note: auto-discovery never put multiple namespaces in one application; the only
+collapsing was same-named namespaces across clusters. That is what this removes.
+
+--------------------------------------------------------------------------------
+5. WHAT WE ACHIEVED SO FAR (the honest journey, including mistakes)
+--------------------------------------------------------------------------------
+5.1 Isolation was proven. Only ONE file outside components/project/ needs to
+    change: the single projectDetails entry in lib/router/index.tsx.
+    Correction to an earlier wrong claim: App/Home/index.tsx (the "/" page) DOES
+    import ProjectList — All Clusters and Applications are the SAME Home
+    component switched by a `view` state ('clusters' | 'projects'). That is a
+    shared container, but the cluster list renders a different component
+    (ClusterTable), so changing ProjectList's internals does not change the
+    All Clusters view. Shared hooks (useKubeLists in advancedSearch/utils, and
+    Namespace.useList) are only CALLED, never edited.
+
+5.2 A real bug was found and fixed. There are TWO projectDetails links in
+    ProjectList.tsx. An earlier attempt updated only the Name-column link and
+    left the health-popover evidence link passing the raw id — which would have
+    broken "click a failing resource" navigation. Both now go through one helper.
+
+5.3 A routing footgun was avoided. Making id = `cluster/namespace` puts a "/"
+    inside a single :name route parameter, which is fragile through generatePath
+    and on hard reload (404 or %252F double-encoding). The route was therefore
+    changed to TWO EXPLICIT SEGMENTS: /project/:cluster/:name.
+
+5.4 The logic was validated against the REAL algorithm. localHealth.ts (1305
+    lines) was executed verbatim (only its two import lines swapped) against
+    generic fake clusters: 40 scenario assertions, 40 passed, 0 failed —
+    including same-namespace-in-two-clusters producing two rows with DIFFERENT
+    health (masking fixed), route round-trips resolving to exactly one instance
+    (including a dotted cluster name), unreachable-cluster isolation, all health
+    states, and non-health-bearing Job / Helm-hook-Pod behaviour.
+
+5.5 The change was implemented and measured against a self-measured baseline.
+    CRITICAL, MUST NOT BE GLOSSED OVER: this repository's test suite is ALREADY
+    RED before any change. "All tests pass" is not achievable here. The correct
+    bar is ZERO NEW FAILURES.
+      BASELINE (clean): tests 280 failed | 3107 passed (3387); 10 failing files
+                        typecheck 7 errors (6 localHealth.test.ts,
+                        1 useLocalHealthItems.test.tsx)
+                        pre-existing failures include App/Home/ClusterTable (2),
+                        Sidebar (4), lib/k8s/index (12), storybook (249)
+      AFTER:            tests 279 failed | 3111 passed (3390); SAME 10 failing
+                        files; typecheck SAME 7 errors (0 new)
+                        (+3 new tests; storybook 249->248, incidental/likely flaky)
+    The 7 typecheck errors were PROVEN pre-existing by stashing the change and
+    re-running the typecheck on clean code. ESLint, Prettier and the production
+    build all pass.
+    One failure WAS introduced during the work (a test asserting the old id
+    format) and was found and fixed rather than hidden.
+
+5.6 What repeatedly blocked us, and why it is NOT a code problem: live browser
+    verification never succeeded because the environment running the app could
+    not read the cluster — the namespace API returned 403 Forbidden, cluster
+    navigation hit a login redirect and 502, and local clusters were unreachable.
+    UI rows kept appearing from CACHED state, which is not proof. Separately,
+    `oc auth can-i list namespaces` returned "yes" from the developer's own
+    laptop, so the account HAS the permission; the credential used by the app's
+    environment is simply not the same working one. An earlier claim that "the
+    token is stale" was an assumption stated as fact and was wrong — the only
+    hard evidence is the 403 itself.
+
+--------------------------------------------------------------------------------
+6. IMPLEMENTATION — exact changes (6 files)
+--------------------------------------------------------------------------------
+6.1 frontend/src/components/project/ProjectList.tsx
+  a) Discovery — replace the groupBy collapse with a flat map:
+       const visible = namespaces.filter(
+         n => n.metadata?.name && !isSystemNamespace(n.metadata.name)
+       );
+       return visible.map(({ metadata, cluster }) => ({
+         id: `${cluster}/${metadata.name}`,
+         namespaces: [metadata.name],
+         clusters: [cluster],
+       }));
+     KEEP the `n.metadata?.name` guard (regression #5254) and the
+     isSystemNamespace exclusion. Remove the now-unused `groupBy` lodash import
+     (keep `uniq` — still used for namespace filter options).
+  b) Add an exported helper:
+       export function projectDetailsParams(project: ProjectDefinition) {
+         return { cluster: project.clusters[0] ?? '', name: project.namespaces[0] ?? '' };
+       }
+  c) useProject(name) -> useProject(cluster, name); resolve with
+       project.clusters[0] === cluster && project.namespaces[0] === name
+     falling back to { id: `${cluster}/${name}`, clusters: [], namespaces: [] }.
+     Add `cluster` to the useMemo dependency array.
+  d) BOTH projectDetails links must use the helper (this is the easy-to-miss step
+     that silently breaks the popover):
+       - the Name column cell — display the NAMESPACE, not the composite id;
+       - EvidenceRow inside the health popover.
+     Change EvidenceRow / EvidenceSection to accept `project: ProjectDefinition`
+     instead of `projectId: string` and pass params={projectDetailsParams(project)}.
+  e) Column: id 'clusters' / t('Clusters') / clusters.join(', ')
+     becomes  id 'cluster'  / t('Cluster')  / clusters[0] ?? ''.
+
+6.2 frontend/src/lib/router/index.tsx
+     projectDetails path: '/project/:name' -> '/project/:cluster/:name'
+     TWO explicit segments. Do NOT pass a composite id through one parameter.
+     Leave every other route untouched; '/project/create-yaml' must stay declared
+     BEFORE the two-segment route.
+
+6.3 frontend/src/components/project/ProjectDetails.tsx
+     - ProjectDetailsParams gains `cluster: string`.
+     - const { cluster, name } = useParams<ProjectDetailsParams>();
+       const { project } = useProject(cluster, name);
+     - Title renders project.namespaces[0] ?? project.id (namespace, not raw id).
+
+6.4 frontend/src/components/project/NewProjectPopup.tsx
+     createRouteURL('projectDetails', { cluster: selectedClusters[0], name: projectName })
+
+6.5 frontend/src/components/project/ProjectCreateFromYaml.tsx
+     Both redirects take a cluster: `selectedClusters!` for the history.push and
+     `selectedClusters ?? ''` for the success <Redirect>.
+
+6.6 frontend/src/components/project/ProjectList.test.tsx
+     Update expectations to the new id format and ADD tests for:
+       - a same-named namespace across two clusters -> TWO rows with unique ids
+       - every row has exactly one cluster and one namespace
+       - projectDetailsParams routes each instance to its own cluster
+       - params round-trip back to exactly ONE instance, including a cluster name
+         containing a dot (e.g. 'cluster.one')
+
+DO NOT modify localHealth.ts. DO NOT modify useKubeLists or Namespace.useList.
+
+--------------------------------------------------------------------------------
+7. VERIFICATION PROTOCOL ("nothing breaks")
+--------------------------------------------------------------------------------
+7.1 Measure the BASELINE FIRST on clean code (stash or check out the base commit):
+      node node_modules/vitest/vitest.mjs run --reporter=basic --no-coverage
+      npx tsgo --noEmit
+    Record total pass/fail, the list of failing FILES with counts, and the
+    typecheck error count. Expect it to be RED already (see 5.5).
+7.2 Apply the change, re-run the SAME commands, and DIFF:
+      - failing-file list identical (counts included)
+      - typecheck error count identical (same files)
+      - total failures must NOT increase
+7.3 Also require clean:
+      npx eslint -c package.json --ext .ts,.tsx src/components/project src/lib/router
+      npx prettier --check <changed files>
+      npm run build
+7.4 Isolation check: the ONLY file changed outside components/project/ must be
+    lib/router/index.tsx (one route entry). If anything else changed, stop and
+    report it — that is the real risk signal.
+7.5 Logic scenarios (no cluster needed) — all must hold:
+      - same namespace in 2 clusters -> 2 rows, unique ids, INDEPENDENT health
+      - route params round-trip to exactly one instance, incl. dotted cluster names
+      - system namespaces hidden; items without metadata.name dropped
+      - unreachable cluster -> only that row Unavailable; sibling keeps real health
+      - health states reachable: No Resources / No Workloads / Healthy / Degraded /
+        Unhealthy / Progressing
+      - failed Job and Job-owned (Helm hook) failed Pod -> "Needs Attention" only,
+        badge unchanged
+      - namespace filter returns BOTH cluster instances of a shared namespace
+7.6 LIVE check — only if the cluster actually returns data (a namespace list with
+    HTTP 200 AND items). If it returns 401/403/502 or a login redirect, STOP and
+    report "NOT VERIFIED". Never infer a live PASS from cached UI rows.
+    With ONE cluster you can still verify:
+      - a "Cluster" column is present and there is one row per namespace
+      - clicking a row opens THAT namespace's details page
+      - F5 on that page, and pasting the URL into a new tab, both still resolve
+      - the URL is /project/<cluster>/<namespace>
+      - a health popover opens and its evidence link navigates correctly
+    The two-clusters-same-namespace case needs two clusters; if unavailable it is
+    already covered by the unit tests in 6.6 — mark it N/A, not FAIL.
+
+--------------------------------------------------------------------------------
+8. KNOWN BEHAVIOUR CHANGES (state them; do not hide them)
+--------------------------------------------------------------------------------
+- Old bookmarks of the form /project/<namespace> no longer resolve. The details
+  URL is now /project/<cluster>/<namespace>.
+- The Applications list now counts INSTANCES, not logical applications, so it is
+  longer on multi-cluster fleets. The namespace filter still works; adding a
+  cluster filter is a sensible follow-up.
+- There is no fleet-wide rollup row (see section 4).
+- Unchanged: the health algorithm, the 60s polling refresh, and the
+  Job/CronJob/HPA "Needs Attention" behaviour.
+
+--------------------------------------------------------------------------------
+9. WHAT IS STILL NOT PROVEN (be honest about this)
+--------------------------------------------------------------------------------
+- LIVE browser click-through has NEVER been verified against a real cluster,
+  because no environment used so far could read one (403/502/login). This is an
+  access problem, not a code problem. Correctness is supported by 40 scenario
+  assertions against the real algorithm plus the repo's own tests, but nobody has
+  yet clicked a row in a browser against live data.
+- The storybook failure count moved 249 -> 248 after the change; this is
+  unexplained and most likely flaky. No credit is claimed for it.
+- The MAX_ITEMS=1000 silent-drop caveat (section 2) is untouched and still applies.
+
+--------------------------------------------------------------------------------
+10. ROLLBACK
+--------------------------------------------------------------------------------
+Six files, no data/storage/API shape changes. `git revert` of the single
+implementation commit restores the previous pooled behaviour.
+
+--------------------------------------------------------------------------------
+11. REPORT BACK IN THIS FORMAT
+--------------------------------------------------------------------------------
+  BASELINE  tests: <failed>/<passed>   typecheck: <n> errors   failing files: <list>
+  AFTER     tests: <failed>/<passed>   typecheck: <n> errors   failing files: <list>
+  NEW FAILURES INTRODUCED: <list or NONE>
+  FILES CHANGED OUTSIDE components/project/: <list — expect only lib/router/index.tsx>
+  LOGIC SCENARIOS (7.5): <pass/fail per item>
+  LIVE CHECK (7.6): PASS / PARTIAL / NOT VERIFIED (+ exact status codes if blocked)
+Redact all secrets and real names before sharing.
+================================================================================
