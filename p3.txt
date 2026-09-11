@@ -1,0 +1,117 @@
+================================================================================
+p3.txt — LIVE RUNTIME PROOF (real cluster required)
+Final step. p1 + p2 already PROVED the static side: the flat model
+(one row per cluster+namespace) is isolated, the route is now the safe
+two-segment /project/:cluster/:name, both details links agree, the discovery
+filter still hides system namespaces, no new type errors, build/lint/tests pass,
+and a routing regression test (12/12) proves a duplicate namespace name across
+two clusters resolves to the CORRECT instance.
+
+The ONE thing still unproven is LIVE browser behavior against a REAL cluster.
+The last two attempts could not prove it because the environment had NO usable
+authenticated cluster (backend returned 502 / login / "Unreachable"). This task
+does ONLY that live proof. Do NOT redo the static checks.
+================================================================================
+
+------------------------------------------------------------------------------
+SAFETY / PRIVACY (read first)
+------------------------------------------------------------------------------
+- Do NOT paste secrets: no tokens, passwords, kubeconfig contents, real cluster
+  API hostnames/IPs, or real/internal cluster or namespace names. Replace every
+  such value with a GENERIC placeholder (cluster-A, cluster-B, ns-foo,
+  <redacted>). Redact any secret a log prints before sharing.
+- Use the EXISTING scratch branch verify/flat-app-rows (it already has the p2
+  fixes). Do NOT push to GT_D_V1. Do NOT open a pull request.
+- This task produces only a written report (+ screenshots if possible).
+
+------------------------------------------------------------------------------
+HARD PREFLIGHT — you MUST pass this before any R item below
+------------------------------------------------------------------------------
+P0. Check out verify/flat-app-rows, install deps if needed, and start the
+    frontend (dev server or a served production build), noting the URL.
+P1. Confirm REAL authenticated cluster access. Evidence required: a namespace
+    list request for at least one cluster returns actual namespace data (HTTP
+    200 with items) — NOT 401/403/login-redirect, NOT 502, NOT "Unreachable".
+    Report the redacted proof (e.g. "GET namespaces on cluster-A -> 200, N items").
+P2. Ideally TWO reachable clusters, and at least ONE namespace name that exists
+    in BOTH (needed for the duplicate-name and masking tests). Report how many
+    reachable clusters you have and whether a shared namespace name exists.
+
+DECISION GATE:
+  - If P1 FAILS (no real cluster data): STOP. Report "NO CLUSTER ACCESS — LIVE
+    PROOF NOT POSSIBLE", list exactly what failed (status codes), and mark every
+    R item NOT-VERIFIED. Do NOT infer, do NOT mark anything PASS. This is the
+    honest outcome, not a failure of the change.
+  - If P1 passes but P2 does not (only one cluster, or no shared namespace):
+    run every R item you can; mark the duplicate-name/masking ones NOT-VERIFIED
+    and say why.
+  - Only mark an R item PASS if you actually observed it live with real data.
+
+------------------------------------------------------------------------------
+LIVE RUNTIME CHECKS (only after PREFLIGHT passes)
+------------------------------------------------------------------------------
+For each: PASS / FAIL / NOT-VERIFIED + 1-2 lines of redacted evidence
+(status code, observed URL, what rendered). Screenshot where useful.
+
+R1. ALL CLUSTERS tab ("/"): loads, lists the reachable cluster(s), and clicking
+    a cluster opens its cluster-scoped view with REAL data (not a login/502).
+    This proves the shared Home container still works after the change.
+R2. TWO OTHER TABS with real data: open a Workloads/Pods list, a Services list,
+    and one resource Details page. All load and navigate normally.
+R3. APPLICATIONS tab ("/projects"): loads with the "Cluster" column; every row
+    is exactly one (cluster, namespace) with a real Status badge.
+
+R4. DUPLICATE-NAME (needs 2 clusters sharing a namespace name): that namespace
+    appears as TWO separate rows, one per cluster, each with its OWN Status
+    (they may differ). The Cluster column distinguishes them.
+
+R5. CLICK-THROUGH (the critical proof). For each duplicate row:
+    - click the row NAME,
+    - RECORD the resulting URL (must be /project/<cluster>/<namespace>, redacted),
+    - CONFIRM the details page loaded resources from the CORRECT cluster (not the
+      other same-named namespace). Say how you confirmed (e.g. a resource unique
+      to that cluster is shown).
+    This is the whole point — prove no wrong-instance collision live.
+
+R6. HARD RELOAD + DEEP LINK: on that details page press F5 (hard reload), AND
+    copy the URL into a fresh browser tab. Confirm BOTH still resolve to the
+    correct instance and load its data. (This is where a bad route scheme breaks
+    — prove the two-segment route survives a real round-trip.)
+
+R7. HEALTH POPOVER: on an Applications row whose Status is Degraded/Unhealthy,
+    open the popover; confirm it renders evidence + inventory with real data.
+    Click an evidence resource link; RECORD the URL and confirm it navigates to
+    the CORRECT instance's details.
+
+R8. UNREACHABLE-CLUSTER MASKING (needs a namespace present in a reachable AND an
+    unreachable/paused cluster, or the ability to pause one): confirm ONLY the
+    unreachable cluster's row shows "Unavailable" while the reachable cluster's
+    row for the SAME namespace shows its real health. No masking, no false
+    "Unavailable" on the healthy one.
+
+R9. SINGLE-CLUSTER app: a namespace in only one cluster shows exactly ONE row.
+R10. SYSTEM NAMESPACES stay hidden (no kube-*, openshift-*, etc. rows).
+R11. NAMESPACE FILTER (top toolbar) filters the live list correctly.
+R12. HEALTH STATES: across the live fleet, confirm you can see a spread of
+     badges (Healthy / Degraded / Unhealthy / Progressing / No Workloads /
+     Unavailable as applicable), and that a Job/CronJob failure shows under
+     "Needs Attention" WITHOUT changing the row's badge.
+R13. SPECIAL CHARS: if any reachable cluster name contains a dot or other
+     non-alphanumeric char, confirm its rows + click-through (R5/R6) still work.
+R14. REFRESH: leave the Applications tab open ~60s (or trigger a refresh) and
+     confirm the list/health updates without console errors.
+
+------------------------------------------------------------------------------
+OUTPUT FORMAT (paste back)
+------------------------------------------------------------------------------
+- Line 1: "Cluster access available? YES / NO" with the P1 evidence.
+- P2: number of reachable clusters + shared-namespace availability.
+- R1..R14: ID, PASS / FAIL / NOT-VERIFIED, 1-2 lines redacted evidence.
+- For any FAIL, describe the wrong behavior precisely (what you clicked, the URL,
+  what loaded vs. what should have) so it can be fixed.
+- End with:
+    LIVE PROOF COMPLETE? YES (all R PASS) / PARTIAL (some NOT-VERIFIED — list) /
+      BLOCKED (no cluster access).
+    ANY WRONG-INSTANCE or BROKEN-ROUTE observed? YES (detail) / NO.
+- Redact all secrets and real names before sharing.
+================================================================================
