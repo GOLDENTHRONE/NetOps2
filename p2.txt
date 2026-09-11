@@ -1,0 +1,155 @@
+================================================================================
+p2.txt — DEEP VERIFICATION + REAL EDGE-CASE TESTING
+Follow-up to p1.txt. The p1 run proved the change is ISOLATED (no files outside
+components/project/ changed; lint + targeted tests + build pass; duplicate
+namespace name across two clusters produces two rows). But p1 did NOT prove the
+change actually WORKS, because:
+  - the runtime checks (C3 a/b/e) were NOT VERIFIED — the session had no
+    authenticated cluster access ("access-denied"), and
+  - two concrete correctness risks were never resolved (below).
+This task closes those gaps. It MUST be run in a session with REAL authenticated
+cluster access. If that is not available, STOP and say so — do NOT report
+"PASS by code path"; an unclicked path is not verified.
+================================================================================
+
+------------------------------------------------------------------------------
+SAFETY / PRIVACY (read first)
+------------------------------------------------------------------------------
+- Do NOT paste secrets into results: no tokens, passwords, kubeconfig contents,
+  real cluster API hostnames/IPs, or real/internal cluster or namespace names.
+  Replace every such value with a GENERIC placeholder (cluster-A, ns-foo,
+  <redacted>). Redact any secret a log prints before sharing.
+- Work on the existing scratch branch verify/flat-app-rows (or a new scratch
+  branch off GT_D_V1). Do NOT push to GT_D_V1. Do NOT open a pull request.
+- This task only produces code on a scratch branch + a written report.
+
+------------------------------------------------------------------------------
+RECAP OF THE CHANGE UNDER TEST (the "flat" model)
+------------------------------------------------------------------------------
+frontend/src/components/project/ProjectList.tsx now makes discovery emit ONE
+ProjectDefinition per (cluster, namespace): id = `${cluster}/${namespace}`,
+clusters:[cluster], namespaces:[namespace]. A "Cluster" column was added, and
+useProject() decodes the composite id. Health logic (localHealth.ts) is
+unchanged. Applications tab route: "/projects"; details route: "/project/:name".
+Note: the Applications tab and the All Clusters tab are the SAME component
+(App/Home/index.tsx) switched by a `view` state ('clusters' | 'projects') —
+"/" shows ClusterTable, "/projects" shows ProjectList. So the All Clusters view
+must be re-checked at runtime even though ProjectList changed.
+
+==============================================================================
+PART D — STATIC CORRECTNESS (fix + prove; no cluster needed)
+==============================================================================
+D1. TWO details links must be consistent. ProjectList.tsx has TWO links with
+    routeName="projectDetails":
+      (i)  the Name column cell  (params carries the row id)
+      (ii) the health-popover evidence row, EvidenceRow(), approx line 447:
+             <Link routeName="projectDetails" params={{ name: projectId }} ... >
+           where projectId = project.id (now the COMPOSITE id).
+    VERIFY both links pass the id through the SAME encoding as useProject()
+    expects to decode. If (ii) was left as raw project.id while (i) was changed,
+    the popover "click a failing resource" link is BROKEN. Report the exact code
+    of BOTH links and useProject()'s lookup, side by side. Fix (ii) to match.
+
+D2. ROUTING SCHEME. The id contains a "/". The route is single-segment
+    "/project/:name". Passing a value containing "/" through generatePath()
+    (lib/router/createRouteURL.tsx) + a manual encode/decode is fragile:
+    it can 404 (URL splits into two segments) or double-encode (%252F).
+    STRONGLY PREFERRED FIX: change the route to two real segments
+      "/project/:cluster/:name"
+    (update lib/router/index.tsx projectDetails path, ProjectDetails.tsx
+    useParams to read both, useProject() to match on cluster+namespace, and
+    BOTH links in D1 to pass {cluster, name}). This removes the "/"-in-a-param
+    problem entirely. If you instead keep a single param, justify why and prove
+    it survives D6/D7 below.
+    REPORT: which scheme is in place after your fix, and the diff.
+
+D3. DISCOVERY FILTER. Show the FULL `visible` filter line in
+    discoverProjectsFromNamespaces(). CONFIRM it still has BOTH:
+      - the metadata?.name guard (issue #5254), and
+      - !isSystemNamespace(metadata.name)
+    If isSystemNamespace was dropped, system namespaces (kube-*, openshift-*,
+    etc.) will flood the list — FAIL and fix.
+
+D4. DETAILS TITLE. ProjectDetails.tsx renders project.id as the title. With the
+    composite id it would show "cluster/namespace" instead of the namespace.
+    REPORT what the title shows; fix it to show a clean name (e.g. namespace,
+    with the cluster shown separately) rather than the raw composite id.
+
+D5. TSC BASELINE. p1 reported 7 tsc errors. PROVE they pre-exist on base:
+    check out GT_D_V1 clean, run the typecheck, and report whether the SAME 7
+    errors appear with NO change applied. If yes -> pre-existing, out of scope.
+    If the flat change adds ANY new tsc error, that is in scope — fix it.
+
+D6. Re-run after fixes: typecheck (note pre-existing vs new), lint, the project
+    test suite, and a production build. Report pass/fail + first error lines.
+
+D7. UNIT-TEST the routing round-trip (no cluster). Add/execute a test that, for
+    an id like cluster with a dot ("cluster.one") and namespace ("ns-foo"),
+    builds the details link the SAME way the Name cell does, then feeds the
+    resulting route param(s) into useProject()'s decode/lookup, and asserts it
+    resolves back to EXACTLY that (cluster, namespace) instance — not a
+    same-named namespace in another cluster. Report the assertion + result.
+
+==============================================================================
+PART E — REAL RUNTIME EDGE CASES (REQUIRES a live authenticated cluster)
+==============================================================================
+PREREQ: confirm you actually have authenticated access to at least one cluster
+(ideally two, with at least one namespace name present in BOTH). If not, STOP
+and report "NO CLUSTER ACCESS — runtime not verified", listing what is blocked.
+Do not substitute code-reading for any E item.
+
+Run the app (dev server or built) against the cluster(s). For each item report
+PASS/FAIL + one line of evidence (redacted). Take a screenshot where useful.
+
+E1. All Clusters tab ("/"): loads, lists clusters, and clicking a cluster opens
+    it (the cluster-scoped view) exactly as before. UNCHANGED behavior expected.
+E2. Two other tabs unaffected: e.g. a Workloads/Pods list, a Services list, and
+    one resource Details page all load and navigate normally.
+E3. Applications tab ("/projects"): loads; shows the new "Cluster" column; each
+    row is ONE (cluster, namespace).
+E4. DUPLICATE NAME edge case: pick a namespace name that exists in TWO clusters.
+    Confirm it appears as TWO separate rows, each with its OWN Status
+    (they may differ). Confirm the Cluster column distinguishes them.
+E5. CLICK-THROUGH (the critical one, tests D1/D2 for real): click the NAME of
+    each duplicate row. Confirm each opens the details page for the CORRECT
+    instance — the right cluster's namespace, not the other one. Confirm the
+    details page loads its resources from the right cluster.
+E6. HARD RELOAD + DEEP LINK: on that details page press F5 (hard reload), and
+    also copy the URL and paste it into a fresh tab. Confirm it still resolves
+    to the correct instance (this is where a "/"-in-a-param scheme typically
+    breaks — prove it does or does not).
+E7. HEALTH POPOVER: on an Applications row whose Status is Degraded/Unhealthy,
+    open the popover; confirm it renders (evidence + inventory). Click an
+    evidence resource link; confirm it navigates to the correct instance's
+    details (tests D1 link (ii) for real).
+E8. UNREACHABLE CLUSTER edge case: if you can pause/disconnect one cluster (or
+    one is already unreachable), confirm ONLY that cluster's rows show
+    "Unavailable", and the same namespace's rows in reachable clusters still
+    show their real health (no masking).
+E9. SINGLE-CLUSTER app: a namespace present in only one cluster shows exactly
+    ONE row.
+E10. SYSTEM NAMESPACES stay hidden (no kube-*, openshift-* rows).
+E11. NAMESPACE FILTER (top toolbar) still filters the list correctly.
+E12. HEALTH STATES render across the fleet: confirm you can see the expected
+     badges among Healthy / Degraded / Unhealthy / Progressing / No Workloads
+     / Unavailable, and that Job/CronJob failures show under "Needs Attention"
+     without changing the badge.
+E13. SPECIAL CHARS: if any cluster name contains a dot or other non-alphanumeric
+     char, confirm its rows and click-through (E5/E6) still work.
+E14. SCALE/SORT: with many rows, confirm sorting by Status works and pagination
+     is sane (rows are lazy per visible row).
+
+------------------------------------------------------------------------------
+OUTPUT FORMAT (paste back)
+------------------------------------------------------------------------------
+- For D1..D7 and E1..E14: ID, PASS / FAIL / NOT-VERIFIED, 1-3 lines evidence.
+- For any FAIL you fixed on the scratch branch, show the fix diff (redacted).
+- State explicitly: "Cluster access available? YES/NO". If NO, every E item is
+  NOT-VERIFIED — say so plainly, do not infer PASS.
+- End with:
+    ROUTING SCHEME IN PLACE: <"/project/:cluster/:name" | single-param + why>
+    NEW tsc errors introduced by the change: <list or NONE>
+    FILES CHANGED OUTSIDE components/project/: <list or NONE>
+    VERDICT: ready to implement for real? YES / NO / PARTIAL — one sentence why.
+- Redact all secrets and real names before sharing.
+================================================================================
