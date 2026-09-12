@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { ResourceClasses } from '.';
 import type { KubeMetadata } from './KubeMetadata';
 import { KubeObject, type KubeObjectClass, type KubeObjectInterface } from './KubeObject';
 export interface CrossVersionObjectReference {
@@ -370,6 +369,8 @@ class HPA extends KubeObject<KubeHPA> {
       return null;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { ResourceClasses } = require('.') as typeof import('.');
     const TargetObjectClass = (ResourceClasses as Record<string, KubeObjectClass>)[target.kind];
     let objInstance: KubeObject | null = null;
     if (!!TargetObjectClass) {

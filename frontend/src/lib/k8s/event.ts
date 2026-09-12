@@ -15,7 +15,6 @@
  */
 
 import { useMemo } from 'react';
-import { ResourceClasses } from '.';
 import { request } from './api/v1/clusterRequests';
 import type { QueryParameters } from './api/v1/queryParameters';
 import type { ApiError } from './api/v2/ApiError';
@@ -176,6 +175,8 @@ class Event extends KubeObject<KubeEvent> {
       return null;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { ResourceClasses } = require('.') as typeof import('.');
     const InvolvedObjectClass = (ResourceClasses as Record<string, KubeObjectClass>)[
       this.involvedObject.kind
     ];

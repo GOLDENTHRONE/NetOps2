@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import { ResourceClasses } from '.';
 import { apiFactory, apiFactoryWithNamespace } from './api/v1/factories';
 import {
   describeMissingField,
@@ -235,6 +234,8 @@ export function makeCustomResourceClass(
 
   // Used for tests
   if (import.meta.env.UNDER_TEST || import.meta.env.STORYBOOK) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { ResourceClasses } = require('.') as typeof import('.');
     const knownClass = (ResourceClasses as Record<string, KubeObjectClass>)[apiInfoArgs[0][2]];
     if (!!knownClass) {
       return knownClass;
