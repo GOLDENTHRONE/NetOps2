@@ -31,6 +31,7 @@ import { recordHeadlampEvents, TestContext } from '../../test';
 import ProjectList, {
   discoverProjectsFromNamespaces,
   filterProjectsByNamespaces,
+  projectDetailsParams,
   useProject,
 } from './ProjectList';
 import { PROJECT_ID_LABEL } from './projectUtils';
@@ -58,21 +59,41 @@ describe('discoverProjectsFromNamespaces', () => {
     ]);
 
     expect(projects).toEqual([
-      { id: 'app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
-      { id: 'app-staging', namespaces: ['app-staging'], clusters: ['cluster-a'] },
-      { id: 'billing', namespaces: ['billing'], clusters: ['cluster-a'] },
+      { id: 'cluster-a/app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
+      { id: 'cluster-a/app-staging', namespaces: ['app-staging'], clusters: ['cluster-a'] },
+      { id: 'cluster-a/billing', namespaces: ['billing'], clusters: ['cluster-a'] },
     ]);
   });
 
-  it('collapses a same-named namespace across clusters into one application', () => {
+  it('creates separate applications for same-named namespaces across clusters', () => {
     const projects = discoverProjectsFromNamespaces([
       ns('shared', { cluster: 'cluster-a' }),
       ns('shared', { cluster: 'cluster-b' }),
     ]);
 
-    expect(projects).toHaveLength(1);
-    expect(projects[0].namespaces).toEqual(['shared']);
-    expect(projects[0].clusters).toEqual(['cluster-a', 'cluster-b']);
+    expect(projects).toHaveLength(2);
+    expect(projects[0]).toEqual({
+      id: 'cluster-a/shared',
+      namespaces: ['shared'],
+      clusters: ['cluster-a'],
+    });
+    expect(projects[1]).toEqual({
+      id: 'cluster-b/shared',
+      namespaces: ['shared'],
+      clusters: ['cluster-b'],
+    });
+  });
+
+  it('ensures every resulting row has exactly one cluster and one namespace', () => {
+    const projects = discoverProjectsFromNamespaces([
+      ns('app1', { cluster: 'c1' }),
+      ns('app2', { cluster: 'c2' }),
+    ]);
+
+    projects.forEach(p => {
+      expect(p.clusters).toHaveLength(1);
+      expect(p.namespaces).toHaveLength(1);
+    });
   });
 
   it('excludes system / infrastructure namespaces', () => {
@@ -84,7 +105,9 @@ describe('discoverProjectsFromNamespaces', () => {
       ns('my-app'),
     ]);
 
-    expect(projects).toEqual([{ id: 'my-app', namespaces: ['my-app'], clusters: ['cluster-a'] }]);
+    expect(projects).toEqual([
+      { id: 'cluster-a/my-app', namespaces: ['my-app'], clusters: ['cluster-a'] },
+    ]);
   });
 
   // Regression guard for #5254: a namespace without metadata.name reached the
@@ -98,7 +121,9 @@ describe('discoverProjectsFromNamespaces', () => {
       ns('real'),
       { metadata: {} as any, cluster: 'cluster-a' },
     ]);
-    expect(projects).toEqual([{ id: 'real', namespaces: ['real'], clusters: ['cluster-a'] }]);
+    expect(projects).toEqual([
+      { id: 'cluster-a/real', namespaces: ['real'], clusters: ['cluster-a'] },
+    ]);
   });
 });
 
@@ -133,14 +158,41 @@ describe('useProject', () => {
       isLoading: false,
     } as any);
 
-    const { result } = renderHook(() => useProject('missing-project'), {
+    const { result } = renderHook(() => useProject('cluster-a', 'missing-project'), {
       wrapper: ({ children }) => <TestContext>{children}</TestContext>,
     });
 
     expect(result.current).toEqual({
       isLoading: false,
-      project: { id: 'missing-project', clusters: [], namespaces: [] },
+      project: { id: 'cluster-a/missing-project', clusters: [], namespaces: [] },
     });
+  });
+
+  it('params round-trip back to exactly one instance when resolved via useProject (including dot in cluster)', () => {
+    vi.spyOn(Namespace, 'useList').mockReturnValue({
+      items: [ns('app-x', { cluster: 'cluster.one' }), ns('app-x', { cluster: 'cluster.two' })],
+      isLoading: false,
+    } as any);
+
+    const { result } = renderHook(() => useProject('cluster.one', 'app-x'), {
+      wrapper: ({ children }) => <TestContext>{children}</TestContext>,
+    });
+
+    expect(result.current.project).toEqual({
+      id: 'cluster.one/app-x',
+      namespaces: ['app-x'],
+      clusters: ['cluster.one'],
+    });
+  });
+});
+
+describe('projectDetailsParams', () => {
+  it('correctly routes each instance to its own cluster', () => {
+    const projA = { id: 'cluster-a/ns-1', clusters: ['cluster-a'], namespaces: ['ns-1'] };
+    const projB = { id: 'cluster-b/ns-1', clusters: ['cluster-b'], namespaces: ['ns-1'] };
+
+    expect(projectDetailsParams(projA)).toEqual({ cluster: 'cluster-a', name: 'ns-1' });
+    expect(projectDetailsParams(projB)).toEqual({ cluster: 'cluster-b', name: 'ns-1' });
   });
 });
 
@@ -172,8 +224,8 @@ describe('ProjectList events', () => {
           type: HeadlampEventType.PROJECT_LIST_VIEW,
           data: {
             projects: [
-              { id: 'app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
-              { id: 'billing', namespaces: ['billing'], clusters: ['cluster-a'] },
+              { id: 'cluster-a/app-prod', namespaces: ['app-prod'], clusters: ['cluster-a'] },
+              { id: 'cluster-a/billing', namespaces: ['billing'], clusters: ['cluster-a'] },
             ],
           },
         },

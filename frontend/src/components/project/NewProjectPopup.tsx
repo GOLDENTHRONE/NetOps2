@@ -220,7 +220,12 @@ function ProjectFromExistingNamespace({ onBack }: { onBack: () => void }) {
         await apply(namespace, cluster);
       }
 
-      history.push(createRouteURL('projectDetails', { name: projectName }));
+      history.push(
+        createRouteURL('projectDetails', {
+          cluster: selectedClusters[0],
+          name: projectName,
+        })
+      );
     } catch (e: any) {
       setError(e);
     } finally {

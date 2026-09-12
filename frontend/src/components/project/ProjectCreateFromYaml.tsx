@@ -273,7 +273,12 @@ export function CreateNew() {
         cluster: selectedClusters!,
         setCreationState,
       });
-      history.push(createRouteURL('projectDetails', { name: k8sName }));
+      history.push(
+        createRouteURL('projectDetails', {
+          cluster: selectedClusters!,
+          name: k8sName,
+        })
+      );
     } catch (e) {
       setCreationState({
         stage: 'error',
@@ -553,7 +558,12 @@ export function CreateNew() {
         )}
 
         {creationState.stage === 'success' && (
-          <Redirect to={createRouteURL('projectDetails', { name: creationState.name })} />
+          <Redirect
+            to={createRouteURL('projectDetails', {
+              cluster: selectedClusters ?? '',
+              name: creationState.name,
+            })}
+          />
         )}
       </DialogContent>
     </>

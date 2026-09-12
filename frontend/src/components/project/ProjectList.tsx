@@ -17,7 +17,7 @@
 import { Icon } from '@iconify/react';
 import { Box, Divider, IconButton, Popover, Tooltip, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { groupBy, uniq } from 'lodash';
+import { uniq } from 'lodash';
 import React, { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useClustersConf } from '../../lib/k8s';
@@ -46,9 +46,7 @@ import { useProjectItems } from './useProjectResources';
 
 // Applications are auto-discovered: every namespace the user's token can see
 // becomes an application (application name = namespace name), except system /
-// infrastructure namespaces (see isSystemNamespace). Namespaces with the same
-// name across multiple clusters are collapsed into a single application that
-// spans those clusters.
+// infrastructure namespaces (see isSystemNamespace).
 //
 // metadata.name is guarded because the multi-cluster fan-out / react-query
 // cache can transiently yield items without it. See issue #5254.
@@ -59,11 +57,18 @@ export function discoverProjectsFromNamespaces(
   }>
 ): ProjectDefinition[] {
   const visible = namespaces.filter(n => n.metadata?.name && !isSystemNamespace(n.metadata.name));
-  return Object.entries(groupBy(visible, n => n.metadata.name)).map(([name, ns]) => ({
-    id: name,
-    namespaces: [name],
-    clusters: uniq(ns.map(it => it.cluster)),
+  return visible.map(({ metadata, cluster }) => ({
+    id: `${cluster}/${metadata.name}`,
+    namespaces: [metadata.name],
+    clusters: [cluster],
   }));
+}
+
+export function projectDetailsParams(project: ProjectDefinition) {
+  return {
+    cluster: project.clusters[0] ?? '',
+    name: project.namespaces[0] ?? '',
+  };
 }
 
 /**
@@ -98,7 +103,7 @@ const useProjects = (): ProjectDefinition[] => {
   return useMemo(() => discoverProjectsFromNamespaces(namespaces ?? []), [namespaces]);
 };
 
-export const useProject = (name: string) => {
+export const useProject = (cluster: string, name: string) => {
   const clusterConf = useClustersConf();
   const clusters = Object.values(clusterConf ?? {});
 
@@ -110,14 +115,16 @@ export const useProject = (name: string) => {
     () => ({
       isLoading,
       project: namespaces
-        ? discoverProjectsFromNamespaces(namespaces).find(project => project.id === name) ?? {
-            id: name,
+        ? discoverProjectsFromNamespaces(namespaces).find(
+            project => project.clusters[0] === cluster && project.namespaces[0] === name
+          ) ?? {
+            id: `${cluster}/${name}`,
             clusters: [],
             namespaces: [],
           }
         : undefined,
     }),
-    [namespaces, name, isLoading]
+    [namespaces, cluster, name, isLoading]
   );
 };
 
@@ -318,7 +325,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                 <EvidenceSection
                   title={t('Details')}
                   evidence={health.details}
-                  projectId={project.id}
+                  project={project}
                   showDetails
                 />
               )}
@@ -328,7 +335,7 @@ export function LocalHealthCell({ project, onRank }: LocalHealthCellProps) {
                   <EvidenceSection
                     title={`${t('Needs Attention')} ${t('(does not affect status)')}`}
                     evidence={health.needsAttention}
-                    projectId={project.id}
+                    project={project}
                   />
                 </>
               )}
@@ -414,10 +421,10 @@ const KIND_TO_ROUTE: Record<string, string> = {
 
 function EvidenceRow({
   evidence,
-  projectId,
+  project,
 }: {
   evidence: LocalHealthEvidence;
-  projectId: string;
+  project: ProjectDefinition;
 }) {
   const theme = useTheme();
   const label = `${evidence.kind}/${evidence.namespace || '-'}/${evidence.name}`;
@@ -444,7 +451,7 @@ function EvidenceRow({
     // the project's own Resources tab instead, deep-linked to this resource.
     <Link
       routeName="projectDetails"
-      params={{ name: projectId }}
+      params={projectDetailsParams(project)}
       search={{
         tab: 'resources',
         ...(evidence.object ? { category: getKubeObjectCategory(evidence.object).label } : {}),
@@ -582,12 +589,12 @@ function StatsSection({
 function EvidenceSection({
   title,
   evidence,
-  projectId,
+  project,
   showDetails = false,
 }: {
   title: string;
   evidence: LocalHealthEvidence[];
-  projectId: string;
+  project: ProjectDefinition;
   showDetails?: boolean;
 }) {
   return (
@@ -600,7 +607,7 @@ function EvidenceSection({
           <EvidenceRow
             key={`${e.kind}/${e.namespace}/${e.name}/${i}`}
             evidence={showDetails ? e : { ...e, severity: 'info' }}
-            projectId={projectId}
+            project={project}
           />
         ))}
       </Box>
@@ -667,11 +674,11 @@ function ProjectListContent() {
       {
         id: 'name',
         header: t('Name'),
-        accessorFn: it => it.id,
+        accessorFn: it => it.namespaces[0] ?? '',
         Cell: ({ row: { original } }) => (
           <>
-            <Link routeName="projectDetails" params={{ name: original.id }}>
-              {original.id}
+            <Link routeName="projectDetails" params={projectDetailsParams(original)}>
+              {original.namespaces[0] ?? ''}
             </Link>
           </>
         ),
@@ -763,9 +770,9 @@ function ProjectListContent() {
         gridTemplate: 'min-content',
       },
       {
-        id: 'clusters',
-        header: t('Clusters'),
-        accessorFn: it => it.clusters.join(', '),
+        id: 'cluster',
+        header: t('Cluster'),
+        accessorFn: it => it.clusters[0] ?? '',
       },
       {
         id: 'namespaces',

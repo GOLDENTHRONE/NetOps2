@@ -106,7 +106,12 @@ describe('ProjectDetails events', () => {
       defaultOptions: { queries: { retry: false } },
     });
     return render(
-      <TestContext routerMap={{ name: eventProject.id }}>
+      <TestContext
+        routerMap={{
+          cluster: eventProject.clusters[0],
+          name: eventProject.namespaces[0],
+        }}
+      >
         <QueryClientProvider client={queryClient}>
           <ProjectDetails />
         </QueryClientProvider>

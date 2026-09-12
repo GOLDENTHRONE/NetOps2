@@ -56,6 +56,7 @@ import { ResourceCategoriesList } from './ResourceCategoriesList';
 import { useProjectItems } from './useProjectResources';
 
 interface ProjectDetailsParams {
+  cluster: string;
   name: string;
 }
 
@@ -97,18 +98,23 @@ const DEFAULT_TABS: Record<string, ProjectDetailsTab> = {
 
 export default function ProjectDetails() {
   const { t } = useTranslation();
-  const { name } = useParams<ProjectDetailsParams>();
-  const { project, isLoading: isProjectLoading } = useProject(name);
+  const { cluster, name } = useParams<ProjectDetailsParams>();
+  const { project, isLoading: isProjectLoading } = useProject(cluster, name);
 
   const pluginApiResources = useTypedSelector(state => state.projects.apiResources);
 
-  if (isProjectLoading || !project || !name) {
+  if (isProjectLoading || !project || !name || !cluster) {
     return <Loader title={t('Loading')} />;
   }
   // Key forces remount when project name or plugin resource list changes,
   // which is required because useProjectItems → useKubeLists calls hooks
   // per resource in a loop (the array length must stay stable per mount).
-  return <ProjectDetailsContent key={`${name}-${pluginApiResources.length}`} project={project} />;
+  return (
+    <ProjectDetailsContent
+      key={`${cluster}/${name}-${pluginApiResources.length}`}
+      project={project}
+    />
+  );
 }
 
 function ProjectOverview({
