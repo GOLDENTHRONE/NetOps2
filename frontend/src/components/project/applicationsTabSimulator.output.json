@@ -1,0 +1,152 @@
+{
+  "clusters": ["ocp-cluster-a", "k8s-cluster-b"],
+  "rows": [
+    {
+      "id": "ocp-cluster-a/payments",
+      "name": "payments",
+      "cluster": "ocp-cluster-a",
+      "namespaces": "payments",
+      "url": "/project/ocp-cluster-a/payments",
+      "status": "Healthy",
+      "badge": "success",
+      "rank": 0,
+      "resourceCount": 8,
+      "reasons": [],
+      "evidence": [],
+      "needsAttention": [
+        {
+          "severity": "error",
+          "ref": "Job/payments/payments-db-migrate-hook",
+          "message": "Job Failed"
+        },
+        {
+          "severity": "error",
+          "ref": "Pod/payments/payments-db-migrate-hook-abcde",
+          "message": "BackoffLimitExceeded"
+        }
+      ]
+    },
+    {
+      "id": "k8s-cluster-b/payments",
+      "name": "payments",
+      "cluster": "k8s-cluster-b",
+      "namespaces": "payments",
+      "url": "/project/k8s-cluster-b/payments",
+      "status": "Unhealthy",
+      "badge": "error",
+      "rank": 4,
+      "resourceCount": 5,
+      "reasons": [
+        "Pod/payments/payments-api-3: CrashLoopBackOff",
+        "Deployment/payments/payments-api: 2/3 ready"
+      ],
+      "evidence": [
+        {
+          "severity": "error",
+          "ref": "Pod/payments/payments-api-3",
+          "message": "CrashLoopBackOff"
+        },
+        {
+          "severity": "warning",
+          "ref": "Deployment/payments/payments-api",
+          "message": "2/3 ready"
+        }
+      ],
+      "needsAttention": []
+    },
+    {
+      "id": "ocp-cluster-a/billing",
+      "name": "billing",
+      "cluster": "ocp-cluster-a",
+      "namespaces": "billing",
+      "url": "/project/ocp-cluster-a/billing",
+      "status": "Degraded",
+      "badge": "warning",
+      "rank": 3,
+      "resourceCount": 3,
+      "reasons": ["Pod/billing/billing-web-1: ContainersNotReady"],
+      "evidence": [
+        {
+          "severity": "warning",
+          "ref": "Pod/billing/billing-web-1",
+          "message": "ContainersNotReady"
+        }
+      ],
+      "needsAttention": []
+    },
+    {
+      "id": "ocp-cluster-a/checkout",
+      "name": "checkout",
+      "cluster": "ocp-cluster-a",
+      "namespaces": "checkout",
+      "url": "/project/ocp-cluster-a/checkout",
+      "status": "Progressing",
+      "badge": "progressing",
+      "rank": 2,
+      "resourceCount": 4,
+      "reasons": [],
+      "evidence": [],
+      "needsAttention": []
+    },
+    {
+      "id": "ocp-cluster-a/inventory",
+      "name": "inventory",
+      "cluster": "ocp-cluster-a",
+      "namespaces": "inventory",
+      "url": "/project/ocp-cluster-a/inventory",
+      "status": "No Workloads",
+      "badge": "passive",
+      "rank": 0,
+      "resourceCount": 3,
+      "reasons": [],
+      "evidence": [],
+      "needsAttention": []
+    },
+    {
+      "id": "ocp-cluster-a/sandbox",
+      "name": "sandbox",
+      "cluster": "ocp-cluster-a",
+      "namespaces": "sandbox",
+      "url": "/project/ocp-cluster-a/sandbox",
+      "status": "No Resources",
+      "badge": "empty",
+      "rank": 0,
+      "resourceCount": 0,
+      "reasons": [],
+      "evidence": [],
+      "needsAttention": []
+    },
+    {
+      "id": "k8s-cluster-b/web-frontend",
+      "name": "web-frontend",
+      "cluster": "k8s-cluster-b",
+      "namespaces": "web-frontend",
+      "url": "/project/k8s-cluster-b/web-frontend",
+      "status": "Healthy",
+      "badge": "success",
+      "rank": 0,
+      "resourceCount": 5,
+      "reasons": [],
+      "evidence": [],
+      "needsAttention": []
+    },
+    {
+      "id": "k8s-cluster-b/analytics",
+      "name": "analytics",
+      "cluster": "k8s-cluster-b",
+      "namespaces": "analytics",
+      "url": "/project/k8s-cluster-b/analytics",
+      "status": "Unavailable",
+      "badge": "unavailable",
+      "rank": 5,
+      "resourceCount": 0,
+      "reasons": [],
+      "evidence": [],
+      "needsAttention": [],
+      "unavailable": {
+        "httpCode": 503,
+        "errorMessage": "dial tcp: connect: connection refused"
+      }
+    }
+  ]
+}
