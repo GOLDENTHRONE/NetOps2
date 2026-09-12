@@ -41,6 +41,7 @@ import { describe, expect, it, vi } from 'vitest';
 import App from '../../App';
 import Namespace from '../../lib/k8s/namespace';
 import { TestContext } from '../../test';
+import { useKubeLists } from '../advancedSearch/utils/useKubeLists';
 import { getLocalHealth, getUnavailableHealth, LocalHealthResult } from './localHealth';
 import {
   discoverProjectsFromNamespaces,
@@ -49,6 +50,13 @@ import {
   useProject,
 } from './ProjectList';
 import { isSystemNamespace } from './projectUtils';
+import { useProjectItems } from './useProjectResources';
+
+// Mock the low-level multi-cluster fetch so we can inspect EXACTLY which
+// clusters + namespaces the details page asks for, without any network.
+vi.mock('../advancedSearch/utils/useKubeLists', () => ({
+  useKubeLists: vi.fn(() => ({ items: [], errors: [], isLoading: false })),
+}));
 
 // cyclic imports fix (same workaround ProjectList.test.tsx uses): importing App
 // first breaks the lib/k8s/index circular-init that otherwise makes KubeObject
@@ -436,5 +444,50 @@ describe('Applications tab simulator (real code, generic data)', () => {
     // the two resolve to DIFFERENT instances — no collision despite same name
     expect(one.result.current.project!.id).not.toBe(two.result.current.project!.id);
     vi.restoreAllMocks();
+  });
+
+  // =======================================================================
+  // DEEP NAVIGATION — "click the app → see the RIGHT data for that app".
+  // ProjectDetails resolves {cluster, name} → useProject → project, then
+  // useProjectItems(project) fetches the resource lists. This proves that
+  // fetch is scoped to the row's OWN single cluster + namespace, so two
+  // same-named apps in different clusters never show each other's data.
+  // =======================================================================
+  it('the details page fetches ONLY the clicked app’s own cluster + namespace', () => {
+    const mockedKubeLists = vi.mocked(useKubeLists);
+
+    // click ocp-cluster-a/payments
+    mockedKubeLists.mockClear();
+    renderHook(
+      () =>
+        useProjectItems(
+          { id: `${OCP_CLUSTER}/payments`, clusters: [OCP_CLUSTER], namespaces: ['payments'] },
+          { disableWatch: true }
+        ),
+      { wrapper: ({ children }) => <TestContext>{children}</TestContext> }
+    );
+    // useKubeLists(resources, clusters, maxItems, interval, namespaces)
+    const callA = mockedKubeLists.mock.calls.find(c => Array.isArray(c[1]) && (c[1] as any).length);
+    expect(callA, 'useKubeLists should have been called').toBeTruthy();
+    expect(callA![1]).toEqual([OCP_CLUSTER]); // clusters arg
+    expect(callA![4]).toEqual(['payments']); // namespaces arg
+
+    // click k8s-cluster-b/payments (SAME namespace name, other cluster)
+    mockedKubeLists.mockClear();
+    renderHook(
+      () =>
+        useProjectItems(
+          { id: `${K8S_CLUSTER}/payments`, clusters: [K8S_CLUSTER], namespaces: ['payments'] },
+          { disableWatch: true }
+        ),
+      { wrapper: ({ children }) => <TestContext>{children}</TestContext> }
+    );
+    const callB = mockedKubeLists.mock.calls.find(c => Array.isArray(c[1]) && (c[1] as any).length);
+    expect(callB![1]).toEqual([K8S_CLUSTER]);
+    expect(callB![4]).toEqual(['payments']);
+
+    // same namespace name, but the two details pages fetch from DIFFERENT
+    // clusters — no cross-cluster data bleed.
+    expect(callA![1]).not.toEqual(callB![1]);
   });
 });
