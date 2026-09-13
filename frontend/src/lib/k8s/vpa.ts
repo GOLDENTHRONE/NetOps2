@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import { ResourceClasses } from '.';
 import { request } from './api/v1/clusterRequests';
 import type { KubeObjectClass, KubeObjectInterface } from './KubeObject';
 import { KubeObject } from './KubeObject';
@@ -141,8 +142,6 @@ class VPA extends KubeObject<KubeVPA> {
       return null;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { ResourceClasses } = require('.') as typeof import('.');
     const TargetObjectClass = (ResourceClasses as Record<string, KubeObjectClass>)[target.kind];
     let objInstance: KubeObject | null = null;
     if (!!TargetObjectClass) {
