@@ -24,7 +24,12 @@ import { setupBackstageMessageReceiver } from '../../../helpers/backstageMessage
 import { useAutoConnectClusters } from '../../../helpers/clusterAutoConnect';
 import { isBackstage } from '../../../helpers/isBackstage';
 import { isElectron } from '../../../helpers/isElectron';
-import { useClustersConf, useClustersOcpVersion, useClustersVersion } from '../../../lib/k8s';
+import {
+  useClustersAuth,
+  useClustersConf,
+  useClustersOcpVersion,
+  useClustersVersion,
+} from '../../../lib/k8s';
 import { Cluster } from '../../../lib/k8s/cluster';
 import { useEventWarningList } from '../../../lib/k8s/event';
 import { createRouteURL } from '../../../lib/router/createRouteURL';
@@ -32,7 +37,7 @@ import { PageGrid } from '../../common/Resource';
 import SectionBox from '../../common/SectionBox';
 import ProjectList from '../../project/ProjectList';
 import ClusterTable from './ClusterTable';
-import { ENABLE_RECENT_CLUSTERS } from './config';
+import { AUTO_CONNECT_ALL, ENABLE_READY_CHECK, ENABLE_RECENT_CLUSTERS } from './config';
 import { getCustomClusterNames } from './customClusterNames';
 import RecentClusters from './RecentClusters';
 
@@ -134,17 +139,29 @@ function HomeComponent(props: HomeComponentProps) {
   const { connect: handleConnectCluster, connectedClusters } =
     useAutoConnectClusters(allClusterNames);
 
+  // With AUTO_CONNECT_ALL (default, the upstream Headlamp behaviour) every
+  // configured cluster is checked on open; otherwise only the recently-used /
+  // on-demand connected set is polled.
+  const effectiveConnected = React.useMemo(
+    () => (AUTO_CONNECT_ALL ? new Set(allClusterNames) : connectedClusters),
+    [allClusterNames, connectedClusters]
+  );
+
   const autoConnectClusters = React.useMemo(
-    () => Object.values(clusters || {}).filter(c => connectedClusters.has(c.name)),
-    [clusters, connectedClusters]
+    () => Object.values(clusters || {}).filter(c => effectiveConnected.has(c.name)),
+    [clusters, effectiveConnected]
   );
 
   const [versions, errors, statusTiming] = useClustersVersion(autoConnectClusters);
   const ocpVersions = useClustersOcpVersion(autoConnectClusters);
+  // Background authorization check that powers the truthful "Ready" status. When
+  // the readiness feature is off, poll nothing (the hook is still called
+  // unconditionally to respect the rules of hooks).
+  const authErrors = useClustersAuth(ENABLE_READY_CHECK ? autoConnectClusters : []);
 
   const clusterNames = React.useMemo(
-    () => allClusterNames.filter(name => connectedClusters.has(name)),
-    [allClusterNames, connectedClusters]
+    () => allClusterNames.filter(name => effectiveConnected.has(name)),
+    [allClusterNames, effectiveConnected]
   );
 
   const warningLabels = useWarningSettingsPerCluster(clusterNames);
@@ -193,8 +210,10 @@ function HomeComponent(props: HomeComponentProps) {
           statusTiming={statusTiming}
           warningLabels={warningLabels}
           clusters={clusters}
-          connectedClusterNames={connectedClusters}
+          connectedClusterNames={effectiveConnected}
           onConnectCluster={handleConnectCluster}
+          authErrors={authErrors}
+          authTrackedClusterNames={ENABLE_READY_CHECK ? effectiveConnected : undefined}
         />
       </>
     ),
@@ -206,8 +225,9 @@ function HomeComponent(props: HomeComponentProps) {
       statusTiming,
       warningLabels,
       clusters,
-      connectedClusters,
+      effectiveConnected,
       handleConnectCluster,
+      authErrors,
     ]
   );
 

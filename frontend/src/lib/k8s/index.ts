@@ -20,6 +20,7 @@ import React, { useMemo } from 'react';
 import { ConfigState } from '../../redux/configSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { getCluster } from '../cluster';
+import { testAuth } from './api/v1/clusterApi';
 import { clusterRequest } from './api/v1/clusterRequests';
 import { ApiError } from './api/v2/ApiError';
 import { Cluster, LabelSelector, StringDict } from './cluster';
@@ -343,6 +344,66 @@ export function versionRefetchInterval(consecutiveFailures: number) {
   return Math.min(versionFetchInterval * 2 ** consecutiveFailures, maxVersionFetchInterval);
 }
 
+/**
+ * Reads a positive-integer millisecond interval from a Vite `REACT_APP_*` env var,
+ * falling back to `fallbackMs` when the var is unset or not a positive number.
+ *
+ * Note: the key is read via a literal member access (not a dynamic lookup) so Vite
+ * can statically inline it at build time.
+ */
+function readIntervalEnvOrDefault(raw: unknown, fallbackMs: number): number {
+  const parsed = raw !== undefined && raw !== '' ? Number.parseInt(String(raw), 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallbackMs;
+}
+
+/**
+ * How often the OpenShift (OCP) ClusterVersion is polled. The OCP version is
+ * effectively static (it only changes on a cluster upgrade), and cluster liveness
+ * is already tracked by the Kubernetes `/version` poll, so this defaults to once an
+ * hour instead of every `versionFetchInterval`. Override with
+ * `REACT_APP_OCP_VERSION_FETCH_INTERVAL` (milliseconds). The first fetch still
+ * happens immediately on connect (react-query fetches on mount); this only governs
+ * the steady-state refetch cadence.
+ */
+export const ocpVersionFetchInterval = readIntervalEnvOrDefault(
+  import.meta.env.REACT_APP_OCP_VERSION_FETCH_INTERVAL,
+  60 * 60 * 1000 // 1 hour
+);
+
+/** Cap OCP backoff at 6x its base interval, mirroring the K8s version backoff. */
+export const maxOcpVersionFetchInterval = ocpVersionFetchInterval * 6;
+
+/** Backoff-aware refetch interval for the OCP ClusterVersion query. */
+export function ocpVersionRefetchInterval(consecutiveFailures: number) {
+  if (consecutiveFailures <= 0) {
+    return ocpVersionFetchInterval;
+  }
+  return Math.min(ocpVersionFetchInterval * 2 ** consecutiveFailures, maxOcpVersionFetchInterval);
+}
+
+/**
+ * How often each connected cluster's authorization ("can I actually use this
+ * cluster?") is re-checked in the background so the Home table can show a truthful
+ * "Ready" state. Defaults to `versionFetchInterval` (10s) for a fresh status;
+ * override with `REACT_APP_AUTH_CHECK_INTERVAL` (milliseconds). Bump it up if a
+ * user typically has many clusters connected at once.
+ */
+export const authCheckInterval = readIntervalEnvOrDefault(
+  import.meta.env.REACT_APP_AUTH_CHECK_INTERVAL,
+  versionFetchInterval // 10s
+);
+
+/** Cap the auth-check backoff at 6x its base interval. */
+export const maxAuthCheckInterval = authCheckInterval * 6;
+
+/** Backoff-aware refetch interval for the per-cluster authorization check. */
+export function authRefetchInterval(consecutiveFailures: number) {
+  if (consecutiveFailures <= 0) {
+    return authCheckInterval;
+  }
+  return Math.min(authCheckInterval * 2 ** consecutiveFailures, maxAuthCheckInterval);
+}
+
 /** Hook to get the version of the clusters given by the parameter.
  *
  * @param clusters
@@ -493,7 +554,7 @@ export function useClustersOcpVersion(clusters: Cluster[]) {
           }
         },
         refetchInterval: () =>
-          versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+          ocpVersionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false,
@@ -513,6 +574,95 @@ export function useClustersOcpVersion(clusters: Cluster[]) {
 
     return ocpVersions;
   }, [clusterNames, results]);
+}
+
+/**
+ * Hook that checks, in the background, whether the current user is actually
+ * authorized on each of the given clusters — the same check the router runs when a
+ * cluster is opened (`testAuth` → `selfsubjectrulesreviews`). The Home table uses
+ * this to show a truthful "Ready" (reachable AND authorized) versus a plain
+ * "Reachable" (answered, authorization not yet confirmed) status.
+ *
+ * This is intentionally separate from `useClustersVersion`: `/version` can succeed
+ * on a cluster where the user's credentials are expired or insufficient, so
+ * reachability alone does not prove the cluster can be opened.
+ *
+ * Behaviour mirrors the version poll: polls at `authCheckInterval`, backs off on
+ * consecutive failures, pauses while the tab is backgrounded, refetches on window
+ * focus, and never retries within a cycle. The check uses `testAuth`, which sets
+ * `autoLogout=false`, so a 401 here never clears the global session.
+ *
+ * @param clusters - the clusters to check.
+ * @returns a map of cluster name -> auth result: `null` when authorized, an
+ *   `ApiError` when the check failed (401/403/timeout/…). A cluster whose first
+ *   check has not settled yet is absent from the map (treated as "checking").
+ */
+export function useClustersAuth(clusters: Cluster[]): { [clusterName: string]: ApiError | null } {
+  const [clusterNames, setClusterNames] = React.useState<string[]>(() =>
+    Object.values(clusters)
+      .map(c => c.name)
+      .sort()
+  );
+
+  React.useEffect(() => {
+    const nextClusterNames = Object.values(clusters)
+      .map(c => c.name)
+      .sort();
+    setClusterNames(prev => (_.isEqual(prev, nextClusterNames) ? prev : nextClusterNames));
+  }, [clusters]);
+
+  // Tracked ourselves across polling cycles; see useClustersVersion for why
+  // react-query's own failure count can't drive multi-cycle backoff.
+  const consecutiveFailuresRef = React.useRef<{ [clusterName: string]: number }>({});
+  // Keep the last settled result so a refetch (which briefly clears the error)
+  // doesn't flip the status back to "checking".
+  const lastAuthErrorsRef = React.useRef<{ [clusterName: string]: ApiError | null }>({});
+
+  const queries = React.useMemo(
+    () =>
+      clusterNames.map(clusterName => ({
+        queryKey: ['clusterAuth', clusterName],
+        queryFn: async () => {
+          try {
+            await testAuth(clusterName);
+            consecutiveFailuresRef.current[clusterName] = 0;
+            // Return null (not the review body) — the caller only needs pass/fail,
+            // and null keeps the query out of the "pending" state.
+            return null;
+          } catch (err) {
+            consecutiveFailuresRef.current[clusterName] =
+              (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+            throw err;
+          }
+        },
+        refetchInterval: () =>
+          authRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+        refetchIntervalInBackground: false,
+        refetchOnWindowFocus: 'always' as const,
+        retry: false,
+      })),
+    [clusterNames]
+  );
+
+  const results = useQueries({ queries });
+  const signature = results
+    .map(r => `${r.dataUpdatedAt}:${r.errorUpdatedAt}:${r.fetchStatus}:${r.isPending}`)
+    .join('|');
+
+  return React.useMemo<{ [clusterName: string]: ApiError | null }>(() => {
+    const errorsInfo: { [clusterName: string]: ApiError | null } = {};
+    clusterNames.forEach((clusterName, i) => {
+      if (!results[i].isPending) {
+        lastAuthErrorsRef.current[clusterName] = (results[i].error as ApiError | null) ?? null;
+      }
+      const last = lastAuthErrorsRef.current[clusterName];
+      if (last !== undefined) {
+        errorsInfo[clusterName] = last;
+      }
+    });
+    return errorsInfo;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clusterNames, signature]);
 }
 
 // Other exports that can be used by plugins:

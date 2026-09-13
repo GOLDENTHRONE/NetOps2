@@ -32,3 +32,21 @@ export const ENABLE_RECENT_CLUSTERS = import.meta.env.REACT_APP_ENABLE_RECENT_CL
  */
 export const CONNECT_ON_CLUSTER_LINK =
   import.meta.env.REACT_APP_CONNECT_ON_CLUSTER_LINK !== 'false';
+
+/**
+ * When true (default), the Home page checks every configured cluster's status in
+ * the background as soon as it opens — the upstream Headlamp behaviour — instead of
+ * only recently-used clusters. Set `REACT_APP_AUTO_CONNECT_ALL=false` to fall back
+ * to the recent-clusters-only, connect-on-demand policy (lighter on page load for
+ * users with very large fleets).
+ */
+export const AUTO_CONNECT_ALL = import.meta.env.REACT_APP_AUTO_CONNECT_ALL !== 'false';
+
+/**
+ * When true (default), each connected cluster's authorization is checked in the
+ * background so the status cell can show a truthful "Ready" (reachable AND
+ * authorized) versus "Reachable" (answered, access not confirmed). Set
+ * `REACT_APP_ENABLE_READY_CHECK=false` to disable the auth poll and keep the
+ * reachability-only "Active" status.
+ */
+export const ENABLE_READY_CHECK = import.meta.env.REACT_APP_ENABLE_READY_CHECK !== 'false';
