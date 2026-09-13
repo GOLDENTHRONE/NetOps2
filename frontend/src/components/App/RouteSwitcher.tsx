@@ -30,7 +30,7 @@ import { getRouteUseClusterURL } from '../../lib/router/getRouteUseClusterURL';
 import { Route as RouteType } from '../../lib/router/Route';
 import { useTypedSelector } from '../../redux/hooks';
 import { uiSlice } from '../../redux/uiSlice';
-import ClusterAccessGate, { ClusterAccessGateState } from '../cluster/ClusterAccessGate';
+import ClusterConnecting from '../cluster/ClusterConnecting';
 import ErrorBoundary from '../common/ErrorBoundary';
 import ErrorComponent from '../common/ErrorPage';
 import { useSidebarItem } from '../Sidebar';
@@ -167,7 +167,6 @@ function AuthRoute(props: AuthRouteProps) {
   } = props;
 
   useSidebarItem(sidebar, computedMatch);
-  const history = useHistory();
   const cluster = useCluster();
   const query = useQuery({
     queryKey: ['auth', cluster],
@@ -222,55 +221,26 @@ function AuthRoute(props: AuthRouteProps) {
       return children;
     }
 
-    const goBack = () => history.push(createRouteURL('home'));
-
     if (query.isError) {
-      // OIDC keeps its dedicated auto-redirect login flow, unchanged.
-      if (clusterConf?.auth_type === 'oidc') {
-        return (
-          <Redirect
-            to={{
-              pathname: createRouteURL(redirectRoute),
-              state: { from: location },
-            }}
-          />
-        );
-      }
-
-      // Non-OIDC: instead of a jarring redirect to a generic auth screen, show the
-      // centered access gate with a clear, translated message and a way forward.
-      // The "Sign in again" action goes to the same route the redirect used, so
-      // the underlying auth flow is unchanged — only the presentation improves.
-      const status = authError?.status;
-      const gateState: ClusterAccessGateState =
-        status === 401 ? 'expired' : status === 403 ? 'forbidden' : 'unreachable';
       return (
-        <ClusterAccessGate
-          clusterName={cluster ?? ''}
-          state={gateState}
-          error={authError ?? null}
-          onBack={goBack}
-          onRetry={gateState === 'unreachable' ? () => query.refetch() : undefined}
-          onSignIn={
-            gateState === 'expired'
-              ? () =>
-                  history.push({
-                    pathname: createRouteURL(redirectRoute),
-                    state: { from: location },
-                  })
-              : undefined
-          }
+        <Redirect
+          to={{
+            pathname: createRouteURL(redirectRoute),
+            state: { from: location },
+          }}
         />
       );
     }
 
     // Auth/status check still in flight (e.g. opened a cluster whose status
-    // hadn't loaded yet, or a deep link / bookmark). Show the access gate in its
-    // "checking" state and stay on it until the check resolves, instead of a
-    // blank page. Once it resolves we render the cluster (success) or the gate's
-    // error state / OIDC redirect (error) via the branches above.
+    // hadn't loaded yet, or a deep link / bookmark). Show an explicit
+    // "connecting" screen and stay on it until the check resolves, instead of a
+    // blank page that would otherwise fall through to the auth screen while the
+    // API server is still being reached. Once it resolves we render the cluster
+    // (success) or redirect to the normal auth flow (error) via the branches
+    // above.
     if (cluster && requiresAuth) {
-      return <ClusterAccessGate clusterName={cluster} state="checking" onBack={goBack} />;
+      return <ClusterConnecting clusterName={cluster} />;
     }
 
     return null;

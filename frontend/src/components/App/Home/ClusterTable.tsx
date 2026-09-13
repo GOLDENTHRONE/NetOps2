@@ -49,14 +49,14 @@ import ClusterBadge from '../../Sidebar/ClusterBadge';
 import ClusterContextMenu from './ClusterContextMenu';
 */
 import {
-  getClusterReadinessAccessor,
-  getClusterReadinessInfo,
+  getClusterStatusAccessor,
+  getClusterStatusInfo,
   STATUS_VARIANTS,
 } from './ClusterInventory';
 /*
 import { isClusterInventoryCluster } from './ClusterInventory';
 */
-import { canSelectCluster, ClusterAuthCheck } from './clusterStatus';
+import { canSelectCluster } from './clusterStatus';
 import ClusterStatusPopover from './ClusterStatusPopover';
 import { CONNECT_ON_CLUSTER_LINK, MULTI_HOME_ENABLED } from './config';
 import { getCustomClusterNames } from './customClusterNames';
@@ -76,7 +76,6 @@ function ClusterStatus({
   statusTiming,
   isConnected,
   onConnect,
-  auth,
 }: {
   error?: ApiError | null;
   cluster: Cluster;
@@ -85,8 +84,6 @@ function ClusterStatus({
   isConnected: boolean;
   /** Connect to the cluster on demand so its status is loaded. */
   onConnect: (clusterName: string) => void;
-  /** Authorization check result used to refine the status into Ready/Reachable. */
-  auth: ClusterAuthCheck;
 }) {
   const { t } = useTranslation(['translation']);
   const theme = useTheme();
@@ -145,7 +142,7 @@ function ClusterStatus({
     );
   }
 
-  const { kind, text } = getClusterReadinessInfo(cluster, error, auth, t);
+  const { kind, text } = getClusterStatusInfo(cluster, error, t);
   const variant = STATUS_VARIANTS[kind];
   const color = theme.palette.home.status[variant.colorKey];
   const statusContent = (
@@ -198,18 +195,6 @@ export interface ClusterTableProps {
   connectedClusterNames?: Set<string>;
   /** Connect to a cluster on demand (adds it to the auto-connect set). */
   onConnectCluster?: (clusterName: string) => void;
-  /**
-   * Per-cluster authorization check results from `useClustersAuth`: `null` when
-   * authorized, an `ApiError` when it failed, absent while the first check is in
-   * flight. Used to show a truthful "Ready" vs "Reachable" status.
-   */
-  authErrors?: { [cluster: string]: ApiError | null };
-  /**
-   * Names of clusters whose authorization is being tracked. A cluster not in this
-   * set keeps the original reachability-only status ("Active"). When omitted, no
-   * cluster is auth-tracked (readiness feature off).
-   */
-  authTrackedClusterNames?: Set<string>;
 }
 
 /**
@@ -227,8 +212,6 @@ export default function ClusterTable({
   warningLabels,
   connectedClusterNames,
   onConnectCluster,
-  authErrors,
-  authTrackedClusterNames,
 }: ClusterTableProps) {
   const history = useHistory();
   const { t } = useTranslation(['translation']);
@@ -236,22 +219,18 @@ export default function ClusterTable({
   const isClusterConnected = (clusterName: string) =>
     connectedClusterNames ? connectedClusterNames.has(clusterName) : true;
 
-  // Build the auth check for a cluster: tracked only when the readiness feature is
-  // on for it. Untracked clusters keep the original reachability-only status.
-  const getClusterAuth = (clusterName: string): ClusterAuthCheck =>
-    authTrackedClusterNames?.has(clusterName)
-      ? { tracked: true, error: authErrors?.[clusterName] }
-      : { tracked: false };
+  // True while the cluster is being polled but hasn't reported a status yet
+  // (the "Connecting…" state). This is the only state in which we block opening
+  // the cluster from the Home page; once the status resolves to anything
+  // (Active, Unavailable, Authentication required, …) the link is enabled again.
+  function isClusterStatusLoading(cluster: Cluster) {
+    return isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined;
+  }
 
   function getPlainStatusText(cluster: Cluster) {
     return !isClusterConnected(cluster?.name) && errors[cluster?.name] === undefined
       ? t('translation|Not connected')
-      : getClusterReadinessAccessor(
-          cluster,
-          errors[cluster?.name],
-          getClusterAuth(cluster?.name),
-          t
-        ) ?? '';
+      : getClusterStatusAccessor(cluster, errors[cluster?.name], t) ?? '';
   }
 
   const [columnVisibility, setColumnVisibility] = useState<MRT_VisibilityState>(() => {
@@ -372,12 +351,13 @@ export default function ClusterTable({
         {
           id: 'name',
           header: t('Name'),
-          // The cluster name is always clickable now. Opening a cluster whose
-          // status hasn't resolved yet is safe: the route shows the centered
-          // access gate ("Checking your access…") and lands the user on the right
-          // screen (open / sign-in / retry) instead of a blank or ambiguous page.
-          // The name never changes with status, so the accessor is just the name.
-          accessorFn: cluster => cluster.name,
+          // The accessor value encodes the connecting state as well as the name.
+          // The table memoizes each body cell on its accessor value (see
+          // common/Table's MemoCell), so without the suffix the name cell would
+          // never re-render when the status resolves and the disabled link would
+          // stay stuck. Sorting/filtering remain name-based via the fns below.
+          accessorFn: cluster =>
+            `${cluster.name} ${isClusterStatusLoading(cluster) ? 'connecting' : 'ready'}`,
           sortingFn: (rowA, rowB) => rowA.original.name.localeCompare(rowB.original.name),
           filterFn: (row, _columnId, filterValue) =>
             row.original.name.toLowerCase().includes(String(filterValue).toLowerCase()),
@@ -391,6 +371,36 @@ export default function ClusterTable({
                 accentColor={appearance.accentColor}
               />
             );
+
+            // While the cluster is connected/being polled but hasn't reported a
+            // status yet (errors[name] === undefined => "Connecting…"), don't let
+            // the user open it: navigating now would run testAuth against an API
+            // server that isn't reachable yet and drop them on the ambiguous
+            // "Failed to get authentication information" screen. The link is
+            // re-enabled automatically once the status resolves to any state
+            // (Active, Unavailable, Authentication required, …).
+            if (isClusterStatusLoading(original)) {
+              return (
+                <LightTooltip
+                  title={t(
+                    'translation|Connecting… you can open this cluster once its status has loaded.'
+                  )}
+                >
+                  <Box
+                    component="span"
+                    aria-disabled="true"
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      opacity: 0.6,
+                      cursor: 'not-allowed',
+                    }}
+                  >
+                    {badge}
+                  </Box>
+                </LightTooltip>
+              );
+            }
 
             return (
               <LightTooltip title={original.name}>
@@ -454,7 +464,6 @@ export default function ClusterTable({
               statusTiming={statusTiming[original.name]}
               isConnected={isClusterConnected(original.name)}
               onConnect={onConnectCluster ?? (() => {})}
-              auth={getClusterAuth(original.name)}
             />
           ),
         },
