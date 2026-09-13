@@ -25,10 +25,10 @@ import { TestContext } from '../../../test';
 import ClusterTable from './ClusterTable';
 
 // This test intentionally renders the REAL common/Table (no mock) so it
-// exercises the memoized body cells. It guards the regression where the name
-// cell stayed locked on "Connecting…" after the status resolved, because the
-// table only re-renders a cell when its accessor value changes and the name
-// accessor didn't encode the connecting state.
+// exercises the memoized body cells. The cluster name is always clickable now:
+// opening a cluster whose status hasn't resolved is safe because the route shows
+// the centered access gate. These tests guard that the name renders as a link in
+// every status state (loading, Active, Unavailable) and is never blocked.
 
 const theme = createMuiTheme({ name: 'light', base: 'light' });
 
@@ -74,22 +74,21 @@ function renderTable(errors: { [name: string]: ApiError | null }) {
   return render(<Wrapper errors={errors} />);
 }
 
-describe('ClusterTable connecting gate', () => {
-  it('disables the cluster name link while the status is still loading', async () => {
+describe('ClusterTable name link is always clickable', () => {
+  it('renders the cluster name as a link even while the status is still loading', async () => {
     renderTable({}); // errors undefined => Connecting…
-    const name = await screen.findByText('my-cluster');
-    // Not a link while connecting.
-    expect(name.closest('a')).toBeNull();
-    expect(screen.queryByRole('link', { name: /my-cluster/ })).toBeNull();
+    await screen.findByText('my-cluster');
+    // Always a link now — opening while connecting is handled by the access gate.
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /my-cluster/ })).toBeInTheDocument();
+    });
   });
 
-  it('re-enables the link once the status resolves to Active (regression)', async () => {
+  it('keeps the link once the status resolves to Active', async () => {
     const { rerender } = renderTable({});
     await screen.findByText('my-cluster');
-    expect(screen.queryByRole('link', { name: /my-cluster/ })).toBeNull();
+    expect(screen.getByRole('link', { name: /my-cluster/ })).toBeInTheDocument();
 
-    // Status resolves: error becomes null (Active). The memoized name cell must
-    // re-render and turn back into a link.
     rerender(<Wrapper errors={{ 'my-cluster': null }} />);
 
     await waitFor(() => {

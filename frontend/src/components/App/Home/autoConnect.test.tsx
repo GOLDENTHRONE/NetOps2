@@ -21,11 +21,13 @@ import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { TestContext } from '../../../test';
 
 // Mock the data-fetching hooks so we can assert exactly which clusters Home
-// auto-connects to. Home must only poll recently-used clusters, not all.
+// auto-connects to. With AUTO_CONNECT_ALL (the default, upstream Headlamp
+// behaviour) Home checks every configured cluster on open.
 vi.mock('../../../lib/k8s', () => ({
   useClustersConf: vi.fn(() => ({})),
   useClustersVersion: vi.fn(() => [{}, {}, {}]),
   useClustersOcpVersion: vi.fn(() => ({})),
+  useClustersAuth: vi.fn(() => ({})),
 }));
 
 vi.mock('../../../lib/k8s/event', () => ({
@@ -56,7 +58,7 @@ function renderHome() {
   );
 }
 
-describe('Home auto-connect gating', () => {
+describe('Home auto-connect (Headlamp behaviour: AUTO_CONNECT_ALL default)', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
@@ -68,25 +70,25 @@ describe('Home auto-connect gating', () => {
     });
   });
 
-  it('does not poll any cluster when there are no recently-used clusters', () => {
+  it('checks every configured cluster on open even with no recently-used clusters', () => {
     renderHome();
 
     const polledVersions = (useClustersVersion as Mock).mock.calls[0][0] as Array<{ name: string }>;
-    expect(polledVersions.map(c => c.name)).toEqual([]);
+    expect(polledVersions.map(c => c.name).sort()).toEqual(['c1', 'c2', 'c3']);
 
     const polledWarnings = (useEventWarningList as Mock).mock.calls[0][0] as string[];
-    expect(polledWarnings).toEqual([]);
+    expect([...polledWarnings].sort()).toEqual(['c1', 'c2', 'c3']);
   });
 
-  it('only polls versions and warnings for recently-used clusters', () => {
+  it('checks all configured clusters regardless of the recently-used list', () => {
     localStorage.setItem('recent_clusters', JSON.stringify(['c2']));
 
     renderHome();
 
     const polledVersions = (useClustersVersion as Mock).mock.calls[0][0] as Array<{ name: string }>;
-    expect(polledVersions.map(c => c.name)).toEqual(['c2']);
+    expect(polledVersions.map(c => c.name).sort()).toEqual(['c1', 'c2', 'c3']);
 
     const polledWarnings = (useEventWarningList as Mock).mock.calls[0][0] as string[];
-    expect(polledWarnings).toEqual(['c2']);
+    expect([...polledWarnings].sort()).toEqual(['c1', 'c2', 'c3']);
   });
 });
