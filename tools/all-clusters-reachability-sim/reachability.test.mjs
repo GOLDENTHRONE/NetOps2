@@ -34,6 +34,7 @@ import {
 import {
   lingerAfterSingleBlip,
   openParadox,
+  runReturnToTab,
   runStatusPoll,
 } from './reachabilitySim.mjs';
 
@@ -152,4 +153,30 @@ test('a genuinely expired token is correctly shown as expired (not a false alarm
   assert.equal(r.gate, 'expired');
   assert.equal(r.tokenActuallyValid, false);
   assert.equal(r.misleading, false);
+});
+
+// --- returning to the tab after being away ---------------------------------
+
+test('return-to-tab: a slow first auth (6s) drops Ready->Reachable, then recovers', () => {
+  // Come back; first auth recheck is slow (backend refreshing creds) -> 5s
+  // timeout -> Reachable; the next successful check flips back to Ready.
+  const cycles = runReturnToTab([
+    { http: 200, latencyMs: 6000 }, // slow first call after idle -> times out
+    { http: 200, latencyMs: 300 }, // next call is fast
+  ]);
+  assert.equal(cycles[0].label, 'Reachable');
+  assert.equal(cycles[0].authTimedOut, true);
+  assert.equal(cycles[1].label, 'Ready');
+});
+
+test('return-to-tab: backoff pushes the Ready recovery ~20s out after one timeout', () => {
+  const cycles = runReturnToTab([{ http: 200, latencyMs: 6000 }]);
+  // One failed auth -> next attempt is 20s away, so "Reachable" persists ~20s.
+  assert.equal(cycles[0].nextAuthInMs, 20000);
+});
+
+test('return-to-tab: a fast auth on return goes straight back to Ready', () => {
+  const cycles = runReturnToTab([{ http: 200, latencyMs: 300 }]);
+  assert.equal(cycles[0].label, 'Ready');
+  assert.equal(cycles[0].nextAuthInMs, 10000);
 });

@@ -31,6 +31,8 @@
 
 import {
   AUTH_TIMEOUT,
+  authCheckInterval,
+  backoff,
   DEFAULT_TIMEOUT,
   getClusterReadiness,
   openOutcome,
@@ -38,6 +40,48 @@ import {
   readinessLabel,
   versionRefetchInterval,
 } from './reachabilityModel.mjs';
+
+const maxAuthCheckInterval = authCheckInterval * 6;
+
+/**
+ * Model what happens to an ALREADY-Ready cluster when you come back to the tab
+ * after working elsewhere for a while.
+ *
+ * While the tab is backgrounded, polling is paused (refetchIntervalInBackground:
+ * false). On return, refetchOnWindowFocus:'always' fires an immediate auth
+ * recheck — so it DOES check right away. But the first auth call after an idle
+ * period is often slow (the backend re-establishes/refreshes the cluster
+ * credential), and testAuth's 5s timeout is tight. If it times out, the row
+ * drops Ready -> Reachable, and backoff pushes the next attempt ~20s out, so the
+ * row sits on "Reachable" for a while before it can turn "Ready" again.
+ *
+ * `/version` is assumed healthy throughout (it has a 2-min timeout, so it stays
+ * reachable); this isolates the auth recheck that gates the "Ready" label.
+ *
+ * @param {Array<{http:any, latencyMs?:number}>} authCycles  auth results after return
+ */
+export function runReturnToTab(authCycles) {
+  let failures = 0;
+  const out = [];
+  for (const c of authCycles) {
+    const latency = c.latencyMs ?? 300;
+    const authError = probe(c.http, latency, AUTH_TIMEOUT);
+    if (authError === null) {
+      failures = 0;
+    } else {
+      failures += 1;
+    }
+    const readiness = getClusterReadiness(null, { tracked: true, error: authError });
+    const nextAuthInMs = backoff(authCheckInterval, maxAuthCheckInterval, failures);
+    out.push({
+      readiness,
+      label: readinessLabel(readiness),
+      authTimedOut: authError?.status === 408,
+      nextAuthInMs,
+    });
+  }
+  return out;
+}
 
 /**
  * Run the Home-table status poll across a series of cycles.

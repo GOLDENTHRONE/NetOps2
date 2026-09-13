@@ -21,7 +21,12 @@
  */
 
 import { AUTH_TIMEOUT, DEFAULT_TIMEOUT } from './reachabilityModel.mjs';
-import { lingerAfterSingleBlip, openParadox, runStatusPoll } from './reachabilitySim.mjs';
+import {
+  lingerAfterSingleBlip,
+  openParadox,
+  runReturnToTab,
+  runStatusPoll,
+} from './reachabilitySim.mjs';
 
 function line() {
   console.log('-'.repeat(76));
@@ -93,3 +98,24 @@ console.log(
   '\n  -> Row "Ready", token VALID, but a 6s auth call (> 5s timeout) opens onto'
 );
 console.log('     "This cluster is not responding". Nothing is actually wrong.\n');
+
+console.log('=== Scenario D: coming back to the tab after working elsewhere ===');
+console.log('(polling paused while away; on return it rechecks immediately)\n');
+const ret = runReturnToTab([
+  { http: 200, latencyMs: 6000 }, // first auth after idle is slow -> times out (5s)
+  { http: 200, latencyMs: 300 }, // next one is fast
+]);
+ret.forEach((c, i) =>
+  console.log(
+    `  recheck ${i}: ${c.label.padEnd(12)}${c.authTimedOut ? ' (auth timed out)' : ''} — next auth in ${
+      c.nextAuthInMs / 1000
+    }s`
+  )
+);
+console.log(
+  '\n  -> It DOES recheck instantly on return, but the first auth call after idle is'
+);
+console.log(
+  '     slow, times out at 5s, so it shows "Reachable" and backoff makes it wait'
+);
+console.log('     ~20s before it can turn "Ready" again.\n');
