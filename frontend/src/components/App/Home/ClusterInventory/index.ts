@@ -16,7 +16,13 @@
 
 import type { ApiError } from '../../../../lib/k8s/api/v2/ApiError';
 import type { Cluster, KubeCondition } from '../../../../lib/k8s/cluster';
-import { getClusterStatus, getClusterStatusLabel } from '../clusterStatus';
+import type { ClusterAuthCheck } from '../clusterStatus';
+import {
+  getClusterReadiness,
+  getClusterReadinessLabel,
+  getClusterStatus,
+  getClusterStatusLabel,
+} from '../clusterStatus';
 
 const CLUSTER_INVENTORY_SOURCE = 'cluster_inventory';
 const CONTROL_PLANE_HEALTHY_CONDITION = 'ControlPlaneHealthy';
@@ -126,4 +132,78 @@ export function getClusterStatusAccessor(
   }
 
   return getClusterStatusLabel(t, error);
+}
+
+/**
+ * Readiness-aware variant of {@link getClusterStatusInfo}. Layers the authorization
+ * check on top of reachability so the status cell can show a truthful "Ready"
+ * (reachable AND authorized) versus "Reachable" (answered, auth not confirmed).
+ *
+ * When `auth.tracked` is false this is behaviourally identical to
+ * {@link getClusterStatusInfo}, so callers that don't provide an auth check keep the
+ * original reachability-only status.
+ */
+export function getClusterReadinessInfo(
+  cluster: Cluster,
+  versionError: ApiError | null | undefined,
+  auth: ClusterAuthCheck,
+  t: Translate
+): ClusterStatusInfo {
+  const condition = getControlPlaneHealthyCondition(cluster);
+
+  // A failing control-plane condition always wins, exactly as before.
+  if (condition?.status === 'False') {
+    return { kind: 'error', text: t('translation|Control plane unhealthy'), condition };
+  }
+
+  const readiness = getClusterReadiness(versionError, auth);
+
+  if (
+    readiness === 'auth-error' ||
+    readiness === 'permission-error' ||
+    readiness === 'unavailable'
+  ) {
+    return { kind: 'error', text: getClusterReadinessLabel(t, readiness), condition };
+  }
+
+  if (condition?.status === 'Unknown' || readiness === 'loading') {
+    return { kind: 'unknown', text: '⋯', condition };
+  }
+
+  // 'reachable' is deliberately neutral (not green): the cluster answered, but the
+  // user's access hasn't been confirmed yet, so we don't over-promise. 'ready' and
+  // the auth-not-tracked 'active' are the confirmed-good states.
+  if (readiness === 'reachable') {
+    return { kind: 'unknown', text: getClusterReadinessLabel(t, readiness), condition };
+  }
+
+  return { kind: 'active', text: getClusterReadinessLabel(t, readiness), condition };
+}
+
+/** Readiness-aware sortable status text (mirrors {@link getClusterStatusAccessor}). */
+export function getClusterReadinessAccessor(
+  cluster: Cluster,
+  versionError: ApiError | null | undefined,
+  auth: ClusterAuthCheck,
+  t: Translate
+): string | undefined {
+  const condition = getControlPlaneHealthyCondition(cluster);
+  if (condition?.status === 'False') {
+    return t('translation|Control plane unhealthy');
+  }
+
+  const readiness = getClusterReadiness(versionError, auth);
+  if (
+    readiness === 'auth-error' ||
+    readiness === 'permission-error' ||
+    readiness === 'unavailable'
+  ) {
+    return getClusterReadinessLabel(t, readiness);
+  }
+
+  if (condition?.status === 'Unknown') {
+    return t('translation|Unknown');
+  }
+
+  return getClusterReadinessLabel(t, readiness);
 }

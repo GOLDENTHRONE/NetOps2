@@ -16,7 +16,13 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
-import { canSelectCluster, getClusterStatus, getClusterStatusLabel } from './clusterStatus';
+import {
+  canSelectCluster,
+  getClusterReadiness,
+  getClusterReadinessLabel,
+  getClusterStatus,
+  getClusterStatusLabel,
+} from './clusterStatus';
 
 describe('getClusterStatus', () => {
   it('maps version check states to display states', () => {
@@ -53,6 +59,51 @@ describe('getClusterStatusLabel', () => {
     expect(getClusterStatusLabel(t, new ApiError('Bad Gateway', { status: 502 }))).toBe(
       'translation|Unavailable'
     );
+  });
+});
+
+describe('getClusterReadiness', () => {
+  const err = (status: number) => new ApiError('e', { status });
+
+  it('falls back to reachability-only "active" when auth is not tracked', () => {
+    expect(getClusterReadiness(null)).toBe('active');
+    expect(getClusterReadiness(null, { tracked: false })).toBe('active');
+    expect(getClusterReadiness(undefined)).toBe('loading');
+    expect(getClusterReadiness(err(502))).toBe('unavailable');
+  });
+
+  it('lets a reachability failure win over the auth check', () => {
+    expect(getClusterReadiness(err(502), { tracked: true, error: null })).toBe('unavailable');
+    expect(getClusterReadiness(undefined, { tracked: true, error: null })).toBe('loading');
+  });
+
+  it('refines a reachable cluster by its auth result', () => {
+    // reachable (version ok) + auth pending => reachable
+    expect(getClusterReadiness(null, { tracked: true, error: undefined })).toBe('reachable');
+    // reachable + authorized => ready
+    expect(getClusterReadiness(null, { tracked: true, error: null })).toBe('ready');
+    // reachable + 401 => auth-error
+    expect(getClusterReadiness(null, { tracked: true, error: err(401) })).toBe('auth-error');
+    // reachable + 403 => permission-error
+    expect(getClusterReadiness(null, { tracked: true, error: err(403) })).toBe('permission-error');
+    // reachable + non-auth failure (timeout/5xx) => reachable (auth uncertain, cluster is up)
+    expect(getClusterReadiness(null, { tracked: true, error: err(408) })).toBe('reachable');
+    expect(getClusterReadiness(null, { tracked: true, error: err(500) })).toBe('reachable');
+  });
+});
+
+describe('getClusterReadinessLabel', () => {
+  const t = (key: string) => key;
+  it('labels the readiness states', () => {
+    expect(getClusterReadinessLabel(t, 'ready')).toBe('translation|Ready');
+    expect(getClusterReadinessLabel(t, 'reachable')).toBe('translation|Reachable');
+    expect(getClusterReadinessLabel(t, 'active')).toBe('translation|Active');
+    expect(getClusterReadinessLabel(t, 'auth-error')).toBe('translation|Authentication required');
+    expect(getClusterReadinessLabel(t, 'permission-error')).toBe(
+      'translation|Insufficient permissions'
+    );
+    expect(getClusterReadinessLabel(t, 'unavailable')).toBe('translation|Unavailable');
+    expect(getClusterReadinessLabel(t, 'loading')).toBe('⋯');
   });
 });
 
