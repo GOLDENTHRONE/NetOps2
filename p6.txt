@@ -1,9 +1,9 @@
 ================================================================================
 p6.txt — LIVE-CLUSTER VERIFICATION TASK
-Goal: verify the "cluster readiness + access gate" change on a REAL cluster,
-and prove it did NOT affect any other tab, route, or functionality. Run this in
-a session that has the real cluster(s) connected on branch GT_D_V1, then paste
-the (masked) results back.
+Goal: verify the "cluster readiness + access gate" change AND the require()->ESM
+crash fix on a REAL cluster, and prove they did NOT affect any other tab, route,
+or functionality. Run this in a session that has the real cluster(s) connected
+on branch GT_D_V1, then paste the (masked) results back.
 ================================================================================
 
 ------------------------------------------------------------------------------
@@ -54,6 +54,19 @@ Two feature commits are on GT_D_V1 (tips: 4d58b78, e71900c):
      redirect. OIDC keeps its existing auto-redirect login flow. Success still
      renders the cluster. Multi-cluster + requires-auth short-circuits unchanged.
 
+3) "Fix: use static ESM import for ResourceClasses instead of require()"
+   (commit f67d831) — a SEPARATE, PRE-EXISTING crash fix, not part of the
+   feature above.
+   - Symptom: opening ANY cluster crashed with
+     "ReferenceError: require is not defined" and the error boundary
+     "Uh-oh! Something went wrong. Error loading Cluster".
+   - Cause: event.ts / crd.ts / hpa.ts / vpa.ts called require('.') inside a
+     method. require is a Node API and does not exist in the browser (Vite/ESM)
+     runtime. It was introduced by commit 17075cc (BEFORE the feature work), so
+     it is NOT caused by items (1) or (2).
+   - Fix: restored the static `import { ResourceClasses } from '.'` in those
+     four files and removed the require() calls. (node.ts was already correct.)
+
 Config knobs (Vite env, all optional; defaults chosen for this change):
    REACT_APP_AUTH_CHECK_INTERVAL          (ms, default 10000)
    REACT_APP_OCP_VERSION_FETCH_INTERVAL   (ms, default 3600000 = 1h)
@@ -66,7 +79,7 @@ STEP 0 — SETUP
 0.1  Confirm you are on GT_D_V1 and up to date:
        git fetch origin GT_D_V1
        git checkout GT_D_V1 && git rev-parse --short HEAD
-     Expected HEAD: e71900c (or later). Report the short SHA.
+     Expected HEAD: f67d831 (or later). Report the short SHA.
 0.2  Record the BASELINE commit for regression comparison: the commit right
      before the feature = 17075cc. You will compare test/tsc results against it
      in STEP 6.
@@ -136,6 +149,29 @@ STEP 4 — POLLING CADENCE / NO HAMMERING
      "Active" label. Revert afterwards.
 
 ------------------------------------------------------------------------------
+STEP 4B — CLUSTER OPEN NO LONGER CRASHES (require() -> ESM import fix)
+------------------------------------------------------------------------------
+This is the pre-existing crash fixed in commit f67d831. It must be verified
+FIRST, because until it works you cannot reach a cluster's pages to test STEP 5.
+
+4B.1 Open a healthy/Ready cluster. EXPECT: it loads normally. It must NOT show
+     "Uh-oh! Something went wrong. / Error loading Cluster", and the console
+     must NOT contain "ReferenceError: require is not defined".
+4B.2 Confirm the Cluster Overview page renders, including its EVENTS table (the
+     events table's "involved object" links are what used to trigger the crash
+     via event.ts). Click an event's involved-object link and confirm it
+     navigates to that object (no crash).
+4B.3 Visit pages that use the same pattern and confirm no crash / no "require is
+     not defined":
+       - an HPA (HorizontalPodAutoscaler) detail page  (hpa.ts)
+       - a VPA (VerticalPodAutoscaler) detail page, if present (vpa.ts)
+       - a CRD / custom resource list or detail page   (crd.ts)
+4B.4 Hard-reload with the browser DevTools Console open and confirm there is NO
+     "require is not defined" anywhere while navigating these pages.
+4B.5 Report: which pages you opened (masked) and a clear yes/no that the
+     "require is not defined" crash is gone.
+
+------------------------------------------------------------------------------
 STEP 5 — OPENING A CLUSTER: THE ACCESS GATE
 ------------------------------------------------------------------------------
 Confirm the NAME is clickable in every state (even while a status is still
@@ -182,6 +218,12 @@ cluster-open route. Prove nothing else moved.
      (a failed events WebSocket for warnings is pre-existing — note it but it is
      not caused by this change).
 
+6.6b BROWSER BUILD (proves the require() fix): a full production build must
+     succeed and the bundle must contain no bare require():
+       (cd frontend && npx vite build)   # expect "✓ built in ..." exit 0
+     Unit tests alone do NOT catch the require() bug (vitest provides require);
+     only a real build / the browser does. Report the build exit status.
+
 6.6  AUTOMATED CHECKS — run on GT_D_V1 (feature) AND compare to baseline 17075cc:
        # feature branch
        (cd frontend && npx vitest run src/components/App/Home/ \
@@ -214,7 +256,9 @@ cluster-open route. Prove nothing else moved.
 ------------------------------------------------------------------------------
 STEP 7 — WHAT TO SEND BACK (all masked)
 ------------------------------------------------------------------------------
-- HEAD SHA you tested (STEP 0.1).
+- HEAD SHA you tested (STEP 0.1). Expected tip: f67d831 (or later).
+- STEP 4B: clear yes/no that the "require is not defined" crash is gone, and
+  which pages (Overview/events, HPA, VPA, CRD) you opened without a crash.
 - STEP 1–5: a masked cluster-by-cluster table (status shown vs reality) and a
   short note per gate state (5.1–5.7), with masked screenshots if possible.
 - STEP 3.3 + STEP 4: observed request intervals for /version, the auth probe,
