@@ -1,0 +1,231 @@
+================================================================================
+p6.txt — LIVE-CLUSTER VERIFICATION TASK
+Goal: verify the "cluster readiness + access gate" change on a REAL cluster,
+and prove it did NOT affect any other tab, route, or functionality. Run this in
+a session that has the real cluster(s) connected on branch GT_D_V1, then paste
+the (masked) results back.
+================================================================================
+
+------------------------------------------------------------------------------
+IMPORTANT — SAFETY / PRIVACY (read first)
+------------------------------------------------------------------------------
+- Do NOT paste any secrets into your results: no tokens, passwords, kubeconfig
+  contents, real cluster API hostnames/IPs, real/internal namespace names, or
+  employer/tenant identifiers. Replace any such value with a GENERIC placeholder
+  (e.g. cluster-A, cluster-ocp, cluster-plain, ns-foo, <redacted-host>). If a
+  network log or console line prints a secret or a real hostname, MASK it before
+  sharing. Screenshots must have real names/hosts blurred or cropped out.
+- Do NOT change production RBAC or delete/rename real clusters to "test" states
+  unless you own them and it is safe. Prefer read-only observation.
+- This task is READ-ONLY / observational. Do NOT push code and do NOT open a PR.
+  It only produces a written report.
+
+------------------------------------------------------------------------------
+WHAT CHANGED (context for the reviewer)
+------------------------------------------------------------------------------
+Two feature commits are on GT_D_V1 (tips: 4d58b78, e71900c):
+
+1) "Truthful cluster readiness + auto-check all clusters"
+   - New hook useClustersAuth (frontend/src/lib/k8s/index.ts): a background
+     authorization probe per connected cluster — POST
+     /apis/authorization.k8s.io/v1/selfsubjectrulesreviews via testAuth().
+     testAuth uses autoLogout=false, so a 401 here must NOT clear the global
+     session.
+   - getClusterReadiness / getClusterReadinessLabel + Inventory info/accessor
+     (Home/clusterStatus.ts, Home/ClusterInventory/index.ts): combine
+     reachability (/version) with authorization into the status labels:
+        Ready | Reachable | Authentication required | Insufficient permissions |
+        Unavailable | Control plane unhealthy | Not connected | Connecting…
+   - OCP ClusterVersion now polls every 1 hour (was 10s): index.ts
+     ocpVersionFetchInterval / ocpVersionRefetchInterval.
+   - AUTO_CONNECT_ALL (default true): every configured cluster is checked on
+     page open (upstream Headlamp behaviour), not only recently-used ones.
+   - The cluster NAME link is always clickable (never blocked while connecting).
+
+2) "Centered access gate when opening a cluster"
+   - New component ClusterAccessGate (frontend/src/components/cluster/
+     ClusterAccessGate.tsx): one centered screen with states
+     checking / unreachable / expired (401) / forbidden (403), dynamic (i18n)
+     messages, a "Back to All Clusters" button always present, plus
+     "Sign in again" (expired) and "Retry" (unreachable), and an expandable
+     "Technical details" block.
+   - AuthRoute (frontend/src/components/App/RouteSwitcher.tsx) renders the gate
+     for the pending and non-OIDC error cases instead of a blank page / hard
+     redirect. OIDC keeps its existing auto-redirect login flow. Success still
+     renders the cluster. Multi-cluster + requires-auth short-circuits unchanged.
+
+Config knobs (Vite env, all optional; defaults chosen for this change):
+   REACT_APP_AUTH_CHECK_INTERVAL          (ms, default 10000)
+   REACT_APP_OCP_VERSION_FETCH_INTERVAL   (ms, default 3600000 = 1h)
+   REACT_APP_AUTO_CONNECT_ALL             (default true)
+   REACT_APP_ENABLE_READY_CHECK           (default true)
+
+------------------------------------------------------------------------------
+STEP 0 — SETUP
+------------------------------------------------------------------------------
+0.1  Confirm you are on GT_D_V1 and up to date:
+       git fetch origin GT_D_V1
+       git checkout GT_D_V1 && git rev-parse --short HEAD
+     Expected HEAD: e71900c (or later). Report the short SHA.
+0.2  Record the BASELINE commit for regression comparison: the commit right
+     before the feature = 17075cc. You will compare test/tsc results against it
+     in STEP 6.
+0.3  Install + run the app the normal way for this repo (dev server), connect
+     your real cluster(s). Note how many clusters are configured and, of those,
+     which are: OpenShift, plain Kubernetes, currently reachable, currently
+     down, and (if you can arrange one safely) one where your credentials are
+     expired or lack permissions. Refer to them by MASKED names in the report.
+0.4  Open browser DevTools → Network + Console before opening the app, so you
+     can capture request cadence and any errors.
+
+------------------------------------------------------------------------------
+STEP 1 — AUTO-CHECK ALL CLUSTERS ON OPEN (Headlamp behaviour)
+------------------------------------------------------------------------------
+1.1  Open Home → "All Clusters" tab fresh (clear the tab / hard reload).
+1.2  EXPECT: every configured cluster starts checking automatically — NO
+     "Not connected / Connect" buttons should be required (AUTO_CONNECT_ALL).
+     CONFIRM: does every row populate a status on its own? (yes/no)
+1.3  In Network, confirm that on load, for each cluster, you see:
+       GET  /clusters/<c>/version                       (status probe)
+       POST /clusters/<c>/apis/authorization.k8s.io/v1/selfsubjectrulesreviews
+                                                         (auth/Ready probe)
+     Report (masked) how many of each fired on first load.
+
+------------------------------------------------------------------------------
+STEP 2 — STATUS COLUMN MEANS THE RIGHT THING
+------------------------------------------------------------------------------
+For EACH cluster, record the Status shown and whether it matches reality:
+2.1  Healthy cluster you ARE authorized on  → EXPECT "Ready" (green).
+2.2  Healthy cluster while its auth probe is still in flight (first ~second on
+     load) → may briefly show "Reachable" (neutral) before turning "Ready".
+2.3  Cluster reachable but your session is EXPIRED  → EXPECT
+     "Authentication required".
+2.4  Cluster reachable but you are FORBIDDEN (403) → EXPECT
+     "Insufficient permissions".
+2.5  Cluster that is DOWN / unreachable → EXPECT "Unavailable".
+2.6  (If Cluster Inventory is in use) a cluster reporting control-plane False →
+     EXPECT "Control plane unhealthy" (this must still win over everything).
+     Report a masked table: cluster (masked) | Status shown | was it correct?
+
+------------------------------------------------------------------------------
+STEP 3 — VERSION / OCP / WARNINGS COLUMNS
+------------------------------------------------------------------------------
+3.1  Kubernetes Version populates for reachable clusters (masked value ok).
+3.2  OCP Version: shows a version for OpenShift clusters; shows "⋯" for plain
+     Kubernetes clusters (this is NORMAL, not an error).
+3.3  IMPORTANT (the OCP-1h change): in Network, watch for ~2 minutes. Confirm
+     the OCP endpoint
+       GET /clusters/<c>/apis/config.openshift.io/v1/clusterversions/version
+     is NOT being hit every ~10s. It should fire about ONCE on connect and then
+     not again for an hour. Report the observed interval.
+3.4  Warnings column still shows a count (or "⋯" while loading / "50+" cap).
+     Confirm it behaves exactly as before this change.
+
+------------------------------------------------------------------------------
+STEP 4 — POLLING CADENCE / NO HAMMERING
+------------------------------------------------------------------------------
+4.1  With the tab focused, confirm /version and selfsubjectrulesreviews each
+     fire roughly every ~10s per connected cluster (default). Report observed.
+4.2  Switch to another browser tab for ~30s, come back. EXPECT: polling PAUSED
+     while backgrounded and a fresh check FIRES on focus. Confirm.
+4.3  Point at (or simulate) a down cluster and confirm its polling BACKS OFF
+     (~10s → 20 → 40 → 60s), it does not keep hammering every 10s.
+4.4  (Optional) Set REACT_APP_AUTH_CHECK_INTERVAL=30000 and confirm the auth
+     probe now fires ~every 30s. Set REACT_APP_ENABLE_READY_CHECK=false and
+     confirm the auth probe stops entirely and the status falls back to the old
+     "Active" label. Revert afterwards.
+
+------------------------------------------------------------------------------
+STEP 5 — OPENING A CLUSTER: THE ACCESS GATE
+------------------------------------------------------------------------------
+Confirm the NAME is clickable in every state (even while a status is still
+loading — it must NOT be greyed out / blocked).
+
+5.1  Open a "Ready" cluster → EXPECT a brief centered "Checking your access…"
+     then the cluster opens. It must NOT get stuck.
+5.2  Open a cluster with an EXPIRED session → EXPECT the centered gate:
+       title "Your session for this cluster expired",
+       buttons "Sign in again" + "Back to All Clusters".
+     - Click "Sign in again" → EXPECT the normal token/login flow (same as
+       before this change).
+     - Go back and click "Back to All Clusters" → EXPECT you return to the
+       All Clusters tab.
+5.3  Open a FORBIDDEN (403) cluster → EXPECT gate "You do not have access to
+     this cluster" with only "Back to All Clusters" (no Sign-in/Retry).
+5.4  Open an UNREACHABLE cluster → EXPECT gate "This cluster is not responding"
+     with "Retry now" + "Back". Click "Retry now" → EXPECT it re-checks.
+5.5  Expand "Technical details" on any error gate → EXPECT the real HTTP code
+     (e.g. 401/403/502) shown. (Mask anything sensitive in the screenshot.)
+5.6  CRITICAL — global session not wiped: when a single cluster returns 401 on
+     open, confirm your OTHER clusters stay connected and you are NOT logged out
+     of the whole app. (autoLogout=false). Report yes/no.
+5.7  OIDC cluster (if you have one): open it and confirm the OIDC login flow is
+     UNCHANGED (it should auto-redirect to the OIDC/login flow, NOT show the new
+     gate). This is the one path we intentionally left as-is.
+
+------------------------------------------------------------------------------
+STEP 6 — REGRESSION: NOTHING ELSE AFFECTED (do this carefully)
+------------------------------------------------------------------------------
+The change is meant to be confined to the Home/All-Clusters area + the
+cluster-open route. Prove nothing else moved.
+
+6.1  APPLICATIONS TAB: open it. Confirm the list, a project's details, and its
+     health all render and behave exactly as before. (yes/no + notes)
+6.2  INSIDE A CLUSTER: open a Ready cluster and visit several resource pages
+     (Pods, Deployments, Services, Namespaces, Events, etc.). Confirm they load
+     and navigate normally. (yes/no)
+6.3  CLUSTER ACTIONS: sidebar navigation, global search, the cluster row
+     context menu (View / Rename / Delete where allowed), and multi-cluster
+     selection + "View Clusters" all still work. (yes/no)
+6.4  AUTH FLOWS: token entry, login, and OIDC sign-in all still work end to end.
+6.5  CONSOLE: no NEW errors/warnings introduced by opening Home or a cluster
+     (a failed events WebSocket for warnings is pre-existing — note it but it is
+     not caused by this change).
+
+6.6  AUTOMATED CHECKS — run on GT_D_V1 (feature) AND compare to baseline 17075cc:
+       # feature branch
+       (cd frontend && npx vitest run src/components/App/Home/ \
+          src/components/cluster/ClusterAccessGate.test.tsx \
+          src/components/App/RouteSwitcher.test.tsx)
+       (cd frontend && npx tsgo --noEmit -p tsconfig.json | grep -c "error TS")
+       (cd frontend && npx eslint -c package.json --ext .ts,.tsx \
+          src/components/App/Home src/components/cluster/ClusterAccessGate.tsx \
+          src/components/App/RouteSwitcher.tsx)
+     EXPECTED on the feature branch:
+       - Home + gate + route tests: PASS except TWO PRE-EXISTING failures in
+         ClusterTable.test.tsx ("renders Cluster Inventory source labels" and
+         "renders in-cluster source labels"). These test a commented-out
+         "origin" column and FAIL identically on baseline 17075cc — they are
+         NOT caused by this change. Verify this by checking out 17075cc and
+         re-running: the SAME two must fail there too.
+       - tsgo: the SAME error count as baseline 17075cc (all remaining errors
+         live in src/components/project/*.test.* which this change never touched).
+       - eslint on the changed files: 0 problems.
+     Report the numbers for BOTH commits so the diff is provably zero.
+
+6.7  (Optional, strongest proof) Full suite both sides:
+       git checkout 17075cc && (cd frontend && npm test -- --run) | tail   # baseline
+       git checkout GT_D_V1 && (cd frontend && npm test -- --run) | tail   # feature
+     Report the pass/fail counts for each; the only differences should be the
+     tests we intentionally updated for the new behaviour (autoConnect.test.tsx,
+     ClusterTable.connecting.test.tsx, clusterStatus.test.ts) plus the new
+     ClusterAccessGate.test.tsx — and NO new failures anywhere else.
+
+------------------------------------------------------------------------------
+STEP 7 — WHAT TO SEND BACK (all masked)
+------------------------------------------------------------------------------
+- HEAD SHA you tested (STEP 0.1).
+- STEP 1–5: a masked cluster-by-cluster table (status shown vs reality) and a
+  short note per gate state (5.1–5.7), with masked screenshots if possible.
+- STEP 3.3 + STEP 4: observed request intervals for /version, the auth probe,
+  and the OCP endpoint (to confirm OCP is ~1h and nothing hammers).
+- STEP 5.6: explicit yes/no on "global session preserved on a single-cluster
+  401".
+- STEP 6: yes/no per regression area (6.1–6.5) and the numbers from 6.6 (and
+  6.7 if you ran it) for BOTH GT_D_V1 and 17075cc.
+- Anything surprising, any NEW console error, or any behaviour that differs
+  from the EXPECT lines above.
+
+================================================================================
+END p6.txt
+================================================================================
