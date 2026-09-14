@@ -1,92 +1,182 @@
 ================================================================================
-p7.txt — All Clusters RESILIENCE PLAN (phased). Status: P0 LOCKED.
+p7.txt — All Clusters RESILIENCE PLAN (phased). Status: P0 LOCKED (corrected).
 Goal: stop false "not reachable"/flicker while keeping data live and genuine
 outages honest. Nothing here is implemented yet — this is the agreed spec.
-Test on the real-code simulator (tools/all-clusters-final-sim) only AFTER all
-phases (P0/P1/P2...) are discussed and locked, then implement phase-by-phase.
+Every value is tagged: [CODE file:line] = read from source; [LIVE] = measured in
+the 36-min localhost:3000 capture; [P0] = the change P0 introduces.
+Test on the real-code simulator (tools/all-clusters-final-sim) only AFTER the
+spec is agreed, then implement phase-by-phase behind config flags.
 ================================================================================
 
 PRINCIPLE
   Freshness comes from streaming (k8s watch); trust comes from tolerance.
   One slow/blipped probe must never destroy either. Show last-known-good +
   how fresh it is; change a health verdict only when the signal is sure.
+  Real auth failures (401/403) are NEVER hidden — shown immediately.
 
-VERIFIED ROOT CAUSE (from code + headless react-query v5.51)
-  testAuth timeout is 5s (clusterApi.ts:40) while /version is 120s
-  (constants.ts:26); all polls use retry:false (index.ts:461,560,642); a timed-
-  out request becomes HTTP 408 (clusterRequests.ts:185); and on a failed
-  background refetch of a cached-success query, react-query flips
-  status->error / isSuccess->false, so AuthRoute (RouteSwitcher.tsx:221,227)
-  shows the gate. => one slow/blipped request = instant false error, lingering
-  via backoff (10->20->40->60s).
+================================================================================
+VERIFIED ROOT CAUSE (from code + the live 36-min capture)
+================================================================================
+There are TWO separate auth checks; they behave differently. This distinction
+is the heart of the fix:
+
+  (A) HOME TABLE status  — useClustersAuth, queryKey ['clusterAuth', cluster]
+      [CODE index.ts:624]. Already partly resilient: keeps last settled result
+      [CODE index.ts:619,656] and tracks consecutive failures for backoff
+      [CODE index.ts:616]. retry:false [CODE index.ts:642].
+  (B) CLUSTER-OPEN GATE  — AuthRoute, queryKey ['auth', cluster]
+      [CODE RouteSwitcher.tsx:173]. retry:0 [CODE RouteSwitcher.tsx:176],
+      NO debounce, NO keep-last-good. Renders the gate on ANY query.isError
+      [CODE RouteSwitcher.tsx:227,244-246]. THIS is the "NOT RESPONDING" screen.
+
+Mechanics:
+  - testAuth timeout is 5s [CODE clusterApi.ts:39-40] while /version is 120s
+    [CODE constants.ts:26]. A timed-out request becomes HTTP 408
+    [CODE clusterRequests.ts:185]; unreachable becomes 502 [CODE :179].
+  - staleTime is 3 min [CODE queryClient.ts:22]; gcTime is NOT set, so react-query
+    v5 default 5 min applies. So on return: <3min = instant (no re-check);
+    3-5min = cached page shown, then a background re-check runs — if it blips,
+    (B) flips success->error and shows the gate; >5min = cold "Checking…".
+  - Poll base interval 10s [CODE index.ts:313 versionFetchInterval]; backoff is
+    10 -> 20 -> 40 -> 60s (cap 6x) via base*2**failures
+    [CODE index.ts:319,344; auth mirror :400,404]. NOTE: current backoff has
+    NO jitter (pure 2**n).
+
+LIVE EVIDENCE (36-min capture on a Ready cluster; all masked):
+  - Return test: 2min = instant; 4min = "NOT RESPONDING" gate; 6min = cold then
+    a "Request timed-out" gate. [LIVE] => the (B) bug reproduces on a HEALTHY
+    cluster ("Ready did NOT guarantee stable data-plane availability").
+  - SAR (auth) p50 ~1s [LIVE] — auth is usually fast; the problem is
+    zero-tolerance, not chronic slowness.
+  - sar_same_cluster_overlaps = 0 [LIVE] — react-query never runs two auth calls
+    for the same cluster at once (single-flight), and the next poll is counted
+    from the previous one settling. So a longer timeout does NOT cause overlap.
+  - WebSocket: 26 errored / handshake 502 & 500 / "closed before established",
+    no auto-reopen [LIVE] — feeds P1, not P0.
+  - CAVEAT: the big latency tails (/version p95 ~90s) mixed all clusters incl.
+    the two Unavailable ones, so they are NOT a clean cluster-A number. This is
+    exactly why P0 relies on keep-last-good, NOT on picking a "correct" timeout.
 
 ================================================================================
 P0 — LOCKED (stop the false alarms). Lowest risk, highest impact.
 ================================================================================
 
 CONFIG KNOBS (all env-configurable; defaults below)
-  - authTimeout:            5s  -> 15s      (REACT_APP_AUTH_TIMEOUT or similar)
-  - pollRetry:              0   -> 1        (with exponential backoff + jitter)
-  - statusFailThreshold:    1   -> 2        (debounce; consecutive fails before error)
-  - keepLastGoodOnBlip:     true            (blip = 408/timeout/502/network only)
+  - authTimeout:         5s  -> 15s   [P0]  (covers a slow-but-OK check)
+  - pollRetry:           0   -> 1     [P0]  (one retry, backoff + JITTER)
+  - retryBaseDelay:      ~1s          [P0]  (1st retry ~1s +/- ~300ms jitter)
+  - statusFailThreshold: 1   -> 2     [P0]  (debounce: 2 consecutive fails)
+  - keepLastGoodOnBlip:  true         [P0]  (blip = 408/timeout/502/network only)
+  - jitter:              +/-15%       [P0]  (added to poll backoff; none today)
 
-CORE RULE (per status/auth check result)
+  NOT CHANGED by P0 (corrected — see note):
+  - poll base interval stays 10s. (An earlier draft said "set interval >=
+    timeout". That was WRONG and is REMOVED: overlaps=0 is already proven [LIVE];
+    single-flight + settle-based scheduling make it unnecessary.)
+  - staleTime 3min and gcTime 5min are NOT touched by P0 (they move in P1).
+
+CORE RULE (applied to BOTH the table status (A) and the open-gate (B)):
   success            -> healthy; reset consecutiveFailures = 0
-  401 / 403          -> REAL auth error: show immediately (NO tolerance / NO
-                        keep-last-good) -> "Authentication required" / gate
-  408 / 502 / network-> BLIP: do 1 retry; keep last-known-good + subtle
-                        "reconnecting…"; consecutiveFailures++
-                        show "Unavailable"/gate ONLY when consecutiveFailures >= 2
+  401 / 403          -> REAL auth error: show IMMEDIATELY. keepLastGood and
+                        debounce do NOT apply. (A) row -> "Authentication
+                        required"/"Insufficient permissions"; (B) -> gate
+                        (expired/forbidden). Security is never softened.
+  408 / 502 / network-> BLIP: wait ~1s(+/-jitter), do 1 retry.
+                        If retry succeeds -> healthy, nothing shown.
+                        If retry fails -> consecutiveFailures++, KEEP last-known-
+                        good + subtle "reconnecting…". Show "Unavailable" (A) or
+                        the gate (B) ONLY when consecutiveFailures >= 2.
+  never-succeeded+err -> no last-good to keep, so the gate/Unavailable may show
+                        on first settle (this is honest: we never had access).
+
+WHAT P0 CHANGES, PER CHECK
+  (B) AuthRoute [RouteSwitcher.tsx]:
+      - retry:0 -> retry:1 (with jittered backoff).
+      - Track "hasSucceededBefore" for ['auth', cluster]. If it has, and the
+        current error is a blip (not 401/403), and consecutiveFailures < 2:
+        render children + "reconnecting…" instead of the gate.
+      - 401/403 -> gate immediately (unchanged intent).
+  (A) useClustersAuth / status derivation [index.ts, clusterStatus.ts,
+      ClusterInventory]:
+      - Use the existing consecutiveFailuresRef to gate the *display*: don't
+        surface "Unavailable" until failures >= 2 (last-good already exists
+        [CODE index.ts:656]).
+  SHARED:
+      - authTimeout 5s -> 15s [clusterApi.ts].
+      - Add jitter to the retry delay and to the poll backoff.
 
 STATUS COLUMN (labels UNCHANGED by P0; only stability changes)
-  Possible values stay: Ready / Reachable / Unavailable / Authentication
-  required / Insufficient permissions / Control plane unhealthy / Connecting…
+  Values stay: Ready / Reachable / Unavailable / Authentication required /
+  Insufficient permissions / Control plane unhealthy / Connecting…
   P0 guarantee: a single blip never flips a Ready row; genuine down shows after
-  2 consecutive fails; first-ever load may briefly show Reachable -> Ready
-  (normal, not a bug).
+  2 consecutive fails; first-ever load may briefly show Reachable -> Ready.
 
-UI FLOW SPEC (the 5 scenarios P0 must satisfy)
-  S1 Table, healthy + 1 network blip:
-        BEFORE: Ready -> Unavailable (~20s) -> Ready   (flicker)
-        AFTER : Ready -> Ready (retry + debounce)      (stable)
-  S2 Open a cluster whose auth is slow (6s), token valid:
-        BEFORE: Connecting… -> 5s timeout -> "not responding"
-        AFTER : Checking… -> answer at 6s (<15s) -> cluster opens
-  S3 Return to a cluster page after ~4 min, background re-check slow/blips:
-        BEFORE: page -> background auth fails at 5s -> sudden "not responding"
-        AFTER : page stays + "reconnecting…" chip -> next success clears it
-  S4 Cluster genuinely down:
+THE 5 FLOWS P0 MUST SATISFY (simulator will test each before/after)
+  F1 Healthy + 1 blip (table):
+        BEFORE: Ready -> Unavailable (~20s) -> Ready (flicker)
+        AFTER : Ready stays (retry + debounce)
+  F2 Open a cluster whose auth is slow (~6s), token valid:
+        BEFORE: 5s timeout -> gate
+        AFTER : answer within 15s -> cluster opens
+  F3 Return to a cluster page at ~4 min, background re-check blips:
+        BEFORE: page -> sudden "NOT RESPONDING" gate
+        AFTER : page stays + "reconnecting…"; next success clears it
+  F4 Cluster genuinely down:
         AFTER : fail(1) last-good + reconnecting; fail(2) -> "Unavailable —
-                last seen …, retrying"  (honest, ~10-20s later)
-  S5 Token genuinely expired/revoked (401/403):
-        AFTER : shown immediately (keep-last-good does NOT apply) — safe.
+                last seen …, retrying" (honest, ~10-20s later)
+  F5 Token genuinely expired/revoked (401/403):
+        AFTER : gate shown IMMEDIATELY (keep-last-good does not apply) — safe.
+
+POSITIVE FLOWS THAT MUST NOT BREAK (simulator asserts before == after)
+  P+1 valid token + fast cluster -> opens instantly.
+  P+2 2-min return (fresh cache <3min) -> instant, no re-check.
+  P+3 first-ever open, auth in flight -> "Checking…" then opens.
+  P+4 multi-cluster (>1 selected) -> children, no gate [CODE RouteSwitcher.tsx:215].
+  P+5 OIDC expired -> existing login redirect, unchanged [CODE :229].
+
+ONE PURE END-TO-END FLOW (with all numbers)
+  Open cluster -> testAuth (<=15s). ~1s success -> page + Ready. Background
+  check every 10s. A check blips -> wait ~1s(+/-300ms) -> 1 retry. Retry ok ->
+  nothing changes. Retry fails -> failures=1 -> keep last-good + "reconnecting…",
+  next check in ~20s (+/-15% jitter). Another fail -> failures=2 -> honest
+  "Unavailable — last seen …"; interval grows 40s -> 60s (cap). Any success ->
+  failures=0, back to 10s, Ready. A 401/403 at any point -> gate immediately.
+  Return after 2min = instant; 4min = page kept (no gate on blip); 6min = cold
+  "Checking…" then page.
 
 ACCEPTED TRADE-OFF
-  A genuinely-down cluster turns red ~1 cycle (10-20s) later, and truly-dead
-  clusters take up to ~15s x retries to fail on open. Correct-but-slightly-late
-  beats constant false alarms for an ops console. authTimeout/threshold are
-  configurable if a faster hard-fail is ever needed.
+  A genuinely-down cluster turns red ~1 extra cycle (~10-20s) later, and truly-
+  dead clusters take up to ~15s to fail on open. Correct-but-slightly-late beats
+  constant false alarms for an ops console. All knobs are config-flagged, so a
+  faster hard-fail (or full rollback) is one setting away.
 
 SCOPE / SAFETY
-  - Touch points: status-derivation (clusterStatus/ClusterInventory + the
-    per-cluster failure tracking already used for backoff) and AuthRoute
-    (RouteSwitcher). Do NOT touch data-fetching/watch in P0.
+  - Touch points: (B) AuthRoute (RouteSwitcher) + ClusterAccessGate; (A) status
+    derivation (clusterStatus/ClusterInventory + existing failure tracking);
+    testAuth timeout (clusterApi). Do NOT touch data-fetching/watch in P0.
   - Everything behind config flags; instant rollback.
   - Verify per change: simulator tests -> tsc -> lint -> build -> p6 checklist.
+  - Pre-existing test failures (ClusterTable origin column; project/*.test tsc)
+    are NOT ours and stay out of scope.
 
 ================================================================================
 P1 — (to be discussed & locked next) live + trustworthy
    - watch auto-reconnect (backoff + resume) so freshness survives blips
-   - stop the redundant per-navigation auth race (derive auth from data-plane
-     success / session-level auth with silent renewal) [needs security check]
+     [LIVE: 26 WS errors / no auto-reopen justify this]
+   - periodic list-refetch fallback because WS proved unreliable here [LIVE]
+   - derive auth from data-plane success / session-level auth [needs security
+     check — data-plane 401/403 enforcement not yet confirmed]
    - SWR UX: "updated Xs ago", live/stale dot, reconnecting chip
    - bigger gcTime (5 -> ~20-30 min) + staggered/jittered on-return burst
 ================================================================================
 P2 — (to be discussed & locked later) robustness at scale + proof
    - circuit-breaker for down clusters; skip auth-poll when /version is failing
+     [LIVE: Unavailable clusters spam 502 + slow the shared proxy]
    - "Unreachable — last seen …, retrying" with timestamp; never block opening
-   - observability: probe latency histograms + failure reasons (tune from real p99)
+   - observability: probe latency histograms + failure reasons (tune from p99)
    - config-flag / canary rollout, instant rollback
+   - (separate track) investigate backend/proxy latency: healthy calls sometimes
+     very slow — possibly dead clusters saturating the proxy [LIVE, unproven]
 ================================================================================
 END p7.txt
 ================================================================================
