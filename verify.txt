@@ -1,0 +1,111 @@
+================================================================================
+verify.txt — EVIDENCE-GATHERING for finalizing P1 (and confirming P0 facts)
+Run this in a session that has the REAL cluster(s) connected on branch GT_D_V1.
+It is READ-ONLY / observational. Do NOT change code, do NOT push, do NOT open a
+PR. Produce a written, MASKED report only.
+================================================================================
+
+------------------------------------------------------------------------------
+SAFETY / PRIVACY (read first)
+------------------------------------------------------------------------------
+- MASK everything: no real cluster names, hostnames/IPs, tokens, kubeconfig,
+  namespaces, tenant/employer identifiers. Use cluster-A, ns-foo, <redacted>.
+- Blur/crop screenshots. If a log line shows a secret or real host, redact it.
+- Do not change RBAC or cluster state. Observe only.
+
+------------------------------------------------------------------------------
+WHY (what decision each answer unlocks)
+------------------------------------------------------------------------------
+We are finalizing P1 (make data truly live + trustworthy). Before writing any
+code we need REAL numbers from your environment, because the right timeouts /
+reconnect strategy depend on your backend's actual behaviour, not guesses.
+
+================================================================================
+PART 1 — RE-VERIFY THE CODE (quick, from the repo on GT_D_V1)
+================================================================================
+Confirm (yes/no + file:line) each, so we know the branch matches our analysis:
+ 1.1  testAuth timeout is 5s:            frontend/src/lib/k8s/api/v1/clusterApi.ts (testAuth)
+ 1.2  /version has no explicit timeout (uses DEFAULT_TIMEOUT 120s):
+      constants.ts (DEFAULT_TIMEOUT) + index.ts (getVersion)
+ 1.3  version/ocp/auth polls use retry:false, refetchIntervalInBackground:false,
+      refetchOnWindowFocus:'always':   frontend/src/lib/k8s/index.ts
+ 1.4  authCheckInterval default 10s / ocp 1h:   frontend/src/lib/k8s/index.ts
+ 1.5  DEFAULT watch path is useWebSockets (webSocket.ts) and the multiplexer is
+      OFF unless REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER==='true':
+      frontend/src/lib/k8s/api/v2/useKubeObjectList.ts (getWebsocketMultiplexerEnabled)
+ 1.6  In webSocket.ts openWebSocket(), the socket has ONLY 'message' and 'error'
+      listeners — NO 'close' handler and NO reconnect logic. (Confirm.)
+ 1.7  Data list requests retry up to 3x but NOT on 401/403:
+      frontend/src/lib/k8s/api/v2/retry.ts
+ Report: are all 1.1–1.7 TRUE on this branch? Note any that differ.
+
+================================================================================
+PART 2 — LIVE MEASUREMENTS (DevTools; a few minutes each)
+================================================================================
+Open DevTools -> Network (enable "Preserve log"). Keep Console open too.
+
+A) AUTH + VERSION LATENCY (sizes the P0 timeout correctly)
+   - On the All Clusters tab, let it poll for ~3–5 minutes.
+   - Filter Network for:  version   and   selfsubjectrulesreviews
+   - For each, report (MASK hosts): how many calls, and the response times —
+     roughly the fastest, typical (p50), and slowest (p95/max). Flag any that
+     took > 5s, and any that returned 408 or 502.
+   - QUESTION this answers: is 5s too tight? what timeout (12/15/20s) covers
+     your real p95/p99?
+
+B) OVERLAP CHECK (your exact catch: timeout 15s but polled every 10s)
+   - Watch the selfsubjectrulesreviews calls for one cluster in the Network
+     waterfall. Do two calls for the SAME cluster ever run at the SAME time
+     (overlapping bars)? Or does the next one only start after the previous
+     finishes? Report yes/no with a masked screenshot of the waterfall.
+   - Also: when a call is slow, what is the gap between one call finishing and
+     the next starting (roughly)?
+
+C) WATCH (WEBSOCKET) RELIABILITY — the core P1 question
+   - Open a cluster -> a resource page that lists items (e.g. Pods/Workloads).
+   - In Network, filter "WS" (WebSocket). Note how many WS connections open.
+   - Leave the page OPEN and untouched for ~10–15 minutes (do NOT navigate).
+   - Report:
+       * Did any WS connection CLOSE/drop during that time? How many times?
+       * After a drop, did a NEW WS open automatically, or did it stay closed?
+       * Did the list stop updating (create/delete a test pod in a scratch ns
+         if safe, or just watch an existing churny ns) — i.e. did data go STALE
+         after a drop?
+       * Any Console line like "WebSocket connection … failed / closed before
+         established"? Roughly how often?
+   - QUESTION this answers: do we NEED auto-reconnect (Item 1), and do we also
+     need a periodic-list fallback because WS is unreliable in your env?
+
+D) DATA-PLANE AUTH ENFORCEMENT (needed only to judge auth Option B later)
+   - Confirm a normal resource list returns HTTP 200 when you ARE authorized.
+   - If you safely can: open a namespace/resource you do NOT have access to and
+     confirm the list returns 401/403 (proving the data call itself is auth-
+     enforced). Do NOT change any permissions to test this — only if such a
+     restricted resource already exists for your user.
+   - Report: does an unauthorized data call return 401/403? (yes/no/not-tested)
+
+E) COLD vs WARM RETURN (confirms staleTime 3m / gcTime 5m in real life)
+   - Open a cluster page. Then go to a NON-cluster area (or another cluster)
+     and stay ~2 min; return -> note: instant, or brief "Checking…"?
+   - Repeat staying ~4 min; then ~6 min. Report what you see each time
+     (instant / brief Reachable→Ready / "Checking…" cold wait / "not
+     responding").
+
+================================================================================
+PART 3 — WHAT TO SEND BACK (all masked)
+================================================================================
+ - PART 1: yes/no for 1.1–1.7 (and any differences).
+ - A: latency numbers for /version and selfsubjectrulesreviews (fast/p50/p95/max),
+     count of >5s and of 408/502.
+ - B: do same-cluster auth calls overlap? gap after a slow call?
+ - C: WS drops in 10–15 min? auto-reopened? data went stale? console errors?
+ - D: unauthorized data call -> 401/403? (yes/no/not-tested)
+ - E: what you saw on 2/4/6-minute returns.
+ - Anything surprising or different from PART 1's expectations.
+
+(After you paste this back, we finalize P1 — especially the watch-reconnect
+strategy and the real timeout value — then implement phase-by-phase with
+simulator tests + tsc/lint/build, nothing before it's agreed.)
+================================================================================
+END verify.txt
+================================================================================
