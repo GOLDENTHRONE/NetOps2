@@ -1,0 +1,258 @@
+================================================================================
+p11.txt — LIVE CAPTURE (Part 2, take 3): auto-recording harness that RETAINS results
+Target app: http://localhost:3000   (branch GT_D_V1, live code, real cluster)
+Audience: a copilot/agent driving the running local app.
+Type: STRICTLY READ-ONLY / OBSERVATIONAL.
+Goal: fix the repeated failure "results not retained" — this version stores every
+measurement in THREE agent-readable places so the numbers survive the capture.
+================================================================================
+
+--------------------------------------------------------------------------------
+HARD RULES (do not break any)
+--------------------------------------------------------------------------------
+R1. Do NOT modify/create/delete any repo source file. No commit/push/PR.
+R2. Do NOT change ANYTHING on the cluster: no create/delete/edit of any resource,
+    namespace, or RBAC. No kubectl mutations. No "test pod". Observe only.
+R3. Do NOT change RBAC to manufacture a 401/403. If no already-restricted
+    resource exists for your user, report "not-tested".
+R4. The ONLY runtime action allowed is: navigate the SPA (click/read) and PASTE
+    the provided READ-ONLY JavaScript once into the DevTools Console. That script
+    only OBSERVES (reads performance entries; passively wraps window.WebSocket to
+    watch open/close/error — it calls the real WebSocket unchanged, sends no
+    data, changes no app behaviour, touches no cluster).
+R5. CRITICAL: after you paste the harness, do NOT hard-reload the page
+    (no Ctrl+Shift+R / F5). A reload wipes the harness. Use only in-app
+    navigation (the app uses hash routing "#/...", so clicking around keeps the
+    harness and its data alive across pages).
+R6. MASK everything: cluster names -> cluster-A/B/C; hosts/IPs -> <host>;
+    namespaces -> ns-1; tokens -> <redacted>. Blur/crop screenshots.
+
+--------------------------------------------------------------------------------
+WHY THIS VERSION (learn from the last 3 runs — be critical)
+--------------------------------------------------------------------------------
+Past runs FAILED TO RETAIN numbers: "browser discarded Performance entries; the
+script did not retain results in a readable variable." Console output was not
+readable by the agent either.
+This harness fixes that by writing the final report to THREE places you CAN read:
+  (1) the RETURN VALUE of  window.__report()  — call it via your JS-evaluation
+      ability and read the returned JSON object directly;
+  (2) localStorage key  "__CAP_REPORT"  — read it back any time;
+  (3) a visible green overlay box pinned bottom-left on the page — screenshot /
+      read its text (DOM id "__cap_overlay").
+It also WRAPS window.WebSocket passively, so WS drops/reconnects are recorded
+AUTOMATICALLY during the 10-15 min soak even while you are not actively watching.
+So: install once, wait the real durations, then call __report() and copy the JSON.
+Do NOT hand-summarize from memory — paste the JSON the harness produced.
+
+Endpoints seen (proxied): /clusters/<cluster>/version (GET);
+/clusters/<cluster>/apis/authorization.k8s.io/v1/selfsubjectrulesreviews (POST,
+success = HTTP 201, NOT an error; timeout => 408; unreachable => 502);
+/clusters/<cluster>/apis/config.openshift.io/v1/clusterversions/version (GET).
+
+================================================================================
+STEP 0 — CONFIRM THE APP
+================================================================================
+0.1  Open Chromium at exactly http://localhost:3000 (not remote).
+0.2  You may hard-reload ONCE NOW (Ctrl+Shift+R) to get a clean bundle — this is
+     the only allowed reload, and it must happen BEFORE STEP 1.
+0.3  Confirm you are on the ALL CLUSTERS view, route hash "#/" (NOT #/projects).
+0.4  Record (masked) each cluster row + its Status right now
+     (e.g. cluster-A: Ready; cluster-B: Unavailable; cluster-C: Unavailable).
+
+================================================================================
+STEP 1 — INSTALL THE CAPTURE HARNESS (paste once, on the All Clusters page)
+================================================================================
+1.1  F12 -> Console. Paste the ENTIRE block below, press Enter. It prints
+     "capture harness installed".
+1.2  After this point: NO hard reload (rule R5). In-app clicks only.
+
+----- BEGIN HARNESS (paste as-is) ---------------------------------------------
+(() => {
+  if (window.__CAP) { console.log('harness already installed'); return; }
+  const CAP = { perf: [], ws: [], consoleErr: {}, marks: [], installedAt: Date.now() };
+  window.__CAP = CAP;
+
+  // (1) Performance: version / SAR / clusterversions durations (same-origin => real timing)
+  try {
+    const po = new PerformanceObserver(list => {
+      for (const e of list.getEntries()) {
+        if (/\/version(\?|$)|selfsubjectrulesreviews|clusterversions/.test(e.name)) {
+          const m = e.name.match(/\/clusters\/([^/]+)\//);
+          CAP.perf.push({
+            path: e.name.replace(/https?:\/\/[^/]+/, '').split('?')[0],
+            cluster: m ? m[1] : '?',
+            start: Math.round(e.startTime),
+            ms: Math.round(e.duration),
+          });
+        }
+      }
+    });
+    po.observe({ type: 'resource', buffered: true });
+  } catch (e) { console.warn('perf observer failed', e); }
+
+  // (2) Passive WebSocket lifecycle watcher (pass-through; observes open/close/error only)
+  try {
+    const RealWS = window.WebSocket;
+    function WrappedWS(url, protocols) {
+      const sock = protocols !== undefined ? new RealWS(url, protocols) : new RealWS(url);
+      const rec = {
+        url: String(url).replace(/wss?:\/\/[^/]+/, '').replace(/https?:\/\/[^/]+/, ''),
+        openedAt: Date.now(), open101: false, closedAt: null, code: null, errored: false,
+      };
+      CAP.ws.push(rec);
+      sock.addEventListener('open', () => { rec.open101 = true; });
+      sock.addEventListener('close', ev => { rec.closedAt = Date.now(); rec.code = ev.code; });
+      sock.addEventListener('error', () => { rec.errored = true; });
+      return sock;
+    }
+    WrappedWS.prototype = RealWS.prototype;
+    ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(k => { WrappedWS[k] = RealWS[k]; });
+    window.WebSocket = WrappedWS;
+  } catch (e) { console.warn('ws wrap failed', e); }
+
+  // (3) console.error counter (dedup by first 70 chars)
+  try {
+    const realErr = console.error;
+    console.error = function (...a) {
+      const k = (a[0] != null ? String(a[0]) : '?').slice(0, 70);
+      CAP.consoleErr[k] = (CAP.consoleErr[k] || 0) + 1;
+      return realErr.apply(this, a);
+    };
+  } catch (e) {}
+
+  // mark helper for the cold/warm return test
+  window.__mark = label => { CAP.marks.push({ label, at: Date.now() }); console.log('marked:', label); return label; };
+
+  // build + persist + render the report
+  window.__report = () => {
+    const pct = (a, p) => a.length ? a.slice().sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(p * a.length))] : null;
+    const lat = {};
+    for (const k of ['/version', 'selfsubjectrulesreviews', 'clusterversions']) {
+      const a = CAP.perf.filter(h => h.path.includes(k)).map(h => h.ms);
+      lat[k] = { n: a.length, p50: pct(a, 0.5), p95: pct(a, 0.95), max: a.length ? Math.max(...a) : null, over5s: a.filter(x => x > 5000).length };
+    }
+    const sar = CAP.perf.filter(h => h.path.includes('selfsubjectrulesreviews')).sort((a, b) => a.start - b.start);
+    let overlaps = 0; const gaps = [];
+    for (let i = 1; i < sar.length; i++) {
+      if (sar[i].cluster === sar[i - 1].cluster) {
+        const end = sar[i - 1].start + sar[i - 1].ms;
+        if (sar[i].start < end) overlaps++; else gaps.push(sar[i].start - end);
+      }
+    }
+    const out = {
+      soakMinutes: Number(((Date.now() - CAP.installedAt) / 60000).toFixed(1)),
+      latency_ms: lat,
+      sar_same_cluster_overlaps: overlaps,
+      sar_gaps_ms: gaps,
+      websockets: {
+        total: CAP.ws.length,
+        opened_101: CAP.ws.filter(w => w.open101).length,
+        closed: CAP.ws.filter(w => w.closedAt).length,
+        errored: CAP.ws.filter(w => w.errored).length,
+        still_open: CAP.ws.filter(w => !w.closedAt).length,
+        lifecycles: CAP.ws.map(w => ({ path: w.url, open_ms: w.closedAt ? w.closedAt - w.openedAt : null, close_code: w.code, errored: w.errored, still_open: !w.closedAt })),
+      },
+      console_errors: CAP.consoleErr,
+      marks: CAP.marks,
+    };
+    try { localStorage.setItem('__CAP_REPORT', JSON.stringify(out)); } catch (e) {}
+    let el = document.getElementById('__cap_overlay');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = '__cap_overlay';
+      el.style.cssText = 'position:fixed;z-index:2147483647;left:8px;bottom:8px;max-width:560px;max-height:60vh;overflow:auto;background:#111;color:#0f0;font:11px/1.4 monospace;padding:8px;border:1px solid #0f0;white-space:pre-wrap';
+      document.body.appendChild(el);
+    }
+    el.textContent = 'CAP_REPORT\n' + JSON.stringify(out, null, 2);
+    console.log('CAP_REPORT', out);
+    return out;
+  };
+
+  console.log('capture harness installed. Do NOT hard-reload. Use __mark("...") and __report().');
+})();
+----- END HARNESS -------------------------------------------------------------
+
+================================================================================
+STEP 2 — LATENCY (A) + OVERLAP (B): wait a FULL 3-5 min on All Clusters
+================================================================================
+2.1  Stay on the All Clusters page, untouched, for 3-5 minutes (use a timer).
+2.2  Then run (via your JS-eval ability, and read the returned object):
+        window.__report()
+2.3  This does NOT stop the harness — it just snapshots. Latency for /version,
+     selfsubjectrulesreviews, clusterversions (n/p50/p95/max/over5s), plus
+     sar_same_cluster_overlaps and sar_gaps_ms will be in the returned JSON.
+     (0 overlaps = single-flight confirmed.)
+
+================================================================================
+STEP 3 — WEBSOCKET SOAK (C): 10-15 min, recorded AUTOMATICALLY
+================================================================================
+3.1  Click cluster-A (Ready) -> open a streaming list page: Workloads or Pods.
+     (In-app click only; the harness survives — do not reload.)
+3.2  Confirm data appears. The harness is now recording every WebSocket's
+     open/close/error by itself.
+3.3  Leave this page OPEN and UNTOUCHED for a FULL 10-15 minutes (timer).
+     Do not navigate, do not reload.
+3.4  Then run  window.__report()  again and read the "websockets" block:
+        total / opened_101 / closed / errored / still_open, and the per-socket
+        "lifecycles" (open_ms = how long it stayed open, close_code, errored).
+     Also read "console_errors" for WebSocket lines and their counts.
+     This tells us drop count + whether anything auto-reopened (a new socket
+     appearing AFTER an earlier one closed = reconnect).
+
+================================================================================
+STEP 4 — COLD/WARM RETURN (E): 2 / 4 / 6 min, with marks
+================================================================================
+For each wait, mark before leaving and after returning so timestamps line up
+with re-check requests in the perf log:
+  4.1  On cluster-A page, run  window.__mark("leave-2min")  then navigate to a
+       non-cluster area (in-app). Wait ~2 min. Return to cluster-A, run
+       window.__mark("return-2min"). SCREENSHOT what you see: instant page? a
+       brief "Checking..."? a "not responding"/timeout gate? Record it.
+  4.2  Repeat with "leave-4min"/"return-4min", wait ~4 min. Screenshot + record.
+  4.3  Repeat with "leave-6min"/"return-6min", wait ~6 min. Screenshot + record.
+  4.4  Run  window.__report()  — the "marks" array + perf timestamps show whether
+       a /version or SAR re-check fired right after each return.
+
+================================================================================
+STEP 5 — DATA-PLANE AUTH (D): observe only
+================================================================================
+5.1  With an authorized list open, in Network (Fetch/XHR) note the list request
+     status (expect 200).
+5.2  IF an already-restricted resource exists for your user (do NOT create one /
+     do NOT change RBAC), open it and note 401/403.
+5.3  Record: unauthorized data call -> 401 / 403 / not-tested-because-none.
+     (Last run reported a stray 401 + 404 on Workloads — confirm/deny.)
+
+================================================================================
+STEP 6 — HOW TO CAPTURE THE RESULTS (do all three, redundancy on purpose)
+================================================================================
+6.1  Call  window.__report()  and copy the FULL returned JSON object verbatim.
+6.2  Read back  localStorage.getItem("__CAP_REPORT")  and confirm it matches.
+6.3  Screenshot the green overlay box (bottom-left, id "__cap_overlay") as proof.
+DO NOT paraphrase the numbers from memory — paste the actual JSON. If a value is
+missing, say the step could not be completed; do not invent it.
+
+================================================================================
+STEP 7 — WHAT TO SEND BACK (all masked)
+================================================================================
+  0) Confirm: localhost:3000, route "#/", All Clusters, live cluster; the cluster
+     rows + statuses at start.
+  1) The FULL JSON from window.__report() (paste it). This already contains:
+       - latency_ms for /version, selfsubjectrulesreviews, clusterversions
+       - sar_same_cluster_overlaps + sar_gaps_ms
+       - websockets {total, opened_101, closed, errored, still_open, lifecycles}
+       - console_errors {message: count}
+       - marks (for the return test)
+  2) For STEP 4: for each of 2/4/6 min, one line on what you SAW on return
+     (instant / Checking / gate) + the screenshots.
+  3) For STEP 5: 401/403/not-tested.
+  4) DOM at any bad-status moment: if a Ready cluster shows a timeout/"not
+     reachable" gate, paste the exact heading text and note which page.
+  5) Anything surprising vs the code review's predictions.
+
+Do NOT recommend a final timeout or reconnect design yourself — just report the
+captured numbers. Honesty over completeness: if the soak was cut short, say the
+real soakMinutes value from the JSON.
+================================================================================
+END p11.txt
+================================================================================
