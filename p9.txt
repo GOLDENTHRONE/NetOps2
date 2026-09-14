@@ -1,0 +1,186 @@
+================================================================================
+p9.txt — LIVE VERIFICATION PROMPT (Part 2) for the All Clusters resilience work
+Target: the running app on http://localhost:3000  (branch GT_D_V1, live code).
+Audience: a copilot/agent that has the app running locally with REAL cluster(s).
+Type: READ-ONLY / OBSERVATIONAL. Do NOT change code. Do NOT commit/push/PR.
+Do NOT change RBAC or cluster state. Produce a MASKED written report only.
+================================================================================
+
+WHY THIS EXISTS (honest context)
+--------------------------------------------------------------------------------
+A previous audit CONFIRMED all our code facts (testAuth 5s timeout, /version 120s,
+polls retry:false, legacy WebSocket has NO reconnect, etc.) but it could NOT
+capture live numbers because the browser was sitting on the Applications page
+(#/projects), not the All Clusters tab, so DevTools had no /version or
+selfsubjectrulesreviews requests to measure.
+
+We still do NOT have the real runtime numbers we need to lock P1:
+  - real auth/version latency (p50/p95/max) -> decides the correct timeout
+  - whether same-cluster auth polls OVERLAP -> decides if timeout>interval is safe
+  - whether the WebSocket really drops and goes stale -> decides reconnect policy
+Do not finalize any P1 timeout or reconnect design from source code alone.
+This prompt fixes that: run it correctly on localhost:3000 and report masked data.
+
+SAFETY / MASKING (read first, apply to EVERYTHING you report)
+--------------------------------------------------------------------------------
+- MASK all real values: cluster names -> cluster-A/cluster-B; hostnames/IPs ->
+  <host>; namespaces -> ns-1; tokens/kubeconfig -> <redacted>; tenant/employer
+  identifiers -> <redacted>. Never paste a raw URL that contains a real host.
+- Blur/crop screenshots before sharing. Redact any secret/host in a log line.
+- Observe only. Do not create/delete resources except the OPTIONAL scratch-pod
+  step in Part C, and only if you already have a safe scratch namespace.
+
+ENVIRONMENT PRE-CHECK (do this before any measurement)
+--------------------------------------------------------------------------------
+0.1  App is served at http://localhost:3000. Open it there (NOT a remote URL).
+0.2  Confirm the dev server is actually running and serving THIS branch:
+       - terminal shows the vite/dev server on port 3000, no build errors;
+       - browser hard-reload (Cmd/Ctrl+Shift+R) to avoid a stale bundle.
+0.3  Open DevTools (F12). Keep THREE panels ready: Console, Network, and be
+     able to inspect Elements (DOM). In Network: tick "Preserve log" and
+     "Disable cache". Set the Network filter row to "Fetch/XHR" for HTTP parts
+     and "WS" for the WebSocket part (switch as each part says).
+0.4  Note the API endpoints you will filter for (proxied form the browser sees):
+       - Kubernetes version:  .../clusters/<cluster>/version
+         (filter text: "version")          [request default timeout 120s]
+       - Auth check (SAR):    .../clusters/<cluster>/apis/authorization.k8s.io/
+                              v1/selfsubjectrulesreviews  (HTTP POST)
+         (filter text: "selfsubjectrulesreviews")   [timeout 5s in code]
+       - OCP version (only on OpenShift clusters):
+         .../clusters/<cluster>/apis/config.openshift.io/v1/clusterversions/version
+         (filter text: "clusterversions")   [polls ~1h, mostly ignore]
+     The path shape is <appUrl>/clusters/<cluster>/<k8s-path>; a request that
+     times out shows as HTTP 408 in code, an unreachable backend as 502.
+
+================================================================================
+PART A — AUTH + VERSION LATENCY  (sizes the real timeout; this is the #1 number)
+================================================================================
+Steps:
+  A.1  Navigate to the ALL CLUSTERS tab (the cluster list/home table). Confirm
+       the URL is the clusters/home route, NOT #/projects and NOT Applications.
+       You should SEE the cluster rows with a Status column.
+  A.2  In Network (Fetch/XHR, Preserve log ON), let it sit and poll for
+       ~3-5 minutes untouched.
+  A.3  Filter "version" then "selfsubjectrulesreviews". For EACH endpoint report,
+       MASKED, per cluster if possible:
+         - how many calls fired in the window;
+         - response time: fastest, typical (p50), slow (p95), slowest (max)
+           — read the "Time"/"Duration" column, or hover the waterfall bar;
+         - count of any call > 5s;
+         - count of any 408 (timeout) or 502 (unreachable), and any other non-200.
+  A.4  Also note: does /version stay ~200 while selfsubjectrulesreviews is the
+       one that occasionally slows/times out? (This is the exact mismatch we
+       suspect: 120s vs 5s.)
+DECIDES: is 5s too tight? What timeout (12s / 15s / 20s) safely covers your real
+p95/p99 without being sloppy?
+
+================================================================================
+PART B — OVERLAP CHECK  (the user's own catch: timeout 15s but polled every 10s)
+================================================================================
+Steps:
+  B.1  Still on All Clusters, filter Network to "selfsubjectrulesreviews" for
+       ONE cluster. Look at the waterfall bars.
+  B.2  Answer precisely:
+         - Do two auth calls for the SAME cluster ever run at the SAME time
+           (overlapping bars)? yes/no + a MASKED waterfall screenshot.
+         - When one call is slow, does the NEXT call start only AFTER the
+           previous one finishes, or does it start on the 10s tick regardless?
+         - Roughly what is the gap between one call finishing and the next
+           starting?
+DECIDES: whether authTimeout may exceed the 10s poll interval, or whether we
+must enforce authCheckInterval >= authTimeout. Do not assume single-flight —
+verify it in the waterfall.
+
+================================================================================
+PART C — WEBSOCKET (WATCH) RELIABILITY  (the core P1 question)
+================================================================================
+Context: default (non-multiplexer) watch has NO close handler and NO reconnect
+(webSocket.ts). We need to see if that actually bites in your environment.
+Steps:
+  C.1  Open ONE cluster -> a resource LIST page that streams (Pods, or the
+       Workloads overview). Confirm data appears.
+  C.2  In Network switch the filter to "WS". Note how many WebSocket connections
+       open, and their Status (101 = connected).
+  C.3  Click a WS entry -> "Messages" tab to confirm frames are flowing.
+  C.4  Leave the page OPEN and UNTOUCHED for 10-15 minutes. Do NOT navigate
+       away, do NOT switch tabs in the app.
+  C.5  After the window, report:
+         - Did any WS connection CLOSE/drop? how many times? (a red/closed row,
+           or the Messages stream stopping);
+         - After a drop, did a NEW WS open automatically, or did it stay closed?
+         - Did the LIST stop updating (go stale)? To test freshness safely:
+           either watch a naturally churny namespace, OR (OPTIONAL, only if you
+           have a safe scratch ns) create/delete one throwaway pod and see if the
+           list reflects it. Report whether the UI updated or stayed stale.
+         - Console errors like "WebSocket connection ... failed" or "closed
+           before established" — roughly how often.
+DECIDES: do we NEED auto-reconnect (P1 item 1), and do we also need a periodic
+list-refetch fallback because WS is unreliable here?
+
+================================================================================
+PART D — DATA-PLANE AUTH ENFORCEMENT  (needed only to judge auth Option B later)
+================================================================================
+Steps:
+  D.1  With a normal, authorized resource list open, confirm the list request
+       returns HTTP 200 (Network, Fetch/XHR).
+  D.2  IF — and only if — a resource/namespace you genuinely lack access to
+       already exists for your user, open it and confirm the list returns
+       401/403. Do NOT modify any RBAC/permissions to create this case.
+  D.3  Report: does an unauthorized data call return 401/403? (yes / no /
+       not-tested-because-no-restricted-resource).
+DECIDES: whether we can safely derive "authorized" from data-plane success in
+P1 instead of a separate per-navigation SAR call.
+
+================================================================================
+PART E — COLD vs WARM RETURN  (confirms staleTime 3m / gcTime 5m in real life)
+================================================================================
+Steps: open a cluster page, then leave to a non-cluster area (or another
+cluster), wait, and return. Do this three times and record what you SEE:
+  E.1  Away ~2 min  -> return: instant page, or brief "Checking..."?
+  E.2  Away ~4 min  -> return: instant, brief Reachable->Ready, or a flip to
+       "not responding"/gate?
+  E.3  Away ~6 min  -> return: cold "Checking..." wait, then page or gate?
+For each, also glance at Network: did a /version or selfsubjectrulesreviews
+re-check actually fire on return? (yes/no).
+DECIDES: confirms the return-to-tab lifecycle matches our simulator model
+(< 3min no re-check; 3-5min background re-check; > 5min cold).
+
+================================================================================
+PART F — ERROR SURFACES  (console / network / DOM — capture across ALL parts)
+================================================================================
+While doing A-E, keep an eye on all three and report MASKED:
+  F.1  CONSOLE: list distinct error/warning lines (dedup + rough count). Flag
+       especially: "WebSocket connection ... failed/closed", uncaught
+       exceptions, React warnings, CORS or mixed-content errors, 401/403 log
+       lines, "AbortError"/timeout logs.
+  F.2  NETWORK: list every request that is red/failed or non-2xx during the
+       session: the endpoint (masked), the status (408/502/500/403/401/0/CORS),
+       and roughly when/what you were doing. Note anything stuck "pending" for
+       a long time.
+  F.3  DOM: while a cluster shows a wrong/erratic status (e.g. a false "not
+       reachable" or a flicker), inspect the Status cell in Elements and report
+       what text/element the DOM actually renders at that moment (masked). If an
+       error overlay/gate screen appears, note the exact heading/message text.
+       This ties a user-visible symptom to a specific network/console event.
+
+================================================================================
+PART G — WHAT TO SEND BACK  (all masked)
+================================================================================
+  - Confirmation you were on http://localhost:3000, on the All Clusters tab
+    (not #/projects), with a live cluster.
+  - A: /version and selfsubjectrulesreviews latency (fast/p50/p95/max), count of
+    >5s, count of 408/502.
+  - B: do same-cluster auth calls overlap? gap after a slow call? (+ screenshot)
+  - C: WS drops in 10-15 min? auto-reopened? data went stale? console error rate.
+  - D: unauthorized data call -> 401/403? (yes/no/not-tested)
+  - E: what you saw + whether a re-check fired at 2 / 4 / 6 min.
+  - F: console errors, failed/non-2xx network calls, and DOM at a bad-status
+    moment.
+  - Anything surprising or different from what the code review predicted.
+
+(After this comes back, we lock P1's real timeout value and watch-reconnect
+strategy from measured p95/p99 + overlap + actual WS failure behavior, then test
+on the simulator and implement phase-by-phase. Nothing before it's agreed.)
+================================================================================
+END p9.txt
+================================================================================
