@@ -14,12 +14,18 @@
  * limitations under the License.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { getAppUrl } from '../../../../helpers/getAppUrl';
 import { getHeadlampWebSocketProtocol } from '../../../../helpers/getHeadlampAPIHeaders';
 import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
 import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { getCluster } from '../../../cluster';
+import {
+  WATCH_RECONNECT,
+  WATCH_RECONNECT_BASE_MS,
+  WATCH_RECONNECT_CAP_MS,
+  withJitter,
+} from '../../../resilience';
 import { makeUrl } from './makeUrl';
 
 /**
@@ -66,6 +72,51 @@ export type WebSocketConnectionRequest<T> = {
  */
 const sockets = new Map<string, WebSocket | symbol>();
 const listeners = new Map<string, Array<(update: any) => void>>();
+
+// --- P1: auto-reconnect + freshness state ----------------------------------
+/** Sockets we closed on purpose (cleanup / superseded) — must NOT reconnect. */
+const intentionalClose = new WeakSet<WebSocket>();
+/** Consecutive reconnect attempts per connection, for exponential backoff. */
+const reconnectAttempts = new Map<string, number>();
+/** Pending reconnect timers per connection, so we can cancel on unsubscribe. */
+const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Per-connection live/reconnecting state, for the freshness indicator (Item 3). */
+const watchStates = new Map<string, 'live' | 'reconnecting'>();
+const watchStateSubscribers = new Set<() => void>();
+
+function setWatchState(connectionKey: string, state: 'live' | 'reconnecting' | 'gone') {
+  if (state === 'gone') {
+    if (!watchStates.has(connectionKey)) return;
+    watchStates.delete(connectionKey);
+  } else {
+    if (watchStates.get(connectionKey) === state) return;
+    watchStates.set(connectionKey, state);
+  }
+  watchStateSubscribers.forEach(fn => fn());
+}
+
+/** True while any watch connection is currently reconnecting after a drop. */
+export function isAnyWatchReconnecting(): boolean {
+  for (const s of watchStates.values()) {
+    if (s === 'reconnecting') return true;
+  }
+  return false;
+}
+
+/**
+ * React hook: whether any live watch is currently reconnecting. Drives the
+ * global "reconnecting…" freshness hint (Item 3). Safe (uses a stable snapshot).
+ */
+export function useAnyWatchReconnecting(): boolean {
+  return useSyncExternalStore(
+    cb => {
+      watchStateSubscribers.add(cb);
+      return () => watchStateSubscribers.delete(cb);
+    },
+    isAnyWatchReconnecting,
+    () => false
+  );
+}
 
 /**
  * Create new WebSocket connection to the backend
@@ -172,6 +223,90 @@ export function useWebSockets<T>({
   useEffect(() => {
     if (!enabled) return;
 
+    // Open a socket for a connection and track it, wiring auto-reconnect so an
+    // unexpected drop redials (backoff + jitter) instead of leaving it stale.
+    // Message delivery always reads the `listeners` map, so the onMessage passed
+    // here is only a never-used fallback.
+    function openAndTrack(
+      connectionKey: string,
+      cluster: string,
+      url: string,
+      expectedPending: symbol
+    ) {
+      openWebSocket(url, { protocols, type, cluster, onMessage: () => {} })
+        .then(socket => {
+          // A newer connection/reconnect replaced this pending one while opening.
+          if (sockets.get(connectionKey) !== expectedPending) {
+            intentionalClose.add(socket);
+            socket.close();
+            return;
+          }
+          // All listeners unsubscribed while the socket was opening.
+          if ((listeners.get(connectionKey)?.length ?? 0) === 0) {
+            intentionalClose.add(socket);
+            socket.close();
+            sockets.delete(connectionKey);
+            setWatchState(connectionKey, 'gone');
+            return;
+          }
+          sockets.set(connectionKey, socket);
+          reconnectAttempts.set(connectionKey, 0);
+          setWatchState(connectionKey, 'live');
+          attachReconnect(socket, connectionKey, cluster, url);
+        })
+        .catch(err => {
+          console.error(err);
+          // The open itself failed; treat like a drop and back off + retry.
+          if (sockets.get(connectionKey) === expectedPending) {
+            scheduleReconnect(connectionKey, cluster, url);
+          }
+        });
+    }
+
+    // Schedule a backoff+jitter reconnect for a connection that still has
+    // listeners. Marks the slot pending so nothing else opens meanwhile.
+    function scheduleReconnect(connectionKey: string, cluster: string, url: string) {
+      if (!WATCH_RECONNECT || (listeners.get(connectionKey)?.length ?? 0) === 0) {
+        sockets.delete(connectionKey);
+        setWatchState(connectionKey, 'gone');
+        return;
+      }
+      const attempt = reconnectAttempts.get(connectionKey) ?? 0;
+      reconnectAttempts.set(connectionKey, attempt + 1);
+      const base = Math.min(WATCH_RECONNECT_BASE_MS * 2 ** attempt, WATCH_RECONNECT_CAP_MS);
+      const pending = Symbol('reconnectingWebSocket');
+      sockets.set(connectionKey, pending);
+      setWatchState(connectionKey, 'reconnecting');
+      const timer = setTimeout(() => {
+        reconnectTimers.delete(connectionKey);
+        if (sockets.get(connectionKey) !== pending) return;
+        if ((listeners.get(connectionKey)?.length ?? 0) === 0) {
+          sockets.delete(connectionKey);
+          setWatchState(connectionKey, 'gone');
+          return;
+        }
+        openAndTrack(connectionKey, cluster, url, pending);
+      }, withJitter(base));
+      reconnectTimers.set(connectionKey, timer);
+    }
+
+    // Redial when a live socket closes unexpectedly (not one we closed ourselves).
+    function attachReconnect(
+      socket: WebSocket,
+      connectionKey: string,
+      cluster: string,
+      url: string
+    ) {
+      socket.addEventListener('close', () => {
+        if (intentionalClose.has(socket)) {
+          intentionalClose.delete(socket);
+          return;
+        }
+        if (sockets.get(connectionKey) !== socket) return; // already superseded
+        scheduleReconnect(connectionKey, cluster, url);
+      });
+    }
+
     /** Open a connection to websocket */
     function connect({ cluster, url, onMessage }: WebSocketConnectionRequest<T>) {
       const connectionKey = cluster + url;
@@ -183,30 +318,7 @@ export function useWebSockets<T>({
         // Mark socket as pending, so we don't open more than one
         const pendingSocket = Symbol('pendingWebSocket');
         sockets.set(connectionKey, pendingSocket);
-
-        openWebSocket(url, { protocols, type, cluster, onMessage })
-          .then(socket => {
-            // A newer connection replaced this pending one while it was opening.
-            if (sockets.get(connectionKey) !== pendingSocket) {
-              socket.close();
-              return;
-            }
-
-            // All listeners unsubscribed while the socket was opening.
-            if ((listeners.get(connectionKey)?.length ?? 0) === 0) {
-              socket.close();
-              sockets.delete(connectionKey);
-              return;
-            }
-
-            sockets.set(connectionKey, socket);
-          })
-          .catch(err => {
-            if (sockets.get(connectionKey) === pendingSocket) {
-              sockets.delete(connectionKey);
-            }
-            console.error(err);
-          });
+        openAndTrack(connectionKey, cluster, url, pendingSocket);
       }
 
       return () => {
@@ -216,16 +328,24 @@ export function useWebSockets<T>({
         const newListeners = listeners.get(connectionKey)?.filter(it => it !== onMessage) ?? [];
         listeners.set(connectionKey, newListeners);
 
-        // No one is listening to the connection
-        // so we can close it
+        // No one is listening to the connection so we can close it and cancel any
+        // pending reconnect (this close is intentional — it must NOT redial).
         if (newListeners.length === 0) {
+          const timer = reconnectTimers.get(connectionKey);
+          if (timer) {
+            clearTimeout(timer);
+            reconnectTimers.delete(connectionKey);
+          }
+          reconnectAttempts.delete(connectionKey);
           const maybeExisting = sockets.get(connectionKey);
           if (maybeExisting) {
             if (typeof maybeExisting !== 'symbol') {
+              intentionalClose.add(maybeExisting);
               maybeExisting.close();
             }
             sockets.delete(connectionKey);
           }
+          setWatchState(connectionKey, 'gone');
         }
       };
     }

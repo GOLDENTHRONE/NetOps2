@@ -97,6 +97,33 @@ export const POLL_JITTER_PCT = fractionEnvOrDefault(
   0.15
 );
 
+/**
+ * P1 — watch (WebSocket) auto-reconnect. When a live watch connection drops
+ * unexpectedly, redial with exponential backoff + jitter instead of leaving the
+ * view silently stale. WATCH_RECONNECT=false restores the old (no-reconnect)
+ * behaviour. Overrides: REACT_APP_WATCH_RECONNECT / _BASE_MS / _CAP_MS.
+ */
+export const WATCH_RECONNECT = boolEnvOrDefault(import.meta.env.REACT_APP_WATCH_RECONNECT, true);
+export const WATCH_RECONNECT_BASE_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_RECONNECT_BASE_MS,
+  1000
+);
+export const WATCH_RECONNECT_CAP_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_RECONNECT_CAP_MS,
+  30000
+);
+
+/**
+ * P1 — low-frequency safety-net refetch for watched lists, so a silently-dead
+ * socket (or a large/paginated list that never watches at all) still refreshes
+ * on its own. 0 disables. Override: REACT_APP_WATCH_FALLBACK_REFETCH_MS.
+ */
+export const WATCH_FALLBACK_REFETCH_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_FALLBACK_REFETCH_MS,
+  90000,
+  0
+);
+
 /** Returns `ms` spread by +/-POLL_JITTER_PCT. Used for poll intervals and retry delay. */
 export function withJitter(ms: number, pct: number = POLL_JITTER_PCT): number {
   if (pct <= 0) {
