@@ -164,7 +164,9 @@ interface AuthRouteProps {
   [otherProps: string]: any;
 }
 
-function AuthRoute(props: AuthRouteProps) {
+// Exported for component testing of the P0 keep-last-good gate behaviour; not
+// intended as a public API. Rendering/behaviour is unchanged by the export.
+export function AuthRoute(props: AuthRouteProps) {
   const {
     children,
     sidebar,
@@ -181,9 +183,15 @@ function AuthRoute(props: AuthRouteProps) {
     queryKey: ['auth', cluster],
     queryFn: () => testAuth(cluster!),
     enabled: !!cluster && requiresAuth,
-    // P0: retry a transient open-check failure once (jittered) instead of gating
-    // on the first blip. Configurable via REACT_APP_OPEN_GATE_RETRY.
-    retry: OPEN_GATE_RETRY,
+    // P0: retry a transient open-check failure (jittered) instead of gating on
+    // the first blip — but NEVER retry a genuine 401/403, which must surface
+    // immediately. Configurable via REACT_APP_OPEN_GATE_RETRY.
+    retry: (failureCount: number, error: any) => {
+      if (error?.status === 401 || error?.status === 403) {
+        return false;
+      }
+      return failureCount < OPEN_GATE_RETRY;
+    },
     retryDelay: attempt => withJitter(RETRY_BASE_DELAY_MS * 2 ** attempt),
   });
 
