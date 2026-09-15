@@ -611,3 +611,83 @@ describe('Namespace testing', () => {
     });
   });
 });
+
+// P0: the table must not flip a previously-reachable cluster to "Unavailable" on
+// a single transient version blip; it keeps the last-known-good until
+// STATUS_FAIL_THRESHOLD (default 2) consecutive failures. 401/403 and a
+// first-ever failure (no last-good to keep) are still surfaced immediately.
+describe('useClustersVersion — P0 blip debounce (keep-last-good)', () => {
+  let queryClient: QueryClient;
+  function wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  }
+  beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { refetchOnWindowFocus: false, retry: false, staleTime: 3 * 60_000 },
+      },
+    });
+  });
+  afterEach(() => {
+    queryClient.clear();
+    vi.restoreAllMocks();
+  });
+
+  test('suppresses a single transient blip after a prior success, then surfaces the 2nd', async () => {
+    const request = vi.mocked(clusterRequest);
+    let fail = false;
+    request.mockImplementation(() =>
+      fail ? Promise.reject(new Error('blip')) : Promise.resolve({ gitVersion: 'v1.32.0' })
+    );
+    const queryKey = ['clusterVersion', 'cluster'];
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+
+    // initial success -> reachable (error null)
+    await waitFor(() => expect(result.current[1].cluster).toBeNull());
+    expect(result.current[0].cluster).toEqual({ gitVersion: 'v1.32.0' });
+
+    // first blip -> keep-last-good: error is suppressed, row stays reachable
+    fail = true;
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey });
+    });
+    expect(result.current[1].cluster).toBeNull();
+
+    // second consecutive blip -> honest error now surfaces
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey });
+    });
+    await waitFor(() => expect(result.current[1].cluster).toBeInstanceOf(Error));
+  });
+
+  test('does NOT debounce a 401 — surfaced immediately even after a prior success', async () => {
+    const request = vi.mocked(clusterRequest);
+    let fail401 = false;
+    request.mockImplementation(() =>
+      fail401
+        ? Promise.reject(Object.assign(new Error('unauthorized'), { status: 401 }))
+        : Promise.resolve({ gitVersion: 'v1.32.0' })
+    );
+    const queryKey = ['clusterVersion', 'cluster'];
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current[1].cluster).toBeNull());
+
+    fail401 = true;
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey });
+    });
+    await waitFor(() => expect((result.current[1].cluster as any)?.status).toBe(401));
+  });
+
+  test('a first-ever failure (no last-good) surfaces immediately', async () => {
+    vi.mocked(clusterRequest).mockRejectedValue(new Error('down'));
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current[1].cluster).toBeInstanceOf(Error));
+  });
+});
