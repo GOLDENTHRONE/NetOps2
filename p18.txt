@@ -52,7 +52,9 @@ Reading them together tells you the whole chain for one cluster:
 0.4  Open DevTools (F12):
      - CONSOLE: type this to enable logs:      window.__GT_DEBUG__ = true
        (to disable later:                       window.__GT_DEBUG__ = false)
-       Then set the Console filter box to:      [GT-DEBUG]
+       Then set the Console filter box to:      [GT-DEBUG
+       (NOTE: no closing bracket — the logs read "[GT-DEBUG 16:03:12.345] ...",
+        so a filter of "[GT-DEBUG]" with the bracket matches NOTHING. Use "[GT-DEBUG".)
      - NETWORK: turn ON "Preserve log". Filter box:  version|selfsubjectrulesreviews
        Add the "Status" column if missing (right-click the column header).
 0.5  Note the OCP cluster's exact <cluster> name (as it appears in request URLs).
@@ -79,6 +81,31 @@ Reading them together tells you the whole chain for one cluster:
        useClusters*.map {shownErrorStatus:401/403}
        rowStatus {text:"Authentication required" or "Insufficient permissions"}
 2.3  Confirm the row visibly changed. (This proves poll+render work live.)
+
+-------------------------------------------------------------------------------
+ *** DECISIVE CHECK (read this ONE thing carefully) ***
+-------------------------------------------------------------------------------
+After re-login (NO reload), with the Console filter set to  [GT-DEBUG  (no
+bracket), answer these two questions for the OCP cluster:
+
+  Q1. Do NEW lines like this keep appearing every ~10-60s?
+        [GT-DEBUG ...] clusterRequest {path:".../selfsubjectrulesreviews", status:???}
+        [GT-DEBUG ...] useClustersAuth.map {isFetching:..., rawErrorStatus:...}
+      - If YES, they keep appearing  -> the auth poll IS running (it did NOT stop).
+      - If NO, they stop entirely     -> the auth poll stopped (dig there).
+
+  Q2. When that selfsubjectrulesreviews line appears LIVE, what is its status?
+      - 403 live  BUT  201 after reload  -> the SERVER answers the live session
+        differently from a fresh page load = backend session/identity caching.
+        (Frontend is correct; it shows what the server returns.)
+      - 201 live  but the row still shows "Insufficient permissions" -> a frontend
+        render/propagation bug (I'll dig the hooks->table chain).
+
+This distinguishes the two remaining causes. I have already RULED OUT "react-query
+stops polling an errored query" — I reproduced the exact useQueries + growing
+backoff + retry:false pattern in a test and it kept polling and recovered on its
+own. So the earlier "auth poll stops after 403" claim is not reproducible; Q1/Q2
+above tells us the real cause.
 
 -------------------------------------------------------------------------------
  STEP 3 — Re-login, then WATCH WITHOUT RELOADING (the key measurement)
