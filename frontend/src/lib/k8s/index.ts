@@ -661,8 +661,11 @@ export function useClustersAuth(clusters: Cluster[]): { [clusterName: string]: A
             // and null keeps the query out of the "pending" state.
             return null;
           } catch (err) {
+            const status = (err as ApiError)?.status;
             consecutiveFailuresRef.current[clusterName] =
-              (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+              status === 401 || status === 403
+                ? 0
+                : (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
             throw err;
           }
         },

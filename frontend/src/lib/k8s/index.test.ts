@@ -20,14 +20,17 @@ import { createElement, type ReactNode } from 'react';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { createRouteURL } from '../router/createRouteURL';
 import {
+  authCheckInterval,
   labelSelectorToQuery,
   maxVersionFetchInterval,
   ResourceClasses,
+  useClustersAuth,
   useClustersOcpVersion,
   useClustersVersion,
   versionFetchInterval,
   versionRefetchInterval,
 } from '.';
+import { testAuth } from './api/v1/clusterApi';
 import { clusterRequest } from './api/v1/clusterRequests';
 import { Cluster, LabelSelector } from './cluster';
 import { KubeObjectClass } from './KubeObject';
@@ -38,6 +41,11 @@ vi.mock('./api/v1/clusterRequests', async () => {
     './api/v1/clusterRequests'
   );
   return { ...actual, clusterRequest: vi.fn() };
+});
+
+vi.mock('./api/v1/clusterApi', async () => {
+  const actual = await vi.importActual<typeof import('./api/v1/clusterApi')>('./api/v1/clusterApi');
+  return { ...actual, testAuth: vi.fn() };
 });
 
 // Remove NetworkPolicy and ControllerRevision since we don't have list/details pages for them.
@@ -412,6 +420,51 @@ describe('versionRefetchInterval', () => {
     expect(versionRefetchInterval(2)).toBe(40_000);
     expect(versionRefetchInterval(3)).toBe(maxVersionFetchInterval);
     expect(versionRefetchInterval(10)).toBe(maxVersionFetchInterval);
+  });
+});
+
+describe('useClustersAuth', () => {
+  let queryClient: QueryClient;
+
+  function wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    vi.mocked(testAuth).mockReset();
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          refetchOnWindowFocus: false,
+          retry: false,
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    queryClient.clear();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  test('keeps normal polling cadence and recovers after an authorization failure', async () => {
+    const forbidden = Object.assign(new Error('forbidden'), { status: 403 });
+    const request = vi.mocked(testAuth).mockRejectedValueOnce(forbidden).mockResolvedValueOnce({});
+    const { result } = renderHook(() => useClustersAuth([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+
+    await vi.waitFor(() => expect(result.current.cluster?.status).toBe(403));
+    const query = queryClient.getQueryCache().find({ queryKey: ['clusterAuth', 'cluster'] })!;
+    const { refetchInterval } = query.options as { refetchInterval: () => number };
+    expect(refetchInterval()).toBe(authCheckInterval);
+
+    await act(() => queryClient.refetchQueries({ queryKey: ['clusterAuth', 'cluster'] }));
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(result.current.cluster).toBeNull();
   });
 });
 
