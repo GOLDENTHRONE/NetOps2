@@ -65,6 +65,11 @@ class MockWS {
   fire(type: string, ev: any) {
     (this.handlers[type] || []).forEach(cb => cb(ev));
   }
+  /** simulate the socket actually establishing (the 'open' event) */
+  fireOpen() {
+    this.readyState = 1;
+    this.fire('open', {});
+  }
   /** simulate the server/network dropping the socket unexpectedly */
   drop() {
     this.readyState = 3;
@@ -148,8 +153,10 @@ describe('WatchFreshnessChip — P1 freshness indicator', () => {
     // reconnecting -> chip appears
     await waitFor(() => expect(screen.getByText(CHIP)).toBeInTheDocument());
 
-    // after the redial succeeds -> chip disappears
+    // the redial opens a new socket...
     await waitFor(() => expect(MockWS.instances.length).toBe(2), { timeout: 4000 });
+    // ...and once it actually establishes ('open'), the chip disappears
+    act(() => MockWS.instances[1].fireOpen());
     await waitFor(() => expect(screen.queryByText(CHIP)).not.toBeInTheDocument());
   }, 10000);
 });

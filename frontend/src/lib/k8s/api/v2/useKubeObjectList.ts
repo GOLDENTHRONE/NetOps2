@@ -709,13 +709,16 @@ export function useKubeObjectList<K extends KubeObject>({
   const hasPendingListRequests = activeListRequests.length < listRequests.length;
   const perRequestQueryParams = getPerRequestQueryParams(cleanedUpQueryParams, requests);
 
-  // P1 safety-net refetch: when watching (no explicit poll interval), run a
-  // low-frequency background refetch so a silently-dead socket still refreshes.
-  // Paginated lists return `false` (see watchFallbackRefetchInterval) so their
-  // loaded pages are never reset. react-query pauses this while the tab is hidden.
+  // P1 safety-net refetch: when watching a NON-paginated list (no explicit poll
+  // interval and no client-side `limit`), run a low-frequency background refetch
+  // so a silently-dead socket still refreshes. It is disabled entirely for
+  // client-paginated lists (`limit` set): a refetch there re-fetches only page 1
+  // and would discard the pages the user loaded via "load more". As a second
+  // guard, the fallback also returns false while a `continue` token is present
+  // (server-side pagination in progress). react-query pauses it while hidden.
   const effectiveRefetchInterval =
     refetchInterval ??
-    (watch && WATCH_FALLBACK_REFETCH_MS > 0
+    (watch && !limit && WATCH_FALLBACK_REFETCH_MS > 0
       ? (query: any) => watchFallbackRefetchInterval(!!query?.state?.data?.list?.metadata?.continue)
       : undefined);
 

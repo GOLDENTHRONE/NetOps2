@@ -250,8 +250,16 @@ export function useWebSockets<T>({
             return;
           }
           sockets.set(connectionKey, socket);
-          reconnectAttempts.set(connectionKey, 0);
-          setWatchState(connectionKey, 'live');
+          // Reset backoff + mark live only when the socket actually OPENS, not
+          // when openWebSocket resolves (it resolves while still CONNECTING). A
+          // socket that closes before it ever establishes must keep backing off,
+          // otherwise "closed before connection established" becomes a tight ~1s
+          // reconnect loop instead of exponential backoff.
+          socket.addEventListener('open', () => {
+            if (sockets.get(connectionKey) !== socket) return;
+            reconnectAttempts.set(connectionKey, 0);
+            setWatchState(connectionKey, 'live');
+          });
           attachReconnect(socket, connectionKey, cluster, url);
         })
         .catch(err => {
