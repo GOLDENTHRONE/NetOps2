@@ -41,6 +41,7 @@ import store from '../../redux/stores/store';
 import { useUIPanelsGroupedBySide } from '../../redux/uiSlice';
 import { fetchStatelessClusterKubeConfigs, isEqualClusterConfigs } from '../../stateless/';
 import { ActivitiesRenderer } from '../activity/Activity';
+import WatchFreshnessChip from '../cluster/WatchFreshnessChip';
 import { ErrorPage, Loader } from '../common';
 import ActionsNotifier from '../common/ActionsNotifier';
 import AlertNotification from '../common/AlertNotification';
@@ -330,6 +331,7 @@ export default function Layout({}: LayoutProps) {
             <it.component key={it.id} />
           ))}
           <TopBar />
+          <WatchFreshnessChip />
           <Box
             sx={{
               display: 'grid',

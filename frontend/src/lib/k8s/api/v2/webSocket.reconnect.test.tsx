@@ -21,8 +21,9 @@
  * the loop. Uses the real webSocket.ts code (not a model).
  */
 
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import WatchFreshnessChip from '../../../../components/cluster/WatchFreshnessChip';
 
 vi.mock('../../../../helpers/getAppUrl', () => ({ getAppUrl: () => 'http://localhost:4466' }));
 vi.mock('../../../../helpers/getHeadlampAPIHeaders', () => ({
@@ -124,5 +125,31 @@ describe('useWebSockets — P1 auto-reconnect', () => {
     await new Promise(r => setTimeout(r, 1500));
     expect(MockWS.instances.length).toBe(1); // never redialed
     expect(MockWS.open).toBe(0);
+  }, 10000);
+});
+
+// Item 3: the freshness chip reflects the reconnecting state end-to-end.
+function FreshnessHarness() {
+  useWebSockets({ connections: conn(), type: 'json' });
+  return <WatchFreshnessChip />;
+}
+
+describe('WatchFreshnessChip — P1 freshness indicator', () => {
+  it('is hidden while live, shows on a drop, and hides again after reconnect', async () => {
+    // Match regardless of whether an i18n instance is initialised in this test
+    // context (raw key "translation|Reconnecting live updates…" vs the resolved text).
+    const CHIP = /Reconnecting live updates/;
+    render(<FreshnessHarness />);
+    await waitFor(() => expect(MockWS.instances.length).toBe(1));
+    // live -> no chip
+    expect(screen.queryByText(CHIP)).not.toBeInTheDocument();
+
+    act(() => MockWS.instances[0].drop());
+    // reconnecting -> chip appears
+    await waitFor(() => expect(screen.getByText(CHIP)).toBeInTheDocument());
+
+    // after the redial succeeds -> chip disappears
+    await waitFor(() => expect(MockWS.instances.length).toBe(2), { timeout: 4000 });
+    await waitFor(() => expect(screen.queryByText(CHIP)).not.toBeInTheDocument());
   }, 10000);
 });
