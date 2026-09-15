@@ -20,6 +20,7 @@ import { getHeadlampWebSocketProtocol } from '../../../../helpers/getHeadlampAPI
 import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
 import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { getCluster } from '../../../cluster';
+import { gtDebug } from '../../../gtDebug';
 import {
   WATCH_RECONNECT,
   WATCH_RECONNECT_BASE_MS,
@@ -305,12 +306,20 @@ export function useWebSockets<T>({
       cluster: string,
       url: string
     ) {
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (ev: CloseEvent) => {
         if (intentionalClose.has(socket)) {
           intentionalClose.delete(socket);
           return;
         }
         if (sockets.get(connectionKey) !== socket) return; // already superseded
+        // TEMP diagnostics: a watch dropped/handshake-failed. A 403/401 handshake
+        // is NOT transient — reconnecting won't fix it until credentials refresh.
+        gtDebug('watch.close', {
+          cluster,
+          code: ev.code,
+          reason: ev.reason || null,
+          attempt: reconnectAttempts.get(connectionKey) ?? 0,
+        });
         scheduleReconnect(connectionKey, cluster, url);
       });
     }
