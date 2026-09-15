@@ -22,6 +22,7 @@ import {
   OPEN_GATE_RETRY,
   POLL_JITTER_PCT,
   STATUS_FAIL_THRESHOLD,
+  watchFallbackRefetchInterval,
   withJitter,
 } from './resilience';
 
@@ -62,5 +63,19 @@ describe('withJitter', () => {
   it('actually spreads the value (not a constant)', () => {
     const values = new Set(Array.from({ length: 50 }, () => withJitter(10000, 0.15)));
     expect(values.size).toBeGreaterThan(1);
+  });
+});
+
+describe('watchFallbackRefetchInterval (P1 safety-net)', () => {
+  it('returns false for a paginated list (never resets loaded pages)', () => {
+    expect(watchFallbackRefetchInterval(true)).toBe(false);
+  });
+  it('returns a jittered interval (~90s +/-15%) for a non-paginated watched list', () => {
+    for (let i = 0; i < 200; i++) {
+      const v = watchFallbackRefetchInterval(false);
+      expect(v).not.toBe(false);
+      expect(v as number).toBeGreaterThanOrEqual(90000 * 0.85);
+      expect(v as number).toBeLessThanOrEqual(90000 * 1.15);
+    }
   });
 });

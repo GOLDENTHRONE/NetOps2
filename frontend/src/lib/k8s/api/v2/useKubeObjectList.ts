@@ -21,6 +21,7 @@ import {
   hasAllowedNamespacesRestriction,
   loadClusterSettings,
 } from '../../../../helpers/clusterSettings';
+import { WATCH_FALLBACK_REFETCH_MS, watchFallbackRefetchInterval } from '../../../resilience';
 import type { KubeObject, KubeObjectClass } from '../../KubeObject';
 import type { QueryParameters } from '../v1/queryParameters';
 import { ApiError } from './ApiError';
@@ -86,7 +87,7 @@ function allowedNamespaceListQuery<K extends KubeObject>(
   kubeObjectClass: KubeObjectClass,
   cluster: string,
   queryParams: QueryParameters,
-  refetchInterval?: number
+  refetchInterval?: number | ((query: any) => number | false)
 ): QueryObserverOptions<ListResponse<K> | undefined | null, ApiError> {
   const settings = loadClusterSettings(cluster);
   const allowedNamespaces = settings.allowedNamespaces ?? [];
@@ -191,7 +192,7 @@ export function kubeObjectListQuery<K extends KubeObject>(
   namespace: string | undefined = '',
   cluster: string,
   queryParams: QueryParameters,
-  refetchInterval?: number
+  refetchInterval?: number | ((query: any) => number | false)
 ): QueryObserverOptions<ListResponse<K> | undefined | null, ApiError> {
   const configuredSelector =
     loadClusterSettings(cluster).allowedNamespacesSelector?.trim() || undefined;
@@ -708,6 +709,16 @@ export function useKubeObjectList<K extends KubeObject>({
   const hasPendingListRequests = activeListRequests.length < listRequests.length;
   const perRequestQueryParams = getPerRequestQueryParams(cleanedUpQueryParams, requests);
 
+  // P1 safety-net refetch: when watching (no explicit poll interval), run a
+  // low-frequency background refetch so a silently-dead socket still refreshes.
+  // Paginated lists return `false` (see watchFallbackRefetchInterval) so their
+  // loaded pages are never reset. react-query pauses this while the tab is hidden.
+  const effectiveRefetchInterval =
+    refetchInterval ??
+    (watch && WATCH_FALLBACK_REFETCH_MS > 0
+      ? (query: any) => watchFallbackRefetchInterval(!!query?.state?.data?.list?.metadata?.continue)
+      : undefined);
+
   const queries = useMemo(
     () =>
       endpoint
@@ -718,7 +729,7 @@ export function useKubeObjectList<K extends KubeObject>({
               namespace,
               cluster,
               perRequestQueryParams,
-              refetchInterval
+              effectiveRefetchInterval
             )
           )
         : [],

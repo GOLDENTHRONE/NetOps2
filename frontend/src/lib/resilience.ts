@@ -141,3 +141,19 @@ export function withJitter(ms: number, pct: number = POLL_JITTER_PCT): number {
 export function isBlipStatus(status: number | undefined): boolean {
   return status !== 401 && status !== 403;
 }
+
+/**
+ * P1 safety-net refetch interval (ms) for a watched list, so a silently-dead
+ * socket still refreshes on its own. Returns `false` (no auto-refetch) when the
+ * feature is off, or when the list is paginated — a periodic refetch there would
+ * reset the user's loaded pages. Otherwise a jittered interval.
+ */
+export function watchFallbackRefetchInterval(hasMorePages: boolean): number | false {
+  if (WATCH_FALLBACK_REFETCH_MS <= 0) {
+    return false;
+  }
+  if (hasMorePages) {
+    return false;
+  }
+  return withJitter(WATCH_FALLBACK_REFETCH_MS);
+}
