@@ -20,6 +20,7 @@ import React, { useMemo } from 'react';
 import { ConfigState } from '../../redux/configSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { getCluster } from '../cluster';
+import { KEEP_LAST_GOOD, STATUS_FAIL_THRESHOLD, withJitter } from '../resilience';
 import { testAuth } from './api/v1/clusterApi';
 import { clusterRequest } from './api/v1/clusterRequests';
 import { ApiError } from './api/v2/ApiError';
@@ -455,7 +456,8 @@ export function useClustersVersion(clusters: Cluster[]) {
           }
         },
         refetchInterval: () =>
-          versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+          // P0: +/- jitter so many clusters don't poll on the same instant.
+          withJitter(versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0)),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false, // surface errors immediately rather than hammering unreachable clusters
@@ -489,7 +491,23 @@ export function useClustersVersion(clusters: Cluster[]) {
       if (!results[i].isPending) {
         lastStatusErrorsRef.current[clusterName] = (error as ApiError | null) ?? null;
       }
-      const lastStatusError = lastStatusErrorsRef.current[clusterName];
+      let lastStatusError = lastStatusErrorsRef.current[clusterName];
+      // P0 debounce (keep-last-good): a single transient blip (not 401/403) on a
+      // cluster that was previously reachable should not flip the row to
+      // "Unavailable". react-query keeps the last good `data`, so `data !==
+      // undefined` means we had a prior success. Suppress the blip until
+      // STATUS_FAIL_THRESHOLD consecutive failures; then surface it honestly.
+      const hadPriorSuccess = data !== undefined;
+      const blip =
+        !!lastStatusError && lastStatusError.status !== 401 && lastStatusError.status !== 403;
+      if (
+        KEEP_LAST_GOOD &&
+        blip &&
+        hadPriorSuccess &&
+        (consecutiveFailuresRef.current[clusterName] ?? 0) < STATUS_FAIL_THRESHOLD
+      ) {
+        lastStatusError = null; // keep showing the last-known-good (active) status
+      }
       if (lastStatusError !== undefined) {
         errorsInfo[clusterName] = lastStatusError;
       }
@@ -554,7 +572,7 @@ export function useClustersOcpVersion(clusters: Cluster[]) {
           }
         },
         refetchInterval: () =>
-          ocpVersionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+          withJitter(ocpVersionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0)),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false,
@@ -636,7 +654,7 @@ export function useClustersAuth(clusters: Cluster[]): { [clusterName: string]: A
           }
         },
         refetchInterval: () =>
-          authRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+          withJitter(authRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0)),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false,

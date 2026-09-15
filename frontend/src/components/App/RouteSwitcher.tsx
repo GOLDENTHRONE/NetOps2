@@ -22,6 +22,13 @@ import { Redirect, Route, RouteProps, Switch, useHistory } from 'react-router-do
 import { getCluster, getSelectedClusters } from '../../lib/cluster';
 import { useCluster, useClustersConf } from '../../lib/k8s';
 import { testAuth } from '../../lib/k8s/api/v1/clusterApi';
+import {
+  KEEP_LAST_GOOD,
+  OPEN_GATE_RETRY,
+  RETRY_BASE_DELAY_MS,
+  STATUS_FAIL_THRESHOLD,
+  withJitter,
+} from '../../lib/resilience';
 import { NotFoundRoute } from '../../lib/router';
 import { createRouteURL } from '../../lib/router/createRouteURL';
 import { getDefaultRoutes } from '../../lib/router/getDefaultRoutes';
@@ -31,6 +38,7 @@ import { Route as RouteType } from '../../lib/router/Route';
 import { useTypedSelector } from '../../redux/hooks';
 import { uiSlice } from '../../redux/uiSlice';
 import ClusterAccessGate, { ClusterAccessGateState } from '../cluster/ClusterAccessGate';
+import ReconnectingChip from '../cluster/ReconnectingChip';
 import ErrorBoundary from '../common/ErrorBoundary';
 import ErrorComponent from '../common/ErrorPage';
 import { useSidebarItem } from '../Sidebar';
@@ -173,8 +181,24 @@ function AuthRoute(props: AuthRouteProps) {
     queryKey: ['auth', cluster],
     queryFn: () => testAuth(cluster!),
     enabled: !!cluster && requiresAuth,
-    retry: 0,
+    // P0: retry a transient open-check failure once (jittered) instead of gating
+    // on the first blip. Configurable via REACT_APP_OPEN_GATE_RETRY.
+    retry: OPEN_GATE_RETRY,
+    retryDelay: attempt => withJitter(RETRY_BASE_DELAY_MS * 2 ** attempt),
   });
+
+  // P0 keep-last-good: track consecutive SETTLED errors for this mount so a single
+  // blip after a prior success doesn't flip a working page to the gate. Reset on
+  // any success. Bounded by STATUS_FAIL_THRESHOLD so a truly-down cluster still
+  // gates (never an infinite "reconnecting").
+  const authErrStreak = React.useRef(0);
+  React.useEffect(() => {
+    if (query.isSuccess) {
+      authErrStreak.current = 0;
+    } else if (query.isError) {
+      authErrStreak.current += 1;
+    }
+  }, [query.status]);
 
   const clusters = useClustersConf();
   const currentCluster = getCluster();
@@ -242,6 +266,29 @@ function AuthRoute(props: AuthRouteProps) {
       // The "Sign in again" action goes to the same route the redirect used, so
       // the underlying auth flow is unchanged — only the presentation improves.
       const status = authError?.status;
+
+      // P0 keep-last-good: if this is a transient blip (not a real 401/403), we
+      // already had a successful check (react-query keeps the last data even on a
+      // failed background refetch, so query.data survives the return-to-tab
+      // remount), and we haven't failed too many times in a row, keep the page up
+      // with a subtle "reconnecting…" hint instead of throwing up the gate. A
+      // genuine 401/403, or too many consecutive fails, still gates below.
+      const isBlip = status !== 401 && status !== 403;
+      const hadPriorSuccess = query.data !== undefined;
+      if (
+        KEEP_LAST_GOOD &&
+        isBlip &&
+        hadPriorSuccess &&
+        authErrStreak.current < STATUS_FAIL_THRESHOLD
+      ) {
+        return (
+          <>
+            {children}
+            <ReconnectingChip />
+          </>
+        );
+      }
+
       const gateState: ClusterAccessGateState =
         status === 401 ? 'expired' : status === 403 ? 'forbidden' : 'unreachable';
       return (

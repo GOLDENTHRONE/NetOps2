@@ -24,6 +24,7 @@ import { storeStatelessClusterKubeconfig } from '../../../../stateless';
 import { deleteClusterKubeconfig } from '../../../../stateless/deleteClusterKubeconfig';
 import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
 import { getCluster, getSelectedClusters } from '../../../cluster';
+import { AUTH_TIMEOUT_MS } from '../../../resilience';
 import type { ClusterRequest } from './clusterRequests';
 import { clusterRequest, post, request } from './clusterRequests';
 import { JSON_HEADERS } from './constants';
@@ -37,7 +38,9 @@ export async function testAuth(cluster = '', namespace = 'default') {
   const clusterName = cluster || getCluster();
 
   return post('/apis/authorization.k8s.io/v1/selfsubjectrulesreviews', { spec }, false, {
-    timeout: 5 * 1000,
+    // P0: was 5s. A slow-but-OK auth check must not be aborted into a false
+    // "not responding". Configurable via REACT_APP_AUTH_TIMEOUT_MS (see resilience.ts).
+    timeout: AUTH_TIMEOUT_MS,
     cluster: clusterName,
   });
 }
