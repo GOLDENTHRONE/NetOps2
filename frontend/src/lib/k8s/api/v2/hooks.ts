@@ -180,6 +180,13 @@ export function useKubeObject<K extends KubeObject>({
 
   const handleMessage = useCallback(
     (update: KubeListUpdateEvent<K>) => {
+      // P1: a watch ERROR (typically 410 Gone) carries a Status object, not the
+      // watched resource. Re-fetch the object instead of writing the Status into
+      // the cache (which corrupted the detail view) or ignoring it (stale).
+      if ((update as any)?.type === 'ERROR') {
+        client.invalidateQueries({ queryKey });
+        return;
+      }
       if (update.type !== 'ADDED' && update.object) {
         client.setQueryData(queryKey, new kubeObjectClass(update.object));
       }

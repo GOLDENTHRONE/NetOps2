@@ -102,6 +102,29 @@ test('W4 AFTER: a 410 on resume triggers a fresh re-list, then live', () => {
   assert.equal(w.lastRV, 'rv-fresh');
 });
 
+// --- W7: a 410 ERROR watch event -> re-list (not swallowed into stale) ------
+test('W7 BEFORE: a 410 ERROR event is swallowed — no re-list, stays stale', () => {
+  const w = new WatchBefore();
+  w.open();
+  w.message('rv1');
+  w.advance(30000);
+  w.receiveError(); // 410 arrives
+  w.advance(60000);
+  assert.equal(w.refetches, 0);
+  assert.equal(w.dataAgeMs() >= 90000, true); // never refreshed
+});
+test('W7 AFTER: a 410 ERROR event triggers a fresh re-list', () => {
+  const w = new WatchAfter(cfg);
+  w.open();
+  w.message('rv1');
+  w.advance(30000);
+  w.receiveError(); // 410 arrives -> re-list
+  assert.equal(w.reListCount, 1);
+  assert.equal(w.lastRV, 'rv-fresh');
+  assert.equal(w.freshness(), 'live');
+  assert.equal(w.dataAgeMs(), 0); // fresh again
+});
+
 // --- W5: unsubscribe mid-reconnect -> loop stops, no leak ------------------
 test('W5 AFTER: unsubscribing during reconnect stops the loop (no leaked socket)', () => {
   const w = new WatchAfter(cfg);

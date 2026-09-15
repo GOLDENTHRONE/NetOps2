@@ -90,7 +90,10 @@ export const KubeList = {
       ...list,
       metadata: {
         ...list.metadata,
-        resourceVersion: update.object.metadata.resourceVersion!,
+        // Keep the current resourceVersion if the event carries none (e.g. an
+        // ERROR/Status event) — never clobber it to undefined, which would break
+        // the next watch resume.
+        resourceVersion: update.object.metadata?.resourceVersion ?? list.metadata.resourceVersion,
       },
       items: newItems,
     };

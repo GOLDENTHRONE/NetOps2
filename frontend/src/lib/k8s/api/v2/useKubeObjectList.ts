@@ -404,6 +404,15 @@ function useWatchKubeObjectListsMultiplexed<K extends KubeObject>({
         stableQueryParams ?? {}
       ).queryKey;
 
+      // P1: a watch ERROR event (typically 410 Gone — resourceVersion too old to
+      // resume) cannot be applied as a resource. Re-list to get a fresh snapshot
+      // and resourceVersion (react-query refetches; the watch then restarts from
+      // the new version) instead of swallowing it and going permanently stale.
+      if (update.type === 'ERROR') {
+        client.invalidateQueries({ queryKey });
+        return;
+      }
+
       // Update React Query cache with new data
       client.setQueryData(queryKey, (oldResponse: ListResponse<any> | undefined | null) => {
         if (!oldResponse) {
@@ -526,6 +535,13 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
             cluster,
             stableQueryParams ?? {}
           ).queryKey;
+          // P1: a watch ERROR (typically 410 Gone) can't be applied as data —
+          // re-list for a fresh snapshot + resourceVersion instead of swallowing
+          // it and leaving the list permanently stale.
+          if ((update as any)?.type === 'ERROR') {
+            client.invalidateQueries({ queryKey: key });
+            return;
+          }
           client.setQueryData(key, (oldResponse: ListResponse<any> | undefined | null) => {
             if (!oldResponse) return oldResponse;
 

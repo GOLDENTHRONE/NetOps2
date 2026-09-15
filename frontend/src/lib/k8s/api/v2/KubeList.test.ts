@@ -63,6 +63,26 @@ describe('KubeList.applyUpdate', () => {
     expect(updatedList.items[1] instanceof MockKubeObject).toBe(true);
   });
 
+  it('preserves resourceVersion on an ERROR (410) event instead of clobbering it', () => {
+    const errorEvent = {
+      type: 'ERROR',
+      object: {
+        apiVersion: 'v1',
+        kind: 'Status',
+        code: 410,
+        reason: 'Expired',
+        metadata: {},
+      },
+    } as unknown as KubeListUpdateEvent<MockKubeObject>;
+
+    const updatedList = KubeList.applyUpdate(initialList, errorEvent, itemClass, cluster);
+
+    // The list's resourceVersion must survive (not become undefined), so the next
+    // watch resume is not broken; items are left unchanged.
+    expect(updatedList.metadata.resourceVersion).toBe('1');
+    expect(updatedList.items).toHaveLength(1);
+  });
+
   it('should modify an existing item on MODIFIED event', () => {
     const updateEvent: KubeListUpdateEvent<MockKubeObject> = {
       type: 'MODIFIED',

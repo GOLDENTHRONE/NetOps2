@@ -77,6 +77,10 @@ export class WatchBefore {
   close() {
     this.connected = false; // and nothing else — no redial, no fallback
   }
+  receiveError() {
+    // BEFORE: a watch ERROR (410) is swallowed — logged and ignored. No re-list,
+    // so the list stays frozen on stale data.
+  }
   unsubscribe() {
     this.subscribed = false;
   }
@@ -126,6 +130,15 @@ export class WatchAfter {
   message(rv) {
     this.lastRV = rv;
     this.lastUpdate = this.now;
+  }
+  receiveError() {
+    // AFTER: a watch ERROR (410 Gone) triggers a fresh re-list (new snapshot +
+    // resourceVersion); the list becomes fresh again instead of staying stale.
+    this.reListCount += 1;
+    this.lastRV = 'rv-fresh';
+    this.lastUpdate = this.now;
+    this.connected = true;
+    this.state = 'live';
   }
   #scheduleReconnect() {
     const base = backoff(this.attempt, this.cfg.RECONNECT_BASE_MS, this.cfg.RECONNECT_CAP_MS);
