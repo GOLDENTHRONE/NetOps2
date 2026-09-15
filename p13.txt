@@ -1,0 +1,138 @@
+================================================================================
+p13.txt — All Clusters RESILIENCE PLAN, PHASE P1 spec. Status: DRAFT -> locking.
+Goal: keep the data genuinely LIVE and make freshness visible/trustworthy, so a
+dropped watch never leaves the screen silently stale.
+Every value is tagged: [CODE file:line] = read from source; [LIVE] = measured in
+the 36-min localhost:3000 capture; [P1] = the change P1 introduces.
+Test on a real-code simulator + real component/unit tests AFTER this is locked,
+then implement phase-by-phase behind config flags (same discipline as P0).
+================================================================================
+
+PLAIN-LANGUAGE SUMMARY (no jargon)
+  - "watch" (WebSocket) = an OPEN phone call between the app and the cluster. The
+    cluster speaks up the instant something changes, so the screen updates live
+    without the app asking again.
+  - Right now, if that call DROPS (network blip / proxy hiccup), the app does NOT
+    redial and does NOT fall back to asking — so the list silently freezes
+    (shows stale data) with no error.
+  - P1: when the call drops, AUTO-REDIAL (reconnect) and resume from where it left
+    off; ALSO keep a light "backup ask" every minute or two so freshness is
+    guaranteed even if the call is silently dead; and SHOW the user whether the
+    data is live or stale.
+
+================================================================================
+VERIFIED ROOT CAUSE (code + live)
+================================================================================
+  - The DEFAULT watch path is the legacy one; the multiplexer is OFF unless
+    REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER === 'true'
+    [CODE useKubeObjectList.ts:42-44, 290-308, 552].
+  - The legacy socket has NO reconnect: openWebSocket registers only 'message'
+    and 'error' listeners — no 'close' handler, no redial
+    [CODE webSocket.ts:129-142]. A drop = silent stale, forever.
+  - Even the multiplexer does not PROACTIVELY reconnect: handleWebSocketClose just
+    sets isReconnecting=true and clears the socket; a redial only happens lazily
+    on the next subscribe() [CODE multiplexer.ts:304-311, 122-133].
+  - Watch and periodic refetch are MUTUALLY EXCLUSIVE today:
+    shouldWatch = watch && !refetchInterval && !isLoading && !hasMore
+    [CODE useKubeObjectList.ts:784] — so while watching, there is NO safety-net
+    refetch to catch a silently-dead socket.
+  - List requests retry up to 3x, not on 401/403 [CODE retry.ts kubeRequestRetry].
+  - gcTime is not set -> react-query v5 default 5 min [CODE queryClient.ts:22].
+  - [LIVE] 36-min soak on a Ready cluster: 26 WebSocket errors, handshakes
+    returning 502/500, "WebSocket is closed before the connection is
+    established", and NO automatic reopen.
+
+================================================================================
+P1 CHANGES (all env-configurable; instant rollback)
+================================================================================
+
+ITEM 1 — Legacy watch AUTO-RECONNECT  [P1] *(the core fix)*
+  Where: webSocket.ts (openWebSocket / useWebSockets).
+  What: add a 'close' handler. On an unexpected close, redial with exponential
+  backoff + jitter (e.g. 1s, 2s, 4s … capped), resuming the watch from the LAST
+  seen resourceVersion (the "bookmark"). Stop redialing when all listeners have
+  unsubscribed (respect the existing pending-socket + listeners map so no socket
+  leaks and no duplicate watches).
+  Correctness: if the server answers 410 Gone (the bookmark is too old to resume),
+  invalidate that list query to trigger a FRESH re-list, then start a new watch
+  from the new resourceVersion.
+  Config: WATCH_RECONNECT (on), WATCH_RECONNECT_BASE_MS, cap, jitter.
+
+ITEM 2 — Periodic safety-net refetch WHILE watching  [P1]
+  Where: useKubeObjectList.ts (decouple the shouldWatch/refetchInterval either/or).
+  What: run a LOW-frequency background refetch (e.g. 60-120s, jittered) even while
+  a watch is active, so a silently-dead socket still self-heals within a minute or
+  two. Skip while the tab is hidden (mirror the existing visibility handling).
+  Config: WATCH_FALLBACK_REFETCH_MS (0 = off).
+
+ITEM 3 — Freshness indicator (SWR UX)  [P1] *(presentation only)*
+  Where: a small shared indicator; fed by the list query's dataUpdatedAt + a
+  watch-connected flag.
+  What: "updated Xs ago" + a live/stale dot; show the same subtle "reconnecting…"
+  hint while a redial is in progress. No behaviour change to data itself.
+
+ITEM 4 — Bigger gcTime + staggered on-return burst  [P1]
+  Where: query options for cluster/list queries (scoped, NOT the global default,
+  to avoid blowing up memory app-wide).
+  What: raise gcTime from 5 min to ~20-30 min for these queries so returning to a
+  tab is warm more often; and stagger/jitter the refetch burst on return so many
+  queries don't all fire at the same instant.
+  Config: LIST_GC_TIME_MS, RETURN_STAGGER_MS.
+
+ITEM 5 — (DEFERRED) derive auth from data-plane / session-level auth
+  Needs a security check first: whether an unauthorized data call really returns
+  401/403 (verify.txt Part 2-D, still "not-tested"). Do NOT implement until that
+  is confirmed live.
+
+================================================================================
+FLOWS P1 MUST SATISFY (simulator + real tests will assert before/after)
+================================================================================
+  W1 Watch drops once, cluster healthy:
+        BEFORE: list freezes silently (stale), no redial, no error.
+        AFTER : auto-redial (backoff), resumes from resourceVersion, list live again.
+  W2 Watch drops repeatedly (flaky network):
+        AFTER : redials with backoff+jitter (no redial storm); a "reconnecting…"
+                hint shows; list recovers when the network does.
+  W3 Socket silently dead (no close event fires):
+        AFTER : the safety-net refetch (Item 2) refreshes the list within ~1-2 min.
+  W4 Resume bookmark too old (410 Gone) on redial:
+        AFTER : fresh re-list, then a new watch — no stuck/empty list.
+  W5 All listeners unsubscribe (user leaves the page) mid-reconnect:
+        AFTER : redial loop stops; no leaked/duplicate sockets.
+  W6 Freshness: while live, UI shows "updated Xs ago"; on a drop it flips to a
+        stale/reconnecting hint; on recovery back to live.
+
+POSITIVE FLOWS THAT MUST NOT BREAK (assert before == after)
+  P1+1 Normal live updates still arrive over a healthy watch.
+  P1+2 A single object watch / other webSocket.ts consumers behave unchanged.
+  P1+3 Paginated lists (hasMore) still do NOT watch [CODE useKubeObjectList.ts:784].
+  P1+4 Multiplexer path (when enabled) is unaffected by the legacy-path changes.
+
+================================================================================
+HONEST RISKS (P1 is riskier than P0 — webSocket.ts is shared infra)
+================================================================================
+  R1 Socket leak / duplicate watches: reconnect must honor the pending-socket
+     symbol and listeners map in webSocket.ts, and only one live socket per key.
+  R2 Reconnect storm against a genuinely-down cluster: backoff MUST be capped;
+     a real circuit-breaker is P2, but the cap bounds it for now.
+  R3 Stale resume: must resume from the latest resourceVersion and handle 410 by
+     re-listing, or the list can desync.
+  R4 gcTime raised globally = memory growth: keep it scoped to cluster/list
+     queries, not the global default.
+  R5 Safety-net refetch = extra load: keep it low-frequency + jittered + skipped
+     when the tab is hidden.
+  R6 Priority: Items 1 + 2 are the heart (justified by the live 26-error data);
+     Items 3 + 4 are UX/tuning; Item 5 is deferred (security-gated).
+
+================================================================================
+SCOPE / SAFETY
+================================================================================
+  - Touch points: webSocket.ts (reconnect), useKubeObjectList.ts (fallback
+    refetch + freshness state), a small freshness indicator, scoped query gcTime.
+    Do NOT touch the P0 status/gate code.
+  - Everything behind config flags; instant rollback.
+  - Verify per change: simulator (drop/stale/reconnect/410 before-after) ->
+    real component/unit tests -> tsc -> lint -> build.
+================================================================================
+END p13.txt
+================================================================================
