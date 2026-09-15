@@ -187,6 +187,11 @@ export function useKubeObject<K extends KubeObject>({
         client.invalidateQueries({ queryKey });
         return;
       }
+      // A BOOKMARK carries only a resourceVersion, not the watched object — writing
+      // it into the cache would blank out the detail view, so ignore it here.
+      if ((update as any)?.type === 'BOOKMARK') {
+        return;
+      }
       if (update.type !== 'ADDED' && update.object) {
         client.setQueryData(queryKey, new kubeObjectClass(update.object));
       }

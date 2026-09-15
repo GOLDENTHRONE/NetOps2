@@ -83,6 +83,29 @@ describe('KubeList.applyUpdate', () => {
     expect(updatedList.items).toHaveLength(1);
   });
 
+  it('advances resourceVersion on a BOOKMARK event without changing items or logging', () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const bookmarkEvent = {
+      type: 'BOOKMARK',
+      object: {
+        apiVersion: 'v1',
+        kind: 'MockKubeObject',
+        // A real BOOKMARK carries only an up-to-date resourceVersion, no item data.
+        metadata: { resourceVersion: '5' },
+      },
+    } as unknown as KubeListUpdateEvent<MockKubeObject>;
+
+    const updatedList = KubeList.applyUpdate(initialList, bookmarkEvent, itemClass, cluster);
+
+    // resourceVersion advances (so the next resume is fresh), items are untouched,
+    // and no error is logged (it is a known type, not "Unknown update type").
+    expect(updatedList.metadata.resourceVersion).toBe('5');
+    expect(updatedList.items).toHaveLength(1);
+    expect(updatedList.items[0].metadata.uid).toBe('1');
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    consoleErrorSpy.mockRestore();
+  });
+
   it('should modify an existing item on MODIFIED event', () => {
     const updateEvent: KubeListUpdateEvent<MockKubeObject> = {
       type: 'MODIFIED',

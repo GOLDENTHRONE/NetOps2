@@ -300,6 +300,17 @@ export const WebSocketManager = {
   /**
    * Handles WebSocket connection close event
    * Sets up state for potential reconnection
+   *
+   * NOTE (consistency gap): this only flags `isReconnecting` — it does NOT redial.
+   * The socket is only re-established when the app makes a new `subscribe()` call
+   * (which invokes `connect()` and then `resubscribeAll`). If the multiplexer socket
+   * drops while the user stays on a page with active subscriptions and no new
+   * subscribe happens, the watches go silently stale until navigation. The legacy
+   * path (useWebSockets in webSocket.ts) has proper auto-reconnect with backoff.
+   * This multiplexer path is disabled by default (getWebsocketMultiplexerEnabled is
+   * false unless REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER === 'true'); before enabling
+   * it, add self-healing reconnect + freshness-state wiring here to match the legacy
+   * path, otherwise the P1 live-watch guarantees do not hold on this path.
    */
   handleWebSocketClose(): void {
     this.socketMultiplexer = null;

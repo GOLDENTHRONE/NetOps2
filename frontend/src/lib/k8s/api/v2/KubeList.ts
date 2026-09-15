@@ -31,7 +31,11 @@ export interface KubeList<T extends KubeObjectInterface> {
 }
 
 export interface KubeListUpdateEvent<T extends KubeObjectInterface> {
-  type: 'ADDED' | 'MODIFIED' | 'DELETED' | 'ERROR';
+  // BOOKMARK carries no real object change — only an up-to-date resourceVersion.
+  // We don't request bookmarks (allowWatchBookmarks), but a server or proxy may
+  // still send them, so we handle the type defensively instead of mis-applying it
+  // as a resource (which would blank a detail view or log a spurious error).
+  type: 'ADDED' | 'MODIFIED' | 'DELETED' | 'ERROR' | 'BOOKMARK';
   object: T;
 }
 
@@ -78,6 +82,10 @@ export const KubeList = {
         if (index !== -1) {
           newItems.splice(index, 1);
         }
+        break;
+      case 'BOOKMARK':
+        // No item change — only a resourceVersion refresh. It is applied by the
+        // metadata update below so the next watch resume uses a fresh version.
         break;
       case 'ERROR':
         console.error('Error in update', update);
