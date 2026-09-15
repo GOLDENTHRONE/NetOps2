@@ -1,0 +1,141 @@
+===============================================================================
+ p17.txt — DIAGNOSTIC PROMPT: "Authentication required" stuck on All Clusters
+ Branch: GT_D_V1   |   Run against: http://localhost:3000
+ Goal:  Prove whether the stuck "Authentication required" status is a BACKEND
+        token/session-caching issue or a FRONTEND state bug, by reading the live
+        API responses. Then send the results back for exact root-causing.
+===============================================================================
+
+WHY THIS TEST
+-------------
+On the All Clusters tab, a row shows "Authentication required" only when a poll
+returns HTTP 401 (verified in code: clusterStatus.ts -> getClusterReadiness,
+auth.error.status === 401 / versionError.status === 401).
+
+The frontend recovery logic is already verified (code + simulator): every poll
+overwrites the stored error, so the instant ONE poll returns 200 the row flips
+to "Ready". So if the row stays stuck at "Authentication required" while polling,
+one of exactly two things is true:
+
+  (A) the live polls are STILL returning 401  -> the token the BACKEND presents to
+      the cluster is still bad for this session (backend token/session caching).
+      A full page reload starts a fresh session and returns 200 -> "Ready".
+  (B) the live polls are returning 200 but the UI still shows auth-error -> a
+      FRONTEND state bug (needs deeper digging).
+
+This test reads the actual response status/body to decide A vs B. It does NOT
+change any code.
+
+The two polls to watch (fire every ~10s, backing off to at most ~60s):
+  - GET  /clusters/<cluster>/version
+  - POST /clusters/<cluster>/apis/authorization.k8s.io/v1/selfsubjectrulesreviews
+  (OCP-only extra, harmless if 404):
+  - GET  /clusters/<cluster>/apis/config.openshift.io/v1/clusterversions/version
+
+-------------------------------------------------------------------------------
+ STEP 0 — Setup
+-------------------------------------------------------------------------------
+0.1  Run the frontend and open http://localhost:3000 in Chrome.
+0.2  Open DevTools (F12) -> NETWORK tab.
+     - Turn ON "Preserve log".
+     - In the filter box type:   version|selfsubjectrulesreviews
+       (or use the "Fetch/XHR" filter and eyeball the two paths above).
+     - Add the "Status" column if not visible (right-click the columns header).
+0.3  Open the CONSOLE tab too (keep it visible for any errors).
+0.4  Go to the All Clusters tab (Home). Identify the OCP cluster row.
+     Write down its exact <cluster> name (as it appears in the request URL).
+
+-------------------------------------------------------------------------------
+ STEP 1 — Reproduce the stuck state
+-------------------------------------------------------------------------------
+1.1  Get the OCP cluster into "Authentication required":
+     - e.g. let the OCP session/token expire, or log out of OCP, so the row
+       shows "Authentication required".
+1.2  Now re-establish the token the way that previously "worked after reload"
+     (e.g. `oc login ...`, or re-auth however you normally do).
+1.3  DO NOT reload the page yet. Leave the All Clusters tab open and FOCUSED
+     (don't switch to another window — polling pauses when the tab is in the
+     background). Wait ~90 seconds so at least one full poll cycle (and its
+     backoff, capped ~60s) definitely fires.
+
+-------------------------------------------------------------------------------
+ STEP 2 — Read the LIVE poll responses (the key measurement)
+-------------------------------------------------------------------------------
+While the row is STILL showing "Authentication required" (before any reload):
+
+2.1  In NETWORK, find the most recent  /clusters/<cluster>/version  request.
+     Record its Status (e.g. 200 / 401 / 403 / 408 / 502).
+2.2  Find the most recent  .../selfsubjectrulesreviews  request for the same
+     cluster. Record its Status.
+2.3  For BOTH: click the request -> "Response" (and "Preview") tab and copy the
+     body (especially any `message` / `reason` / `code` fields).
+2.4  For BOTH: click "Headers" and note the Response "Status Code" line and,
+     if present, any `WWW-Authenticate` or `X-Reload` response header.
+2.5  Confirm they are actually repeating (~every 10-60s) while stuck — i.e. the
+     page IS polling, not frozen. Note the gap between two consecutive ones.
+
+-------------------------------------------------------------------------------
+ STEP 3 — Reload and compare (same session, same credentials)
+-------------------------------------------------------------------------------
+3.1  Hard-reload the page (Ctrl+Shift+R).
+3.2  Watch the SAME two requests right after load. Record their Status.
+3.3  Note whether the row now shows "Ready" (or "Reachable"/"Active").
+
+-------------------------------------------------------------------------------
+ STEP 4 — Decide A vs B
+-------------------------------------------------------------------------------
+Compare STEP 2 (live, stuck) vs STEP 3 (after reload):
+
+  • LIVE = 401  AND  RELOAD = 200
+      => CONCLUSION A: BACKEND token/session caching confirmed. The frontend is
+         correct; the backend keeps using the stale token for the existing
+         session and only picks up the refreshed one on a new page load.
+         (Next step would be on the Headlamp/NetOps2 BACKEND, not this frontend.)
+
+  • LIVE = 200  AND  UI still shows "Authentication required"
+      => CONCLUSION B: FRONTEND state bug. Send the results back — I will dig
+         into the useClustersAuth/useClustersVersion -> Home memo -> ClusterTable
+         chain with this evidence.
+
+  • LIVE = 403  (not 401)  => the row would read "Insufficient permissions", not
+      "Authentication required" — note this, it points to RBAC, not auth.
+
+  • LIVE = 408/502  => that is a blip/unreachable path, different bug — note it.
+
+-------------------------------------------------------------------------------
+ STEP 5 — SEND THESE RESULTS BACK (paste this filled-in block to me)
+-------------------------------------------------------------------------------
+Cluster name (<cluster>): ______________________
+Row status while stuck (exact text): ______________________
+
+LIVE (STEP 2), before reload:
+  GET  /version                      -> Status: ______  body/message: ______________________
+  POST /selfsubjectrulesreviews      -> Status: ______  body/message: ______________________
+  (OCP) GET /clusterversions/version -> Status: ______  (or "not present")
+  Poll repeating every ~____ s? (yes/no)
+  Any WWW-Authenticate / X-Reload response header? ______________________
+
+AFTER RELOAD (STEP 3):
+  GET  /version                 -> Status: ______
+  POST /selfsubjectrulesreviews -> Status: ______
+  Row status now: ______________________
+
+My reading (circle one):  A (live 401, reload 200)  |  B (live 200, UI stuck)  |  other: ______
+Anything else you noticed (console errors, timing, etc.):
+_____________________________________________________________________________
+
+===============================================================================
+ NOTES (honest scope)
+===============================================================================
+- "Authentication required" == HTTP 401 (clusterStatus.ts). 403 == "Insufficient
+  permissions"; timeouts/5xx == "Unavailable".
+- testAuth is sent with autoLogout=false, so a 401 here never logs you out or
+  clears the session by itself (clusterApi.ts:40, clusterRequests.ts:201).
+- The frontend does NOT hold the OCP token; it proxies to the backend with
+  cookies + a backend token, and the backend attaches the OCP credential. So
+  live vs reload send identical credentials — which is why a live-401/reload-200
+  split points at the backend, not this frontend.
+- This test only READS responses; it changes no code and is safe to repeat.
+===============================================================================
+ END p17.txt
+===============================================================================
