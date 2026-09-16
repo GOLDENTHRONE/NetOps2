@@ -20,7 +20,6 @@ import React, { useMemo } from 'react';
 import { ConfigState } from '../../redux/configSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { getCluster } from '../cluster';
-import { gtDebug } from '../gtDebug';
 import { KEEP_LAST_GOOD, STATUS_FAIL_THRESHOLD, withJitter } from '../resilience';
 import { testAuth } from './api/v1/clusterApi';
 import { clusterRequest } from './api/v1/clusterRequests';
@@ -451,8 +450,11 @@ export function useClustersVersion(clusters: Cluster[]) {
             consecutiveFailuresRef.current[clusterName] = 0;
             return data;
           } catch (err) {
+            const status = (err as ApiError)?.status;
             consecutiveFailuresRef.current[clusterName] =
-              (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+              status === 401 || status === 403
+                ? 0
+                : (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
             throw err;
           }
         },
@@ -512,18 +514,6 @@ export function useClustersVersion(clusters: Cluster[]) {
       if (lastStatusError !== undefined) {
         errorsInfo[clusterName] = lastStatusError;
       }
-
-      // TEMP diagnostics: what the version poll settled on this cycle, and the
-      // error the table will actually see for this cluster.
-      gtDebug('useClustersVersion.map', {
-        cluster: clusterName,
-        isPending: results[i].isPending,
-        isFetching: results[i].isFetching,
-        rawErrorStatus: (error as ApiError | null)?.status ?? null,
-        hasData: data !== undefined,
-        shownErrorStatus: lastStatusError?.status ?? null,
-        consecutiveFailures: consecutiveFailuresRef.current[clusterName] ?? 0,
-      });
 
       const intervalMs = versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0);
       const updated = Math.max(dataUpdatedAt, errorUpdatedAt);
@@ -693,15 +683,6 @@ export function useClustersAuth(clusters: Cluster[]): { [clusterName: string]: A
       if (last !== undefined) {
         errorsInfo[clusterName] = last;
       }
-      // TEMP diagnostics: what the auth poll settled on this cycle, and the auth
-      // error the table will see. Compare against useClustersVersion.map above.
-      gtDebug('useClustersAuth.map', {
-        cluster: clusterName,
-        isPending: results[i].isPending,
-        isFetching: results[i].isFetching,
-        rawErrorStatus: (results[i].error as ApiError | null)?.status ?? null,
-        shownErrorStatus: last?.status ?? null,
-      });
     });
     return errorsInfo;
     // eslint-disable-next-line react-hooks/exhaustive-deps

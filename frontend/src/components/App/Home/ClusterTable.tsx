@@ -33,7 +33,6 @@ import { isElectron } from '../../../helpers/isElectron';
 import { setRecentCluster } from '../../../helpers/recentClusters';
 import { loadTableSettings, storeTableSettings } from '../../../helpers/tableSettings';
 import { formatClusterPathParam } from '../../../lib/cluster';
-import { gtDebug } from '../../../lib/gtDebug';
 import { useClustersConf, useClustersOcpVersion, useClustersVersion } from '../../../lib/k8s';
 import { ApiError } from '../../../lib/k8s/api/v2/ApiError';
 import { Cluster } from '../../../lib/k8s/cluster';
@@ -254,15 +253,6 @@ export default function ClusterTable({
             getClusterAuth(cluster?.name),
             t
           ) ?? '';
-    // TEMP diagnostics: the final status text the row renders, with the inputs.
-    const auth = getClusterAuth(cluster?.name);
-    gtDebug('rowStatus', {
-      cluster: cluster?.name,
-      versionErrorStatus: errors[cluster?.name]?.status ?? null,
-      authTracked: auth.tracked,
-      authErrorStatus: auth.tracked ? auth.error?.status ?? null : 'untracked',
-      text,
-    });
     return text;
   }
 

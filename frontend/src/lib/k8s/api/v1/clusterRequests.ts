@@ -27,7 +27,6 @@ import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfi
 import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { logout } from '../../../auth';
 import { getCluster } from '../../../cluster';
-import { gtDebug } from '../../../gtDebug';
 import type { KubeObjectInterface } from '../../KubeObject';
 import type { ApiError } from '../v2/ApiError';
 import { CLUSTERS_PREFIX, DEFAULT_TIMEOUT, JSON_HEADERS } from './constants';
@@ -197,25 +196,10 @@ export async function clusterRequest(
     window.location.reload();
   }
 
-  // TEMP diagnostics (gtDebug): the single choke point for every cluster API call.
-  // Shows the live status + whether a JS-attached token header was sent (never the
-  // value). If live 401/403 here but 200 right after a reload with authHeaderPresent
-  // identical, the stale credential is server/session-side, not this request.
-  gtDebug('clusterRequest', {
-    cluster,
-    path,
-    method: (opts.method as string | undefined) ?? 'GET',
-    status: response.status,
-    ok: response.ok,
-    authHeaderPresent: !!opts.headers.authorization,
-    autoLogoutOnAuthError,
-  });
-
   if (!response.ok) {
     const { status, statusText } = response;
     if (autoLogoutOnAuthError && status === 401 && opts.headers.authorization) {
       console.error('Logging out due to auth error', { status, statusText, path });
-      gtDebug('clusterRequest.autoLogout', { cluster, path, status });
       logout(cluster);
     }
 

@@ -736,6 +736,33 @@ describe('useClustersVersion — P0 blip debounce (keep-last-good)', () => {
     await waitFor(() => expect((result.current[1].cluster as any)?.status).toBe(401));
   });
 
+  test('keeps base polling interval after 401 and resets it on next success', async () => {
+    const request = vi.mocked(clusterRequest);
+    let response: { gitVersion: string } | Error = { gitVersion: 'v1.32.0' };
+    request.mockImplementation(() =>
+      response instanceof Error ? Promise.reject(response) : Promise.resolve(response)
+    );
+    const queryKey = ['clusterVersion', 'cluster'];
+    const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current[1].cluster).toBeNull());
+
+    response = Object.assign(new Error('unauthorized'), { status: 401 });
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey });
+    });
+    await waitFor(() => expect((result.current[1].cluster as any)?.status).toBe(401));
+    expect(result.current[2].cluster.intervalMs).toBe(versionFetchInterval);
+
+    response = { gitVersion: 'v1.32.1' };
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey });
+    });
+    await waitFor(() => expect(result.current[1].cluster).toBeNull());
+    expect(result.current[2].cluster.intervalMs).toBe(versionFetchInterval);
+  });
+
   test('a first-ever failure (no last-good) surfaces immediately', async () => {
     vi.mocked(clusterRequest).mockRejectedValue(new Error('down'));
     const { result } = renderHook(() => useClustersVersion([{ name: 'cluster' }] as Cluster[]), {
