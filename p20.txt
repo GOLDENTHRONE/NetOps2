@@ -8,6 +8,62 @@
  Audience: an executing agent driving the browser + a human who logs in/out on cue.
 ===============================================================================
 
+===============================================================================
+ PRE-REQUISITE FIX — DO THIS FIRST, THEN VERIFY (Copilot: apply, like the auth fix)
+===============================================================================
+ There is one remaining gap before verification: the /version poll still backs off
+ on 401/403, so a cluster whose /version returns 401/403 recovers slowly (up to
+ ~60s) after re-login. The auth poll was already fixed the same way in commit
+ aec158d (useClustersAuth: on 401/403 keep consecutiveFailures at 0 = no backoff).
+ MIRROR that exact fix into the version poll BEFORE running the test below.
+
+ Copilot: make useClustersVersion behave like useClustersAuth on auth errors.
+
+ File: frontend/src/lib/k8s/index.ts  ->  useClustersVersion, the queryFn catch.
+ CHANGE FROM:
+     } catch (err) {
+       consecutiveFailuresRef.current[clusterName] =
+         (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+       throw err;
+     }
+ CHANGE TO (identical logic to the aec158d auth fix):
+     } catch (err) {
+       const status = (err as ApiError)?.status;
+       consecutiveFailuresRef.current[clusterName] =
+         status === 401 || status === 403
+           ? 0
+           : (consecutiveFailuresRef.current[clusterName] ?? 0) + 1;
+       throw err;
+     }
+ (ApiError is already imported in index.ts.)
+
+ Why it is correct & consistent: a 401/403 means the cluster is REACHABLE but
+ unauthorized — a cheap, fast response, and recovery is user-driven (re-login). So
+ there is no reason to back off; keeping the ~10s cadence lets the row recover in
+ ~10s instead of ~60s. It does not affect the blip keep-last-good debounce (that
+ only applies to non-401/403 blips). Trade-off (accepted, same as the auth fix): a
+ permanently-forbidden cluster is polled every ~10s instead of backing to ~60s —
+ acceptable because 401/403 are cheap.
+
+ OPTIONAL (consistency): the OCP version poll (useClustersOcpVersion) also backs off
+ on any error, but its 401/403 is treated as "not OCP" (no error surfaced), so this
+ is not required — mirror it too only if you want full symmetry.
+
+ ADD a regression test (mirror the one aec158d added for auth) in
+ frontend/src/lib/k8s/index.test.ts: assert that after a 401/403 from the version
+ poll, consecutiveFailures stays 0 (interval stays at the base ~10s), and the next
+ successful check recovers without a longer wait.
+
+ VALIDATE the fix before the live run:
+   - npx tsgo --noEmit                         -> no new errors in index.ts
+   - npx eslint src/lib/k8s/index.ts           -> clean
+   - npx vitest run src/lib/k8s/index.test.ts  -> your new test passes; the ~12
+       KNOWN pre-existing unrelated failures must NOT increase.
+
+ Only AFTER this fix is applied + validated, run the verification below. With the
+ fix in, BOTH recovery paths (auth-probe AND /version) should recover at ~10s in
+ STEP 7 — that is the proof the fix worked.
+
 -------------------------------------------------------------------------------
  0) THE PAGES YOU WILL USE (P0 lives on these — "check on every page")
 -------------------------------------------------------------------------------
@@ -285,19 +341,17 @@
  LOOK:  PAGE-1 row returns to Active/Ready; PAGE-3 gate clears to the cluster page.
  VERIFY: api.response {status:200/201} ; table.version {shownErrorStatus:null} ;
          row.status back to Active/Ready ; authgate.decision {screen:'page'}.
- RECOVERY SPEED (updated — two paths, differ on this branch):
+ RECOVERY SPEED (both paths should now be fast — you applied the PRE-REQUISITE fix):
    - AUTH-probe path (selfsubjectrulesreviews -> Ready/Reachable/"Insufficient
-     permissions"): FIXED by commit aec158d (useClustersAuth no longer backs off on
-     401/403). Expect recovery at the normal ~10s cadence after re-login, no reload.
-   - /version path (getVersion -> "Authentication required"/"Unavailable"): the same
-     fix was NOT applied to useClustersVersion (its catch still increments
-     consecutiveFailures on every error, including 401/403), so if a cluster's
-     /version itself returns 401/403, that row's recovery can still lag UP TO ~60s
-     (10s->20s->40s->60s backoff).
-   RECORD: how many seconds each path took to recover, and whether a reload was
-   needed. Neither is a P0 surfacing defect (steps 1-6 test surfacing); this only
-   measures recovery latency. If the /version path lags ~60s, note it as the
-   remaining gap (mirror the aec158d fix into useClustersVersion to close it).
+     permissions"): fixed by aec158d. Expect ~10s recovery, no reload.
+   - /version path (getVersion -> "Authentication required"/"Unavailable"): fixed by
+     the PRE-REQUISITE change you made to useClustersVersion at the top of this doc.
+     Expect ~10s recovery too, no reload.
+   RECORD: how many seconds EACH path took to recover, and whether a reload was
+   needed. This is the PROOF the pre-requisite fix worked: if the /version path
+   still lags ~60s, your fix did not take effect (or was not applied) — go back and
+   apply it before trusting the rest. Recovery latency is not a P0 surfacing defect
+   (steps 1-6 test surfacing); this step measures recovery latency after the fix.
 
 --- STEP 8 — navigation still works (PAGE-4) ----------------------------------
  CLICK "Applications" tab (or go to /projects) and back to "All Clusters". Confirm
@@ -387,8 +441,9 @@
  - Logs print only status codes / booleans / cluster names / status text — never
    tokens or header values.
  - Recovery latency (STEP 7) is not a P0 surfacing defect. The auth-probe path is
-   already fixed (aec158d); only the /version path may still lag ~60s until the same
-   401/403-no-backoff change is mirrored into useClustersVersion.
+   fixed (aec158d); the /version path is fixed by the PRE-REQUISITE change at the top
+   of this doc (mirror aec158d into useClustersVersion) — apply it BEFORE verifying,
+   so both paths recover in ~10s.
 ===============================================================================
  END p20.txt
 ===============================================================================
