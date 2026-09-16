@@ -215,9 +215,11 @@
         console ; row.status text = "Ready".
  ASK HUMAN (optional): log out -> selfsubjectrulesreviews returns 401/403 ->
         row reflects "Authentication required" / "Insufficient permissions".
- HONEST NOTE: this auth-probe path is exactly where the SEPARATE slow-recovery bug
- lives (see STEP 7). Recovery of THIS status after re-login may lag ~60s on this
- branch; that lag is not a P0 defect, only the correctness of the shown status is.
+ NOTE (updated): the auth-probe slow-recovery has been FIXED on this branch —
+ commit aec158d makes useClustersAuth NOT back off on 401/403 (consecutiveFailures
+ stays 0), so after re-login this Ready/permission status should recover at the
+ normal ~10s cadence, no reload needed. Verify that here: after re-login the row
+ returns to Ready within ~10-15s. (See STEP 7 for the one path still not fixed.)
 
 --- STEP 6 — OPEN-GATE behavior (PAGE-3) --------------------------------------
  6a-0 (FRESH open + blip = retry once, not gate — OPEN_GATE_RETRY):
@@ -283,11 +285,19 @@
  LOOK:  PAGE-1 row returns to Active/Ready; PAGE-3 gate clears to the cluster page.
  VERIFY: api.response {status:200/201} ; table.version {shownErrorStatus:null} ;
          row.status back to Active/Ready ; authgate.decision {screen:'page'}.
- HONEST CAVEAT (record, do NOT fail P0 for it): on THIS branch recovery can take
-   UP TO ~60s because of a SEPARATE known bug (auth/version poll backs off on
-   401/403 too: 10s->20s->40s->60s). Write down how many seconds recovery took, and
-   whether a reload was needed. That delay is not a P0 defect; P0 (steps 1-6) is
-   about surfacing status correctly.
+ RECOVERY SPEED (updated — two paths, differ on this branch):
+   - AUTH-probe path (selfsubjectrulesreviews -> Ready/Reachable/"Insufficient
+     permissions"): FIXED by commit aec158d (useClustersAuth no longer backs off on
+     401/403). Expect recovery at the normal ~10s cadence after re-login, no reload.
+   - /version path (getVersion -> "Authentication required"/"Unavailable"): the same
+     fix was NOT applied to useClustersVersion (its catch still increments
+     consecutiveFailures on every error, including 401/403), so if a cluster's
+     /version itself returns 401/403, that row's recovery can still lag UP TO ~60s
+     (10s->20s->40s->60s backoff).
+   RECORD: how many seconds each path took to recover, and whether a reload was
+   needed. Neither is a P0 surfacing defect (steps 1-6 test surfacing); this only
+   measures recovery latency. If the /version path lags ~60s, note it as the
+   remaining gap (mirror the aec158d fix into useClustersVersion to close it).
 
 --- STEP 8 — navigation still works (PAGE-4) ----------------------------------
  CLICK "Applications" tab (or go to /projects) and back to "All Clusters". Confirm
@@ -376,7 +386,9 @@
  - Verifies P0 ONLY (table + open-gate). Not P1 (watch).
  - Logs print only status codes / booleans / cluster names / status text — never
    tokens or header values.
- - The ~60s slow recovery in STEP 7 is a separate known bug, not a P0 failure.
+ - Recovery latency (STEP 7) is not a P0 surfacing defect. The auth-probe path is
+   already fixed (aec158d); only the /version path may still lag ~60s until the same
+   401/403-no-backoff change is mirrored into useClustersVersion.
 ===============================================================================
  END p20.txt
 ===============================================================================
