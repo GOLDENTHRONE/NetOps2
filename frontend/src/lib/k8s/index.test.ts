@@ -298,10 +298,11 @@ describe('useClustersVersion', () => {
     expect(result.current[2].available.nextStatusCheckAt).toBe(
       result.current[2].available.lastStatusCheckAt! + versionFetchInterval
     );
-    expect(result.current[2].unavailable.intervalMs).toBe(20_000);
+    // Gentle linear backoff: the first failure stays at the base interval (not 20s).
+    expect(result.current[2].unavailable.intervalMs).toBe(versionFetchInterval);
     expect(result.current[2].unavailable.lastStatusCheckAt).toBeGreaterThan(0);
     expect(result.current[2].unavailable.nextStatusCheckAt).toBe(
-      result.current[2].unavailable.lastStatusCheckAt! + 20_000
+      result.current[2].unavailable.lastStatusCheckAt! + versionFetchInterval
     );
   });
 
@@ -415,10 +416,10 @@ describe('versionRefetchInterval', () => {
     expect(versionRefetchInterval(0)).toBe(versionFetchInterval);
   });
 
-  test('doubles per consecutive failure, capped at maxVersionFetchInterval', () => {
-    expect(versionRefetchInterval(1)).toBe(20_000);
-    expect(versionRefetchInterval(2)).toBe(40_000);
-    expect(versionRefetchInterval(3)).toBe(maxVersionFetchInterval);
+  test('gentle linear backoff: first failure stays at base, then +1 base per failure, capped', () => {
+    expect(versionRefetchInterval(1)).toBe(versionFetchInterval); // 10s — first failure stays at base
+    expect(versionRefetchInterval(2)).toBe(20_000);
+    expect(versionRefetchInterval(3)).toBe(maxVersionFetchInterval); // 30s cap
     expect(versionRefetchInterval(10)).toBe(maxVersionFetchInterval);
   });
 });

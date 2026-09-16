@@ -313,11 +313,10 @@ export function matchExpressionSimplifier(
 
 export const versionFetchInterval = 10000; // ms
 
-// Cap backoff at 6x the base interval (60s): bounds how long it takes to notice a
-// cluster came back after a long outage, while still cutting steady-state polling
-// against a persistently unreachable cluster roughly 6x versus polling every
-// versionFetchInterval forever.
-export const maxVersionFetchInterval = versionFetchInterval * 6;
+// Cap backoff at 3x the base interval (30s): a recovered cluster is noticed within
+// ~30s (instead of up to 60s), while still cutting steady-state polling against a
+// persistently unreachable cluster versus polling every versionFetchInterval forever.
+export const maxVersionFetchInterval = versionFetchInterval * 3;
 
 export interface ClusterStatusTiming {
   lastStatusCheckAt?: number;
@@ -327,11 +326,16 @@ export interface ClusterStatusTiming {
 }
 
 /**
- * Refetch interval for cluster version queries (K8s and OCP): polls at the normal
- * `versionFetchInterval` while healthy, and backs off exponentially (capped at
+ * Refetch interval for the K8s `/version` poll: polls at the normal
+ * `versionFetchInterval` while healthy, and backs off GENTLY and LINEARLY (capped at
  * `maxVersionFetchInterval`) on consecutive failures so a persistently unreachable
- * cluster isn't polled every 10s forever. Resets to the base interval as soon as a
- * fetch succeeds (see the `consecutiveFailures` tracking in the callers below).
+ * cluster isn't polled every 10s forever, while a recovered cluster is still noticed
+ * quickly. Resets to the base interval as soon as a fetch succeeds (see the
+ * `consecutiveFailures` tracking in the callers below).
+ *
+ * Curve (base 10s, cap 30s): 10s, 10s, 20s, 30s, 30s ... The FIRST failure stays at
+ * the base interval (it is often a one-off blip worth re-checking fast); each further
+ * failure adds one base interval, up to the cap.
  *
  * Note: react-query's own `query.state.fetchFailureCount` resets to 0 every time a
  * new fetch starts (it only counts retries within a single fetch attempt), so with
@@ -339,10 +343,8 @@ export interface ClusterStatusTiming {
  * drive multi-cycle backoff on its own — hence tracking consecutiveFailures ourselves.
  */
 export function versionRefetchInterval(consecutiveFailures: number) {
-  if (consecutiveFailures <= 0) {
-    return versionFetchInterval;
-  }
-  return Math.min(versionFetchInterval * 2 ** consecutiveFailures, maxVersionFetchInterval);
+  const steps = Math.max(1, consecutiveFailures);
+  return Math.min(versionFetchInterval * steps, maxVersionFetchInterval);
 }
 
 /**
@@ -394,15 +396,18 @@ export const authCheckInterval = readIntervalEnvOrDefault(
   versionFetchInterval // 10s
 );
 
-/** Cap the auth-check backoff at 6x its base interval. */
-export const maxAuthCheckInterval = authCheckInterval * 6;
+/** Cap the auth-check backoff at 3x its base interval (30s). */
+export const maxAuthCheckInterval = authCheckInterval * 3;
 
-/** Backoff-aware refetch interval for the per-cluster authorization check. */
+/**
+ * Backoff-aware refetch interval for the per-cluster authorization check. Same
+ * gentle linear curve as versionRefetchInterval (base 10s, cap 30s): 10s, 10s, 20s,
+ * 30s, 30s ... (401/403 don't reach here — callers reset consecutiveFailures to 0
+ * on a real auth error, so it stays at the base interval).
+ */
 export function authRefetchInterval(consecutiveFailures: number) {
-  if (consecutiveFailures <= 0) {
-    return authCheckInterval;
-  }
-  return Math.min(authCheckInterval * 2 ** consecutiveFailures, maxAuthCheckInterval);
+  const steps = Math.max(1, consecutiveFailures);
+  return Math.min(authCheckInterval * steps, maxAuthCheckInterval);
 }
 
 /** Hook to get the version of the clusters given by the parameter.
