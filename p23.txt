@@ -1,0 +1,96 @@
+# p23.txt — P0: what it is, what was fixed, before vs after (honest)
+
+Repo: NetOps2 (Headlamp fork) · Branch: GT_D_V1
+Scope of this doc: the "All Clusters" status + cluster-open (auth gate) flow.
+All values below are read from the ACTUAL code, not memory.
+
+==============================================================================
+1. WHAT P0 IS
+==============================================================================
+Goal (one line): the cluster status must be TRUTHFUL and resilient — a single
+network blip must never show a false "Unavailable"/"Not reachable", while a
+REAL auth error (401/403) must surface immediately.
+
+P0 covers exactly two things:
+  (A) The All Clusters tab status (GET /version poll + per-cluster auth poll
+      via POST selfsubjectrulesreviews).
+  (B) The ONE-SHOT auth check that runs when you click to open a cluster, and
+      the screens it shows (ClusterAccessGate: checking / unreachable /
+      expired / forbidden).
+
+P0 does NOT cover (these were moved to P1):
+  - Auto-recovery of the auth state AFTER you are already inside a cluster
+    (the inside check is one-shot; it re-checks only on navigation/remount).
+  - Live watch/WebSocket data freshness/reconnect.
+
+==============================================================================
+2. WHAT WAS FIXED IN P0 — before vs after
+==============================================================================
+Config knobs live in frontend/src/lib/resilience.ts and are env-overridable
+(so any of this can be tuned or rolled back without a code change).
+
+| # | Area | BEFORE (old behaviour) | AFTER (P0 behaviour) |
+|---|------|------------------------|----------------------|
+| 1 | Single blip on a healthy cluster | One failed poll flipped the row straight to "Unavailable" | keep-last-good: row stays reachable until 2 consecutive failures (STATUS_FAIL_THRESHOLD=2), then it honestly shows Unavailable |
+| 2 | Auth timeout | 5s client timeout — a slow-but-OK check was aborted into a false "not responding" | AUTH_TIMEOUT_MS=15s — a slow-but-OK check is given time before it is called a failure |
+| 3 | Opening a cluster on a transient blip | First blip -> straight to the error/redirect | OPEN_GATE_RETRY=1 — one jittered retry (~1s, +/-15%) before gating; a 401/403 is NEVER retried |
+| 4 | Real auth error (401/403) | Could be debounced/delayed; auth poll backed off to ~60s so status lagged | 401/403 surfaces immediately; both polls RESET consecutiveFailures to 0 on 401/403 so they stay at the 10s base (do not back off) |
+| 5 | Cluster-open screen | Blank page / jarring redirect to a generic auth screen | ClusterAccessGate: a clear centered screen with the real state (checking / unreachable / expired / forbidden), correct actions, and "Technical details" (real HTTP code) |
+| 6 | Actions per state | Same generic path for every failure | expired(401) -> "Sign in again"; forbidden(403) -> Back only (NO retry, permission won't self-change); unreachable -> "Retry now"; Back to All Clusters always |
+| 7 | Recovery after a tab was in the background | Waited for the next scheduled poll | refetchOnWindowFocus:'always' on the polls -> instant recheck when you return to the tab |
+| 8 | Poll backoff curve | Exponential, cap 6x = up to 60s between polls | Gentle linear 10 -> 10 -> 20 -> 30 (cap 3x = 30s); first failure stays at base 10s; recovered cluster noticed within ~30s |
+| 9 | Many clusters polling together | All fired on the same instant (thundering herd) | POLL_JITTER_PCT=0.15 -> each poll spread +/-15% |
+| 10 | Inside-cluster blip (had a prior success) | Blip threw up the gate | keep-last-good keeps the page up with a "Reconnecting..." chip until the threshold |
+
+Exact timing (from code):
+  - Healthy poll: ~10s, +/-15% => 8.5s-11.5s
+  - Backoff: 10s, 10s, 20s, 30s, 30s... (cap 30s), +/-15%
+  - Open-gate retry: 1 retry after ~1s (+/-15%); per-attempt timeout 15s
+  - 401/403: immediate, no retry, no backoff
+
+==============================================================================
+3. HONEST STATUS — verified / not verified
+==============================================================================
+Verified (code-level, unit/component tests):
+  - Backoff curve (index.test.ts), resilience knobs (resilience.test.ts),
+    keep-last-good/debounce, AuthRoute gate states.
+  - The backoff change added NO new test failures (baseline unchanged).
+
+NOT yet verified (needs the LIVE cluster + a browser — cannot be done from the
+code environment, which has no cluster/kubeconfig/running app):
+  - End-to-end behaviour in a real browser: real 401/403 timing, login/logout
+    latency, request payloads/headers/timings, slow-3G behaviour.
+  - See p22.txt for the 12-scenario live verification plan.
+
+==============================================================================
+4. OPEN / UNDER INVESTIGATION (honest)
+==============================================================================
+(a) Login/logout on the All Clusters page feels slow (reported live).
+    Confirmed in code how this CAN happen: the auth poll only stays fast (10s)
+    when the error is a clean 401/403. ANY other error (5xx, network, or a 15s
+    TIMEOUT that aborts the request) increments consecutiveFailures and backs
+    the poll off to 20s/30s. If logging out does NOT return a clean 401/403
+    (e.g. the auth request times out), the poll backs off and both logout- and
+    login-detection get slow.
+    NOT yet confirmed: what status code the logout state actually returns on
+    selfsubjectrulesreviews. Needs one live data point from DevTools:
+    the Status Code and Duration of that request after logout.
+    If confirmed, this is a P0 fix (All Clusters page).
+
+(b) Inside-cluster auth gate does not auto-recover — moved to P1 by decision.
+
+==============================================================================
+5. FILES TOUCHED FOR P0 (for reference)
+==============================================================================
+  - frontend/src/lib/resilience.ts        (all P0 knobs)
+  - frontend/src/lib/k8s/index.ts         (version + auth polls, backoff,
+                                           keep-last-good, focus recheck)
+  - frontend/src/components/App/RouteSwitcher.tsx  (AuthRoute one-shot check,
+                                           open-gate retry, keep-last-good chip)
+  - frontend/src/components/cluster/ClusterAccessGate.tsx  (the gate screen)
+  - frontend/src/components/cluster/ReconnectingChip.tsx   (reconnecting hint)
+  - frontend/src/lib/queryClient.ts       (global refetchOnWindowFocus:false;
+                                           polls override to 'always')
+
+P0 is "code done + unit-tested"; it is NOT "closed" until the live verification
+in p22.txt passes and item 4(a) above is resolved.
