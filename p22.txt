@@ -1,0 +1,252 @@
+# p22.txt — P0 Live Verification Plan (for Copilot)
+
+Repo: NetOps2 (Headlamp fork) · Branch: GT_D_V1
+Goal: Strictly verify P0 in a real browser so we can 100% say "P0 is done,
+nothing left." Copilot ONLY verifies — it must NOT change any code.
+
+------------------------------------------------------------------------------
+0. READ THIS FIRST — what P0 is, and what it is NOT (critical)
+------------------------------------------------------------------------------
+P0's code path is the SAME on every route (the `AuthRoute` one-shot auth check
++ `ClusterAccessGate` screen, and the All Clusters status poll). So "test every
+page" does NOT mean different code per page — it means navigate through every
+section and confirm the ONE code path behaves consistently everywhere.
+
+P0 IS (verify all of this now):
+  1. All Clusters tab status is truthful — a single blip must NOT show a false
+     "Unavailable"; a real 401/403 must show immediately; recovery is quick.
+  2. The ONE-SHOT auth check when opening a cluster + its screens
+     (Checking / Not responding / Session expired / Access limited).
+
+P0 is NOT (if you see this, log it as "P1 known-gap", NEVER "P0 fail"):
+  - Sitting INSIDE a cluster and, WITHOUT navigating, expecting the gate to
+    appear/disappear on its own. The inside auth check is one-shot (no poll,
+    no focus refetch), so it only re-checks on navigation/remount. Auto-recovery
+    of that is P1, not P0. The gate SHOULD appear when you navigate to a new
+    page (that re-fires the one-shot) — that part IS P0.
+  - Live list/data loading speed inside a cluster (pods/logs streaming) — that
+    is P1 (watch/WebSocket). Do not fail P0 if data is slow to appear.
+
+Expected values below come from the ACTUAL code:
+  - Healthy status poll: every ~10s, with +/-15% jitter => 8.5s – 11.5s
+  - Backoff on consecutive failures: 10s, 10s, 20s, 30s, 30s ... (cap 30s), +/-15%
+  - Tab-focus recheck: instant (refetchOnWindowFocus: 'always' on the polls)
+  - Cluster-open blip: exactly 1 retry after ~1s (+/-15% => 0.85s–1.15s)
+  - Per-attempt auth timeout: 15s (AUTH_TIMEOUT_MS)
+  - keep-last-good: needs 2 consecutive failures before the row goes "Unavailable"
+    (STATUS_FAIL_THRESHOLD = 2)
+  - 401/403: immediate, NO retry, NO backoff (poll stays at base 10s)
+
+------------------------------------------------------------------------------
+STEP 0 — Setup & capture (do once)
+------------------------------------------------------------------------------
+1. Run the app locally (frontend dev server, e.g. http://localhost:3000).
+2. Open Chrome DevTools (F12).
+3. Network tab: "Preserve log" = ON, "Disable cache" = ON, filter = Fetch/XHR.
+4. Console tab: "Preserve log" = ON, level = All.
+5. Use the Network tab's Time / Waterfall column for exact per-request ms.
+6. After each major scenario, Network → right-click → "Save all as HAR"
+   (the HAR has the exact timestamp of every request). Keep these files.
+7. Create a results file `p0-live-results.md` and record every step:
+   result + time + screenshot.
+
+NOTE on "capture every event with time": the most accurate no-code-change way
+is the Network tab timings + HAR export. If more granular in-code timestamped
+logs are wanted, that must be authorized separately — do NOT edit code here.
+
+NOTE on masking: use generic placeholders in the report — <your-cluster>,
+<username>, <password>. Never paste real cluster URLs, usernames, tokens or
+passwords into the results file.
+
+------------------------------------------------------------------------------
+SCENARIO 1 — All Clusters tab: healthy polling rhythm
+------------------------------------------------------------------------------
+Check: status poll runs every ~10s (8.5s–11.5s with jitter).
+Steps:
+  1. Open the app; stay on the All Clusters (home) page.
+  2. Network filter: `version` (and/or `selfsubjectrulesreviews`).
+  3. Watch for 60 seconds. Note the gap between consecutive `version` requests.
+  4. Confirm many clusters do NOT all fire on the same instant (jitter).
+Capture: HAR + list of gaps.
+PASS: gaps 8.5–11.5s. FAIL: every 60s / every 1s / random / all at once.
+
+------------------------------------------------------------------------------
+SCENARIO 2 — One blip must NOT show false "Unavailable" (keep-last-good)
+------------------------------------------------------------------------------
+Check: a single failed poll keeps the row reachable; needs 2 to flip.
+Steps:
+  1. On All Clusters, pick a reachable cluster (Reachable/Ready).
+  2. Network → right-click its `version` request → "Block request URL"
+     (or throttle so one request times out) for ONE cycle only.
+  3. Confirm the row STAYS Reachable (keep-last-good), maybe a subtle
+     "reconnecting" hint. It must NOT show "Unavailable".
+  4. Unblock → next poll → row normal.
+  5. Now keep it blocked for 2+ cycles → "Unavailable" SHOULD appear (honest).
+Capture: screenshots + timestamps for both cases.
+PASS: 1 fail = still Reachable; 2 fails = Unavailable.
+FAIL: Unavailable on the very first fail.
+
+------------------------------------------------------------------------------
+SCENARIO 3 — Backoff curve when a cluster stays down (10 -> 10 -> 20 -> 30)
+------------------------------------------------------------------------------
+Check: consecutive-failure poll gaps grow ~10s, ~10s, ~20s, ~30s, ~30s (+/-15%).
+Steps:
+  1. Make one cluster continuously unreachable (block its version/auth URL).
+  2. Note the gaps between `version` requests from the start.
+  3. Expected (+/-15%): 1st->2nd ~10s, 2nd->3rd ~10s, 3rd->4th ~20s,
+     4th->5th ~30s, then ~30s cap.
+  4. Unblock → on the next poll (within ~30s) the row returns to Reachable.
+Capture: HAR + gap-sequence table.
+PASS: gaps 10->10->20->30 cap; recovery <= ~30s.
+FAIL: gaps reach 60s+ or it never recovers.
+
+------------------------------------------------------------------------------
+SCENARIO 4 — Tab focus triggers an INSTANT recheck
+------------------------------------------------------------------------------
+Check: returning from another tab fires a check immediately (focus 'always').
+Steps:
+  1. Stay on All Clusters; watch `version` in Network.
+  2. Switch to another browser tab for 20–30s.
+  3. Return to this tab.
+  4. Expected: a fresh version/auth request fires immediately (~0–1s) on return.
+Capture: timestamp of tab-return vs request-fire.
+PASS: instant request on return. FAIL: nothing until the next scheduled 10s.
+
+------------------------------------------------------------------------------
+SCENARIO 5 — Opening a cluster: "Checking..." screen
+------------------------------------------------------------------------------
+Check: clicking a cluster shows a spinner, not a blank page.
+Steps:
+  1. From All Clusters, click a cluster.
+  2. Expected: an immediate centered "Checking your access..." spinner.
+Capture: screenshot + how long "checking" showed (auth request duration).
+PASS: checking screen shows. FAIL: blank/white page.
+
+------------------------------------------------------------------------------
+SCENARIO 6 — Reachable cluster opens straight through
+------------------------------------------------------------------------------
+Steps:
+  1. Open a healthy cluster.
+  2. Expected: checking -> cluster overview (no gate).
+Capture: click-to-render total time (auth request duration).
+PASS: opens with no gate. FAIL: a healthy cluster shows a gate.
+
+------------------------------------------------------------------------------
+SCENARIO 7 — 401 (session EXPIRED) -> IMMEDIATE gate
+------------------------------------------------------------------------------
+Check: a real auth error gates immediately, with NO retry, NO wait.
+Steps:
+  1. Get into an expired-session state (I will tell you when to log out /
+     invalidate the token — wait for my cue).
+  2. Navigate to a cluster page (fires the one-shot check).
+  3. Expected: IMMEDIATELY (no retry) "Your session for this cluster expired"
+     + "Sign in again" button. Network shows a 401, then the gate right away
+     (NO second/retry request).
+  4. Open "Technical details" -> should show HTTP 401.
+Capture: timestamp of the 401 response vs gate render (gap ~0); confirm there
+was NO retry request.
+PASS: 401 -> immediate gate, no retry.
+FAIL: a retry/wait on 401, or an "unreachable" screen instead.
+
+------------------------------------------------------------------------------
+SCENARIO 8 — 403 (FORBIDDEN) -> gate, NO Retry button
+------------------------------------------------------------------------------
+Steps:
+  1. Use a user/token with no access to the cluster (403).
+  2. Expected: "You do not have access" + ONLY a "Back" button
+     (NO "Retry now" — permission won't change on its own).
+Capture: screenshot; confirm no retry button and no retry request.
+PASS: forbidden screen, no retry. FAIL: a retry button or retry request.
+
+------------------------------------------------------------------------------
+SCENARIO 9 — Unreachable (timeout/5xx) -> 1 retry, then "Not responding" + Retry
+------------------------------------------------------------------------------
+Check: a blip retries once (~1s +/-15%), then gates; Retry button recovers.
+Steps:
+  1. Block the cluster's auth/version URL in Network (simulate a network fail).
+  2. Open the cluster.
+  3. Expected: one request fails -> ~1s (0.85–1.15s) later ONE retry ->
+     that fails too -> "This cluster is not responding" + "Retry now".
+  4. Network shows 2 attempts (original + 1 retry), ~1s apart.
+  5. Unblock -> click "Retry now" -> the cluster should open.
+Capture: timestamps of both attempts (~1s gap), and the Retry-button result.
+PASS: exactly 1 retry ~1s later, then gate; Retry recovers.
+FAIL: 0 or 2+ retries, or Retry button doesn't work.
+
+------------------------------------------------------------------------------
+SCENARIO 10 — Slow network (Slow 3G): "Checking" must not abort early (15s)
+------------------------------------------------------------------------------
+Check: a slow-but-OK check is not turned into a false "not responding"
+(AUTH_TIMEOUT_MS = 15s).
+Steps:
+  1. DevTools Network -> Throttling -> "Slow 3G".
+  2. Open a cluster.
+  3. Expected: "Checking..." shows longer (slow), but if the server answers
+     within 15s the cluster opens (no gate). Only >15s -> "not responding".
+Capture: auth request total duration + final result.
+PASS: <=15s answer -> opens; >15s -> gate.
+FAIL: a slow-but-OK check (e.g. 6s) shows "not responding".
+
+------------------------------------------------------------------------------
+SCENARIO 11 — Navigate sweep across every section (one-shot consistency)
+------------------------------------------------------------------------------
+Check: on every page, the same one-shot check + (if needed) the gate behave
+consistently.
+Steps:
+  1. Enter a cluster. Click each section one by one and record: did the page
+     open? did a gate appear? timing?
+       - Cluster (overview), Namespaces, Nodes
+       - Workloads: Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets,
+         Jobs, CronJobs
+       - Network: Services, Endpoints, Ingresses, Network Policies
+       - Storage: PVCs, PVs, Storage Classes
+       - Config: ConfigMaps, Secrets, HPAs, Resource Quotas, Limit Ranges,
+         Pod Disruption Budgets, Priority Classes, Runtime Classes, Leases
+       - Security: Service Accounts, Roles, Role Bindings, Cluster Roles,
+         Cluster Role Bindings
+       - CRDs
+  2. Expected: in a healthy state every page opens without a gate; if you force
+     a 401/403 mid-session, the correct gate appears on the page you NAVIGATE
+     to (that re-fires the one-shot).
+Capture: a table — page | opened/gate | time.
+NOTE: each page's data loading (list appearing) is P1 (watch/data). P0 only
+checks that the auth-check + gate are consistent when you navigate. Do not fail
+P0 if data is slow.
+PASS: consistent auth/gate behaviour on every page.
+FAIL: a page with different/broken behaviour.
+
+------------------------------------------------------------------------------
+SCENARIO 12 — Repeated login/logout (stress) + timings
+------------------------------------------------------------------------------
+Check: repeated login/logout stays stable and timings stay consistent.
+Steps (repeat this 3–5 times; I will cue each login/logout):
+  a. Logged in -> open a cluster -> note time (click -> render).
+  b. Log out -> navigate to a cluster page -> immediate expired gate? note time.
+  c. Log in -> go back to All Clusters -> how long until status shows Reachable
+     (focus/poll)? note time.
+  d. Open a cluster again -> opens? note time.
+Expected: every round consistent; no slowdown/leak (round 5 == round 1);
+401 -> immediate gate; after login All Clusters turns green within ~10s or on
+focus.
+EXPLICIT P1-gap check: while INSIDE a cluster, log out and WAIT WITHOUT
+navigating -> the gate will NOT appear on its own -> record as "P1 known-gap",
+NOT a P0 fail. Then navigate -> the gate should appear (P0 PASS).
+Capture: a timing table per round + the P1-gap observation separately.
+PASS: rounds stable, timings consistent, all P0 behaviours correct.
+FAIL: degradation/slowness/inconsistent gate on navigation.
+
+------------------------------------------------------------------------------
+FINAL REPORT (ask Copilot to produce)
+------------------------------------------------------------------------------
+A table: Scenario | Expected time | Actual time | PASS/FAIL | Screenshot/HAR |
+Notes. Plus a separate "P1 known-gaps observed" section. All timings in
+ms/seconds. Attach the HAR files.
+
+P0 is "DONE" only when ALL of the following hold:
+  - Scenarios 1–12 PASS (ignoring the noted P1-gaps).
+  - No false "Unavailable"/gate on any healthy cluster.
+  - 401/403 immediate (no retry); unreachable = 1 retry then gate.
+  - Backoff 10 -> 10 -> 20 -> 30 (cap 30s); focus recheck instant;
+    recovery <= ~30s.
+  - Slow 3G: <=15s valid answer still opens.
+  - Repeated login/logout stays stable.
