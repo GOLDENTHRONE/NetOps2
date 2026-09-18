@@ -1,0 +1,64 @@
+p25.txt — B10 result: OURS vs UPSTREAM (P0 code provenance)
+
+How this was determined: the repo was a shallow clone, so it was unshallowed
+and the REAL upstream (github.com/kubernetes-sigs/headlamp) was fetched as a
+read-only remote, compared with `git diff upstream/main...GT_D_V1` and
+`git blame`, then the upstream remote was removed. Nothing was ever pushed or
+committed to upstream. All findings are from actual git history, not memory.
+
+Divergence point (merge-base): GT_D_V1 branched from upstream Headlamp
+0.45.0 RC — 6d2b42cc (2026-08-21, "Merge pull request #7377 ... hl-rc-0.45.0").
+
+==============================================================================
+1. THE 7 P0 FILES — who owns each
+==============================================================================
+| File                                              | Verdict                | Notes                                             |
+|---------------------------------------------------|------------------------|---------------------------------------------------|
+| frontend/src/lib/resilience.ts                    | OURS (NEW, fork-only)  | not in upstream at all -> SAFE, no merge risk     |
+| frontend/src/components/cluster/ClusterAccessGate.tsx | OURS (NEW, fork-only) | fork-only -> SAFE                                 |
+| frontend/src/components/cluster/ReconnectingChip.tsx  | OURS (NEW, fork-only) | fork-only; and it IS imported + rendered (used)   |
+| frontend/src/lib/k8s/index.ts                     | MIXED (we modified upstream file) | +352/-7 ours inside an upstream file -> MERGE RISK |
+| frontend/src/components/App/RouteSwitcher.tsx     | MIXED (we modified upstream file) | +104/-7 ours -> MERGE RISK                        |
+| frontend/src/lib/queryClient.ts                   | UPSTREAM (unchanged by us) | we never touched it                               |
+| frontend/src/lib/k8s/api/v1/clusterRequests.ts    | UPSTREAM (unchanged by us) | we never touched it                               |
+
+==============================================================================
+2. EACH DEFECT/BEHAVIOUR — whose code
+==============================================================================
+| Finding / behaviour                          | Verdict  | Evidence                                                            |
+|----------------------------------------------|----------|--------------------------------------------------------------------|
+| F — 502 'Unreachable' masking                | UPSTREAM | upstream clusterRequests.ts:179 already has it; we did not touch file. NOT our bug. |
+| G — staleTime 3 min (stale cache)            | UPSTREAM | upstream queryClient.ts:47 `staleTime: 3 * 60_000` — inherited design |
+| queryClient refetchOnWindowFocus: false      | UPSTREAM | upstream queryClient.ts:48                                          |
+| E — withJitter + jittered refetchInterval    | OURS     | resilience.ts fork-only; `refetchInterval: () => withJitter(...)` added by us in index.ts |
+| L — ReconnectingChip                         | OURS     | fork-only NEW file; imported+rendered in RouteSwitcher (not dead code) |
+| Item 7 — poll `refetchOnWindowFocus:'always'`| MIXED    | version poll 'always' = UPSTREAM (upstream index.ts:322); auth poll = OURS; ocp poll = fork (Akshita Tyagi) |
+| backoff curve / keep-last-good / STATUS_FAIL_THRESHOLD | OURS | added by us in index.ts (+352) using resilience.ts knobs           |
+
+==============================================================================
+3. UPSTREAM COMMITS WE DON'T HAVE (that touch our P0 files)
+==============================================================================
+- 7 upstream commits touch our P0 files (frontend/src/lib/k8s/ + queryClient.ts)
+  that GT_D_V1 does not have.
+- On clusterRequests.ts (the 502 file) specifically, only 1 upstream commit is
+  ahead of us: fa1eb87fb "frontend: plugin: Support a default app theme" — a
+  theme change, unrelated to the 502 behaviour.
+  => Upstream has NOT already fixed the 502 masking; we are not missing a
+     ready-made fix for Finding F.
+
+==============================================================================
+4. WHAT THIS MEANS (honest)
+==============================================================================
+SAFE (fork-only, zero merge risk):
+  - resilience.ts, ClusterAccessGate.tsx, ReconnectingChip.tsx
+
+MERGE RISK (we edited upstream files — expect conflicts on every upstream sync):
+  - index.ts (backoff, keep-last-good, jittered interval, auth-poll 'always')
+  - RouteSwitcher.tsx (open-gate retry, keep-last-good chip)
+
+NOT OURS — upstream Headlamp behaviour (do not "own" these as our bugs; if we
+change them, expect permanent merge friction, and prefer reporting upstream):
+  - 502 'Unreachable' masking (Finding F)
+  - 3-minute staleTime cache-staleness (Finding G)
+  - queryClient refetchOnWindowFocus: false
+  - version-poll refetchOnWindowFocus: 'always'
