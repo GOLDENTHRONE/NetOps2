@@ -37,7 +37,7 @@ Config knobs live in frontend/src/lib/resilience.ts and are env-overridable
 | 4 | Real auth error (401/403) | Could be debounced/delayed; auth poll backed off to ~60s so status lagged | 401/403 surfaces immediately; both polls RESET consecutiveFailures to 0 on 401/403 so they stay at the 10s base (do not back off) |
 | 5 | Cluster-open screen | Blank page / jarring redirect to a generic auth screen | ClusterAccessGate: a clear centered screen with the real state (checking / unreachable / expired / forbidden), correct actions, and "Technical details" (real HTTP code) |
 | 6 | Actions per state | Same generic path for every failure | expired(401) -> "Sign in again"; forbidden(403) -> Back only (NO retry, permission won't self-change); unreachable -> "Retry now"; Back to All Clusters always |
-| 7 | Recovery after a tab was in the background | Waited for the next scheduled poll | refetchOnWindowFocus:'always' on the polls -> instant recheck when you return to the tab |
+| 7 | Recovery after a tab was in the background | (mixed origin — see note) | refetchOnWindowFocus:'always' on the polls -> instant recheck when you return to the tab. HONEST ATTRIBUTION (git blame, full history): only the AUTH poll's 'always' is OURS (commit 4d58b78, Claude). The VERSION poll's 'always' is UPSTREAM Headlamp (René Dudfield), and the OCP poll's 'always' is from this FORK's earlier work (Akshita Tyagi) — not this P0 branch. So we did NOT introduce the focus-recheck across all polls; we added it only to the auth poll. |
 | 8 | Poll backoff curve | Exponential, cap 6x = up to 60s between polls | Gentle linear 10 -> 10 -> 20 -> 30 (cap 3x = 30s); first failure stays at base 10s; recovered cluster noticed within ~30s |
 | 9 | Many clusters polling together | All fired on the same instant (thundering herd) | POLL_JITTER_PCT=0.15 -> each poll spread +/-15% |
 | 10 | Inside-cluster blip (had a prior success) | Blip threw up the gate | keep-last-good keeps the page up with a "Reconnecting..." chip until the threshold |
@@ -89,8 +89,14 @@ code environment, which has no cluster/kubeconfig/running app):
                                            open-gate retry, keep-last-good chip)
   - frontend/src/components/cluster/ClusterAccessGate.tsx  (the gate screen)
   - frontend/src/components/cluster/ReconnectingChip.tsx   (reconnecting hint)
-  - frontend/src/lib/queryClient.ts       (global refetchOnWindowFocus:false;
-                                           polls override to 'always')
+
+  NOTE: queryClient.ts is NOT a file this P0 branch changed. Its global
+  refetchOnWindowFocus:false and staleTime:3min are UPSTREAM Headlamp
+  (commit 073e4a6, Oleksandr Dubenko, 2025-07); GT_D_V1 shows no diff to it.
+  The polls override refetchOnWindowFocus to 'always' from inside index.ts
+  (see item 7 for whose 'always' is whose), not by editing queryClient.ts.
+  This corrects an earlier version of this doc that listed queryClient.ts as a
+  P0-touched file.
 
 P0 is "code done + unit-tested"; it is NOT "closed" until the live verification
 in p22.txt passes and item 4(a) above is resolved.
