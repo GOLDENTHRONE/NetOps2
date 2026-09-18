@@ -1,0 +1,108 @@
+Copy-paste prompt — B10, upstream diff analysis
+
+Do not modify any file in this repository. This is a read-only investigation.
+Report exact command output verbatim — do not summarize or paraphrase.
+
+Goal: determine which parts of this Headlamp fork's P0 code are genuinely our
+own changes versus inherited from upstream Headlamp (kubernetes-sigs/headlamp).
+This matters because changing upstream code creates permanent merge conflicts on
+every future upstream sync, while changing our own added files is safe.
+
+Step 1 — set up the upstream remote if it doesn't exist: Check `git remote -v`.
+If there's no upstream remote pointing at Headlamp, add it:
+
+    git remote add upstream https://github.com/kubernetes-sigs/headlamp.git
+    git fetch upstream
+
+Report whether it already existed or you had to add it, and report the output of
+`git remote -v` afterward.
+(If the network blocks fetching kubernetes-sigs/headlamp, STOP and say so — do
+NOT fall back to this fork's own origin/main, because the fork's main already
+contains earlier fork changes and would misclassify them as "upstream".)
+
+Step 2 — identify the merge base: Run `git merge-base upstream/main GT_D_V1` and
+report the commit hash. Then run `git log -1 --format='%H %ai %s' <that-hash>`
+to show when this fork diverged from upstream. Report both verbatim.
+
+Step 3 — overall diff summary:
+
+    git diff upstream/main...GT_D_V1 --stat -- frontend/src/
+
+Report the full output verbatim.
+
+Step 4 — per-file classification for the P0 files specifically. For EACH of these
+files, determine and report whether it is (a) a NEW file that exists only in our
+fork, (b) an EXISTING upstream file we modified, or (c) unchanged from upstream:
+  - frontend/src/lib/resilience.ts
+  - frontend/src/lib/k8s/index.ts
+  - frontend/src/lib/queryClient.ts
+  - frontend/src/lib/k8s/api/v1/clusterRequests.ts
+  - frontend/src/components/App/RouteSwitcher.tsx
+  - frontend/src/components/cluster/ClusterAccessGate.tsx
+  - frontend/src/components/cluster/ReconnectingChip.tsx
+
+Use `git diff upstream/main...GT_D_V1 --stat -- <path>` for each, and
+`git log upstream/main -- <path>` to check if the file exists upstream at all.
+For new files, state "NEW — fork only". For modified files, report the exact
+lines added/removed count.
+
+Step 5 — the specific code behind each confirmed defect. For each of these,
+report whether the exact code is OURS or UPSTREAM's, quoting the relevant diff
+hunk:
+
+(a) Finding F — the 502 masking. In clusterRequests.ts, the pattern:
+
+    1  let response = new Response(undefined, { status: 502, statusText:
+       'Unreachable' });
+    2  try { response = await fetch(...); } catch (err) { if (err.name ===
+       'AbortError') ... }
+
+Run `git log -p upstream/main -- frontend/src/lib/k8s/api/v1/clusterRequests.ts
+| grep -n -A5 -B5 "502"` and compare against our version. Is this pre-existing
+upstream behavior we inherited, or something our fork introduced? Quote evidence.
+
+(b) Finding E — withJitter and the jittered refetchInterval. Confirm
+resilience.ts is fork-only, and show the diff hunk in index.ts where
+refetchInterval: () => withJitter(...) was added.
+
+(c) Item 7 — refetchOnWindowFocus: 'always' on the polls, and
+refetchOnWindowFocus: false + staleTime: 3*60_000 in queryClient.ts. For each of
+these three settings separately, determine whether it's ours or upstream's. This
+directly affects Finding G — if the 3-minute staleTime is upstream's default,
+the cache-staleness behavior isn't a decision our team made.
+
+(d) Finding L — ReconnectingChip.tsx. Does this file exist? Run:
+
+    grep -rn "ReconnectingChip" frontend/src/ --include="*.tsx" --include="*.ts"
+
+Report every match. Is the component ever actually imported and rendered, or does
+it exist unused? Also confirm whether it's fork-only or upstream.
+
+Step 6 — check for upstream changes we haven't pulled:
+
+    git log --oneline GT_D_V1..upstream/main -- frontend/src/lib/k8s/ \
+        frontend/src/lib/queryClient.ts
+
+Report how many upstream commits touch our P0 files that we don't have. If
+upstream has already fixed something we're about to fix ourselves, that changes
+the approach entirely.
+
+Final summary table — for each of the 7 P0 files and each of the 4 confirmed
+defects, state plainly: OURS / UPSTREAM / MIXED, with the evidence line
+reference.
+
+------------------------------------------------------------------------------
+Why each step matters for your fix plan
+------------------------------------------------------------------------------
+Step 5(a) is the big one — if the 502 masking is upstream Headlamp's own code,
+then Finding F isn't your bug, it's an upstream bug. You'd fix it locally but
+should also report it upstream, and expect merge friction forever on that file.
+
+Step 5(c) directly reframes Finding G — if staleTime: 3min came from upstream,
+the "gate serves stale auth" behavior is inherited Headlamp design, not something
+your team chose. That changes whether you fix it or work around it.
+
+Step 6 could save you real work — if upstream already fixed any of this in a
+newer commit, pulling their fix is far better than writing your own.
+
+Run it and send me the output, then we'll start on Finding F with full context.
