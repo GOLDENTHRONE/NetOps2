@@ -1,0 +1,99 @@
+p26.txt — Upstream inquiry (clean final draft) for Headlamp maintainers
+
+Purpose: a ready-to-send message asking upstream (kubernetes-sigs/headlamp)
+whether two behaviours in unmodified upstream code are known/intentional or
+already fixed in a newer version — BEFORE we consider any local patch. Both
+were confirmed (see p25.txt) to live in upstream code we did NOT modify.
+
+Context we checked from: our fork diverged from upstream at 0.45.0-rc
+(merge-base commit 6d2b42cc). We last compared against upstream `main` around
+2026-09-18 and both behaviours below were still present then; please tell us if
+either has since changed.
+
+==============================================================================
+MESSAGE (copy-paste to a GitHub Discussion / issue)
+==============================================================================
+
+Title: Two upstream behaviours found during resilience testing — known /
+intentional / already fixed?
+
+Hi maintainers,
+
+We're running a fork (diverged from 0.45.0-rc, merge-base 6d2b42cc) and, while
+doing rigorous live-cluster verification of our own resilience features, we
+found two behaviours that trace back to unmodified upstream code. Before we
+consider any local patch we wanted to check: are either of these already known,
+discussed, or fixed in a newer upstream version? (We compared against upstream
+main as recently as ~2026-09-18 and both were still present then.)
+
+---
+
+1) Non-abort fetch errors are reported as a generic 502, masking the real cause
+
+In `frontend/src/lib/k8s/api/v1/clusterRequests.ts`, `clusterRequest`
+pre-initialises the response and only special-cases AbortError:
+
+    let response = new Response(undefined, { status: 502, statusText: 'Unreachable' });
+    try {
+      response = await fetch(url, requestData);
+    } catch (err) {
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          response = new Response(undefined, { status: 408, statusText: 'Request timed-out' });
+        }
+      }
+    }
+
+Only AbortError is handled explicitly. For any other fetch failure — CORS
+block, DNS failure, connection refused, a generic "Failed to fetch" TypeError —
+the caught error's `name`/`message` is discarded (not re-thrown), and the
+pre-initialised 502 with an empty body propagates instead. Downstream, the
+not-ok branch calls `response.json()` on that empty body, which produces a
+`SyntaxError: Unexpected end of input`; that error is caught and logged, so in
+practice we see it repeatedly in the console whenever a cluster is unreachable
+for a reason other than a clean timeout. The real network cause is lost in both
+the surfaced status (always 502) and the console noise.
+
+Is this a known/intentional simplification, or would a PR that distinguishes
+these error types — e.g. surfacing the real `err.name`/`err.message` instead of
+a blanket 502 — be welcome?
+
+---
+
+2) staleTime: 3 * 60_000 on the global QueryClient can serve a 3-minute-old
+   auth/permission result
+
+In `frontend/src/lib/queryClient.ts`:
+
+    export const queryClient = new QueryClient({
+      defaultOptions: { queries: { staleTime: 3 * 60_000, refetchOnWindowFocus: false } },
+    });
+
+Any query that neither overrides `staleTime` nor drives its own
+`refetchInterval` — including a one-shot auth/permission check performed when
+opening a cluster — can be served from cache for up to 3 minutes. (Queries that
+set their own `refetchInterval`, such as periodic cluster-status polls, are not
+affected by this and refetch on their own cadence; the concern is specifically
+the one-shot open-time check.) We verified live that re-opening a cluster within
+that window does not trigger a fresh network request — it reuses the previous
+result — so if a permission is revoked in that window, the UI would not detect
+it until the cache goes stale.
+
+Is this `staleTime` chosen deliberately as a global default for performance
+reasons, and is there an existing pattern in the codebase for overriding it on
+auth-sensitive queries specifically? We'd rather follow an established
+convention than invent our own if one already exists.
+
+Thanks very much for any pointers.
+
+==============================================================================
+NOTES (not part of the message)
+==============================================================================
+- Both snippets are quoted verbatim from upstream code; neither file is modified
+  in our fork (see p25.txt: clusterRequests.ts and queryClient.ts = UPSTREAM,
+  unchanged by us).
+- Strategy: report upstream rather than patch locally. Patching an unmodified
+  upstream file would create permanent merge friction on every future sync.
+- Before sending, optionally re-confirm the current upstream state and, if you
+  want, replace "~2026-09-18" with the exact upstream main SHA you compared
+  against at send time.
