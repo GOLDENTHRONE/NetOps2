@@ -133,6 +133,17 @@ export function withJitter(ms: number, pct: number = POLL_JITTER_PCT): number {
   return Math.round(ms - j + Math.random() * 2 * j);
 }
 
+export function withStableJitter(ms: number, key: string, pct: number = POLL_JITTER_PCT): number {
+  if (pct <= 0) return ms;
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  const frac = (hash >>> 0) / 4294967295;
+  const j = ms * pct;
+  return Math.round(ms - j + frac * 2 * j);
+}
+
 /**
  * Is this auth error a transient "blip" (timeout/5xx/network) as opposed to a
  * genuine auth failure (401/403)? Blips are eligible for keep-last-good/debounce;

@@ -20,7 +20,7 @@ import React, { useMemo } from 'react';
 import { ConfigState } from '../../redux/configSlice';
 import { useTypedSelector } from '../../redux/hooks';
 import { getCluster } from '../cluster';
-import { KEEP_LAST_GOOD, STATUS_FAIL_THRESHOLD, withJitter } from '../resilience';
+import { KEEP_LAST_GOOD, STATUS_FAIL_THRESHOLD, withStableJitter } from '../resilience';
 import { testAuth } from './api/v1/clusterApi';
 import { clusterRequest } from './api/v1/clusterRequests';
 import { ApiError } from './api/v2/ApiError';
@@ -465,7 +465,10 @@ export function useClustersVersion(clusters: Cluster[]) {
         },
         refetchInterval: () =>
           // P0: +/- jitter so many clusters don't poll on the same instant.
-          withJitter(versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0)),
+          withStableJitter(
+            versionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+            clusterName + ':version'
+          ),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false, // surface errors immediately rather than hammering unreachable clusters
@@ -580,7 +583,10 @@ export function useClustersOcpVersion(clusters: Cluster[]) {
           }
         },
         refetchInterval: () =>
-          withJitter(ocpVersionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0)),
+          withStableJitter(
+            ocpVersionRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+            clusterName + ':ocpVersion'
+          ),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false,
@@ -665,7 +671,10 @@ export function useClustersAuth(clusters: Cluster[]): { [clusterName: string]: A
           }
         },
         refetchInterval: () =>
-          withJitter(authRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0)),
+          withStableJitter(
+            authRefetchInterval(consecutiveFailuresRef.current[clusterName] ?? 0),
+            clusterName + ':auth'
+          ),
         refetchIntervalInBackground: false,
         refetchOnWindowFocus: 'always' as const,
         retry: false,

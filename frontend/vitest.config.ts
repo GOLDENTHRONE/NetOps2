@@ -32,7 +32,7 @@ export default mergeConfig(
         },
       ],
       fakeTimers: {
-        toFake: ['Date', 'setTimeout', 'clearTimeout'],
+        toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
       },
       coverage: {
         provider: 'istanbul',
