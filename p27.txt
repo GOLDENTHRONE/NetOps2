@@ -1,0 +1,48 @@
+p27.txt — Assessment of the 4 pre-send checks for the p26 draft
+
+Summary: the p26 draft is technically accurate (both code snippets verified
+against the actual source; the auth-query vs periodic-poll distinction is
+already clarified in it). The 4 pre-send checks are all sound. Notes below.
+
+------------------------------------------------------------------------------
+1. Duplicate check
+------------------------------------------------------------------------------
+Sound. Before posting, search existing items for "502" and "staleTime" so the
+same topic is not raised twice. Cheap and avoids repetition.
+
+------------------------------------------------------------------------------
+2. Exact SHA instead of the approximate date
+------------------------------------------------------------------------------
+Good idea — an exact commit reference reads as more verifiable than an
+approximate date. NOTE: this is outside what this agent will do. Per the
+standing rule, this agent does not fetch or touch the upstream source in any
+way (read-only at most, and not initiated here). If an exact hash is wanted,
+it must be obtained separately, then substituted for the "~2026-09-18"
+placeholder. p26.txt already carries that reminder.
+
+------------------------------------------------------------------------------
+3. Confirm any required internal approval first
+------------------------------------------------------------------------------
+Most important of the four. Any approval that is required before content leaves
+a private context must be obtained first. This is entirely a human decision and
+action; this agent takes no such action and only reads/writes local files in
+this branch when explicitly named.
+
+------------------------------------------------------------------------------
+4. Use a question/discussion format, not a bug report
+------------------------------------------------------------------------------
+Sound, and it matches the p26 framing, which is worded as "is this
+known/intentional?" rather than a defect claim. A question-style thread fits
+that intent better than a defect ticket.
+
+------------------------------------------------------------------------------
+Standing constraints honored
+------------------------------------------------------------------------------
+- These drafts are local text files in this branch only. Whether, where, and
+  when anything is posted or shared is a human decision and action, not this
+  agent's.
+- This agent does not modify the upstream source in any case (read-only at
+  most). All writes here go only to this branch's own added files, one named
+  file at a time.
+- p26 content is accurate: both quoted snippets were verified against the
+  actual source, and both live in files this fork did not modify (see p25.txt).
