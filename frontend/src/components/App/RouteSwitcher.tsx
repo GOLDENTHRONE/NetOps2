@@ -183,6 +183,7 @@ export function AuthRoute(props: AuthRouteProps) {
     queryKey: ['auth', cluster],
     queryFn: () => testAuth(cluster!),
     enabled: !!cluster && requiresAuth,
+    staleTime: 15_000,
     // P0: retry a transient open-check failure (jittered) instead of gating on
     // the first blip — but NEVER retry a genuine 401/403, which must surface
     // immediately. Configurable via REACT_APP_OPEN_GATE_RETRY.
