@@ -1,0 +1,86 @@
+p1-provenance.txt — P1 (Bucket B) ours-vs-upstream provenance result
+
+Method (read-only): the real upstream (github.com/kubernetes-sigs/headlamp) was
+added as a temporary read-only remote, fetched, compared with
+`git diff upstream/main...GT_D_V1` / `git show upstream/main:<path>`, then the
+remote was removed. Nothing was modified, committed, or pushed during the
+investigation, and upstream was never written to. All statements are from
+actual git output, not memory.
+
+Merge-base: upstream/main...GT_D_V1 = 6d2b42cc (0.45.0-rc, 2026-08-21). This
+matches the P0 B10 assumption, so the P0 provenance conclusions remain valid.
+
+Repo was NOT shallow at investigation time (already unshallowed earlier).
+
+==============================================================================
+1. PER-FILE CLASSIFICATION (8 Bucket B files, vs real upstream/main)
+==============================================================================
+| File                                              | Verdict                  |
+|---------------------------------------------------|--------------------------|
+| frontend/src/lib/resilience.ts                    | NEW (fork-only)          |
+| frontend/src/components/cluster/WatchFreshnessChip.tsx | NEW (fork-only)     |
+| frontend/src/lib/k8s/api/v2/webSocket.ts          | MODIFIED (ours) +155/-27 |
+| frontend/src/lib/k8s/api/v2/useKubeObjectList.ts  | MODIFIED (ours) +33/-3   |
+| frontend/src/lib/k8s/api/v2/KubeList.ts           | MODIFIED (ours) +13/-2   |
+| frontend/src/lib/k8s/api/v2/hooks.ts              | MODIFIED (ours) +12/-0   |
+| frontend/src/lib/k8s/api/v2/multiplexer.ts        | MODIFIED (ours) +11/-0 (comment-only) |
+| frontend/src/components/App/Layout.tsx            | MODIFIED (ours) +2/-0 (renders chip) |
+
+Test files:
+| frontend/src/lib/k8s/api/v2/webSocket.reconnect.test.tsx | NEW (fork-only)    |
+| frontend/src/lib/k8s/api/v2/KubeList.test.ts      | MODIFIED (ours) +43/-0 (BOOKMARK test added to an existing upstream test file) |
+
+==============================================================================
+2. PER-MECHANISM (a-g) — all OURS; none pre-existed upstream
+==============================================================================
+(a) B1 reconnect + exponential backoff (webSocket.ts) — OURS
+    Upstream webSocket.ts had NO reconnect logic at all (no reconnect /
+    scheduleReconnect / attachReconnect / WATCH_RECONNECT). We added it.
+(b) WATCH_RECONNECT / _BASE_MS / _CAP_MS / WATCH_FALLBACK_REFETCH_MS knobs — OURS
+    resilience.ts is fork-only; the call sites live in our webSocket.ts /
+    useKubeObjectList.ts diffs.
+(c) B2 watchFallbackRefetchInterval() + pagination guard (useKubeObjectList.ts) — OURS
+(d) B3 WatchFreshnessChip + useAnyWatchReconnecting + watchStates map +
+    useSyncExternalStore wiring — OURS
+    None of these exist in upstream webSocket.ts.
+(e) B4 BOOKMARK: watch-event union + applyUpdate BOOKMARK case (KubeList.ts) +
+    hooks.ts BOOKMARK guard — OURS
+    Upstream Headlamp does NOT handle BOOKMARK natively (no BOOKMARK in upstream
+    KubeList.ts or hooks.ts).
+(f) B5 ERROR-frame invalidateQueries (hooks.ts) — OURS
+    Upstream hooks.ts has no invalidateQueries on an ERROR frame.
+(g) Test files — webSocket.reconnect.test.tsx is NEW fork-only; KubeList.test.ts
+    is an existing upstream file we modified to add the BOOKMARK test (+43).
+
+==============================================================================
+3. UPSTREAM COMMITS WE DON'T HAVE (since merge-base)
+==============================================================================
+`git log GT_D_V1..upstream/main -- frontend/src/lib/k8s/api/v2/` = 0 commits.
+Upstream has NOT changed anything under api/v2/ since our merge-base — no
+upstream watch/reconnect improvement or BOOKMARK support to pull. multiplexer.ts
+specifically: no upstream commits either.
+
+==============================================================================
+4. MERGE-RISK ASSESSMENT (raw — no recommendation)
+==============================================================================
+Zero merge risk (NEW fork-only files):
+  - resilience.ts, WatchFreshnessChip.tsx, webSocket.reconnect.test.tsx
+
+Merge-conflict risk on every future upstream sync (MODIFIED upstream files):
+  - webSocket.ts (+155/-27) — LARGEST; highest conflict risk (substantial
+    reconnect + freshness addition inside an upstream file)
+  - useKubeObjectList.ts (+33/-3) — moderate
+  - KubeList.test.ts (+43/-0) — moderate (test additions)
+  - KubeList.ts (+13/-2), hooks.ts (+12/-0), multiplexer.ts (+11/-0, comment-only)
+    — small
+  - Layout.tsx (+2/-0) — trivial (one import + one render)
+
+==============================================================================
+5. HONESTY / CLEANUP CONFIRMATION
+==============================================================================
+- Upstream remote: added read-only -> fetched -> removed. `git remote -v` shows
+  only origin afterward.
+- `git status` clean; branch tip unchanged; nothing modified/committed/pushed
+  during the investigation. Upstream was never written to.
+- Result confirms p1.txt's Bucket B provenance (previously asserted, now proven):
+  every Bucket B mechanism is OURS; upstream had none of them.
