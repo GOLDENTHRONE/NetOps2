@@ -1,0 +1,337 @@
+=============================================================================
+p23.txt — P0: what it is, what was fixed, before vs after (FINAL, VERIFIED)
+=============================================================================
+Repo: NetOps2 (Headlamp fork) · Branch: GT_D_V1
+Fork diverged from upstream Headlamp 0.45.0-rc, merge-base commit 6d2b42cc.
+Scope of this doc: the "All Clusters" status + cluster-open (auth gate) flow.
+
+This is a REWRITE of the original p23.txt after 4+ days of rigorous live-cluster
+and simulator verification. Every claim below is backed by evidence gathered
+in that process — code traces, live browser captures (real cluster, real 401/403,
+real 502s), and offline simulator tests using the real QueryClient/QueryObserver
+with fake timers. Nothing here is theoretical.
+
+==============================================================================
+1. WHAT P0 IS
+==============================================================================
+Goal (one line): the cluster status must be TRUTHFUL and resilient — a single
+network blip must never show a false "Unavailable"/"Not reachable", while a
+REAL auth error (401/403) must surface immediately.
+
+P0 covers exactly two things:
+  (A) The All Clusters tab status (GET /version poll + per-cluster auth poll
+      via POST selfsubjectrulesreviews).
+  (B) The ONE-SHOT auth check that runs when you click to open a cluster, and
+      the screens it shows (ClusterAccessGate: checking / unreachable /
+      expired / forbidden).
+
+P0 does NOT cover (these are P1 — see Section 5):
+  - Auto-recovery of the auth state AFTER you are already inside a cluster
+    (confirmed: the inside-cluster check re-fires only on internal ROUTE
+    CHANGE, i.e. navigating between pages like Namespaces/Nodes/Pods within
+    the same cluster — each route change remounts the query component. It
+    does NOT poll periodically while sitting still on one page.)
+  - Live watch/WebSocket data freshness/reconnect.
+
+==============================================================================
+2. WHAT WAS FIXED IN P0 — before vs after (VERIFIED, not theoretical)
+==============================================================================
+Config knobs live in frontend/src/lib/resilience.ts and are env-overridable.
+
+| # | Area | BEFORE (old behaviour) | AFTER (P0 behaviour, VERIFIED) |
+|---|------|------------------------|----------------------|
+| 1 | Single blip on a healthy cluster | One failed poll flipped the row straight to "Unavailable" | keep-last-good: row stays reachable until 2 consecutive failures (STATUS_FAIL_THRESHOLD=2), then honestly shows Unavailable. VERIFIED live: 1 abort -> row stays Ready; 2 consecutive aborts -> row flips to Unavailable; next success -> recovers. |
+| 2 | Auth timeout | 5s client timeout — a slow-but-OK check was aborted into a false "not responding" | AUTH_TIMEOUT_MS=15s. VERIFIED live: a 12s-delayed response succeeds (cluster opens, no gate); a 20s-delayed response aborts at exactly ~15000ms and shows the unreachable gate. Code and live behavior matched exactly. |
+| 3 | Opening a cluster on a transient blip | First blip -> straight to the error/redirect | OPEN_GATE_RETRY=1 — one jittered retry (~1s) before gating; a 401/403 is NEVER retried. VERIFIED live: aborting the first open-check request produces exactly 2 total attempts, ~1014ms apart, then the cluster opens successfully. |
+| 4 | Real auth error (401/403) | Could be debounced/delayed; auth poll backed off to ~60s so status lagged | 401/403 surfaces immediately; both polls RESET consecutiveFailures to 0 on 401/403 so they stay at the 10s base. VERIFIED live via a real `oc logout`: response was a clean 403 in ~1s, and poll gaps stayed at ~10s afterward — the original "logout feels slow" theory was WRONG. See Section 4(a) below — fully investigated and closed as a non-issue. |
+| 5 | Cluster-open screen | Blank page / jarring redirect to a generic auth screen | ClusterAccessGate: a clear centered screen with the real state (checking / unreachable / expired / forbidden), correct actions, and "Technical details" (real HTTP code). VERIFIED live for the forbidden (403) state: exact kicker/title/body text transcribed and matched the code. |
+| 6 | Actions per state | Same generic path for every failure | expired(401) -> "Sign in again"; forbidden(403) -> Back only (NO retry button, permission won't self-change); unreachable -> "Retry now"; Back to All Clusters always. VERIFIED live: 403 gate showed only "Back to All Clusters", no Retry button, exactly as designed. |
+| 7 | Recovery after a tab was in the background | Waited for the next scheduled poll | refetchOnWindowFocus:'always' on the polls -> instant recheck when you return to the tab. VERIFIED live, twice independently: a poll fired 87ms and 124ms after visibility was restored from hidden, using a verified real state change (not just a dispatched event) confirmed via document.visibilityState before/after. |
+| 8 | Poll backoff curve + healthy cadence | Exponential, cap 6x = up to 60s between polls | Gentle linear 10 -> 10 -> 20 -> 30 (cap 3x = 30s); first failure stays at base 10s. VERIFIED via simulator (real QueryClient/QueryObserver, fake timers): counter incremented 0->7, interval climbed exactly 10000->20000->30000ms and held at the cap. VERIFIED live on genuinely-down clusters (minikube, docker-desktop, real 502s, 240s window): each cluster+query settled at its own stable interval near the 30s cap (25.5s-34.5s range, i.e. cap +/- jitter) — confirming both the cap AND the per-cluster jitter spread are working correctly together. See Section 4(c) for the full story of how this was verified. |
+| 9 | Many clusters polling together | All fired on the same instant (thundering herd) | POLL_JITTER_PCT=0.15 -> each poll spread +/-15%. VERIFIED via simulator: 5 mock clusters each resolved to a different, STABLE interval value. VERIFIED live: healthy-cluster gaps landed cleanly in the 8.5-11.5s band across a 180s capture, with zero missed ticks. |
+| 10 | Inside-cluster blip (had a prior success) | Blip threw up the gate | CORRECTED CLAIM — see Section 4(f). The originally-documented "keep-last-good with Reconnecting chip while sitting on one page" behavior does NOT exist and was never built. What DOES exist and IS verified: the inside-cluster auth check re-fires on every internal route change (not on a timer), and reuses a cached result for up to 15s (see item 4e/Finding G below) between route changes. This item is corrected below and the recurring-while-idle behavior is moved to P1. |
+
+Exact timing (from code AND live verification):
+  - Healthy poll: ~10s, +/-15% => 8.5s-11.5s (VERIFIED, see item 8/9 above)
+  - Backoff: 10s, 10s, 20s, 30s, 30s... (cap 30s), +/-15% (VERIFIED)
+  - Open-gate retry: 1 retry after ~1s (+/-15%); per-attempt timeout 15s (VERIFIED)
+  - 401/403: immediate, no retry, no backoff (VERIFIED)
+  - Inside-cluster auth check: fires once per internal route mount; result cached
+    15s (VERIFIED — see item 4e)
+
+==============================================================================
+3. HONEST STATUS — fully verified, not "code done + unit tested"
+==============================================================================
+The original version of this document claimed "code done + unit tested" as
+sufficient. It was not. Four real defects shipped despite passing unit tests,
+because the test suite's fake-timer config never faked `setInterval` — the
+exact mechanism React Query uses to schedule `refetchInterval`. No existing
+test could ever have observed real polling behavior. This was fixed (see
+Section 4d) and is the single most important lesson from this verification
+cycle.
+
+Verified (both code-level AND live-cluster, real browser, real API responses):
+  - Items 1-9 above: full live verification, evidence summarized in each row.
+  - Backoff curve, keep-last-good, jitter spread, AuthRoute gate states: all
+    confirmed via simulator (deterministic, fake-timer, real QueryClient) AND
+    live capture (real cluster, real 401/403/502 responses).
+  - The vitest fake-timer gap (Section 4d) is fixed; setInterval/clearInterval
+    are now faked, and a regression baseline is recorded (3426 total tests,
+    280 pre-existing failures unrelated to this work, confirmed unchanged
+    before/after every fix via git-stash comparison).
+
+Corrected from the original doc (see Section 4 for full stories):
+  - Item 4(a) "logout feels slow" — investigated and found to be a NON-ISSUE.
+  - Item 8 backoff — was masked by a real bug (Finding E, fixed) that made it
+    LOOK broken in live testing; the underlying logic was always correct.
+  - Item 10 — was never implemented as originally described; corrected and
+    moved to P1.
+  - A related caching issue (Finding G) was found and fixed: the inside-cluster
+    auth check inherited a 3-minute cache from the global QueryClient default,
+    meaning a revoked permission might not be detected for up to 3 minutes.
+    Fixed to a 15-second override on that specific query only.
+
+==============================================================================
+4. THE FINDINGS — full honest history
+==============================================================================
+
+--- 4(a). "Logout feels slow" — INVESTIGATED, CLOSED AS NON-ISSUE ---
+
+The original doc theorized this could happen if logout doesn't return a clean
+401/403 (e.g. a timeout instead), causing the poll to back off.
+
+VERIFIED via a real `oc logout` against the live cluster, single continuous
+browser script, listener instrumentation verified clean: the auth poll
+returned a clean 403 in ~300-1150ms, and consecutive poll gaps stayed at
+~10s afterward (no backoff). The theory was wrong, in the good direction —
+this was never actually broken. No fix needed. Closed.
+
+--- 4(b). Finding E: poll jitter caused unstable cadence (FIXED) ---
+
+Root cause: `withJitter()` in resilience.ts returned a fresh `Math.random()`
+value on EVERY call, and `refetchInterval` is a function React Query
+re-evaluates on every render. Each time the returned interval value changed,
+React Query tore down and restarted the poll timer (`clearInterval` +
+`setInterval`). Live captures showed gaps up to 65s on a HEALTHY, all-success
+cluster — impossible under the documented cap, and initially misdiagnosed as
+several different, unrelated bugs (see Finding H below) before the true
+mechanism was isolated.
+
+Proven via simulator: with fake timers and `setInterval`/`clearInterval`
+wrapped, 183 timers were created and 183 cleared, but ZERO ever fired to
+completion — direct proof of the reset-loop.
+
+FIX: added `withStableJitter(ms, key)` alongside the original `withJitter`
+(unchanged, still used correctly for the open-gate retry delay, which
+genuinely needs fresh randomness per attempt per standard "Full Jitter"
+retry practice). The new function derives a deterministic offset from a
+string hash of `key` (cluster name + query type), so the same cluster+query
+always resolves to the same interval — stable across renders, but still
+ different across clusters (preserving item 9's anti-thundering-herd spread).
+
+VERIFIED: simulator gaps became stable (18/18 in-band); 5 mock clusters kept
+ distinct offsets; the retry-delay path was confirmed to still use genuine
+ randomness (10 consecutive calls, 10 different values); live 180s capture on
+ the real healthy cluster showed all gaps in the 8.5-11.5s band; full
+regression suite showed zero new failures (280/3426, unchanged via git-stash
+comparison against the pre-fix state).
+
+--- 4(c). Finding H (initially suspected) -> RETRACTED once Finding E was fixed ---
+
+Before Finding E's fix, permanently-down clusters (minikube, docker-desktop,
+always returning real 502s) were observed polling at a flat ~10s forever,
+never backing off toward the documented 20s/30s cap — appearing to contradict
+item 8.
+
+After Finding E was fixed, the SAME live test was re-run: each cluster+query
+combination settled at its own STABLE interval near the 30s cap (25.5s-34.5s,
+i.e. exactly cap +/- 15% jitter). Directly inspecting the live
+`consecutiveFailures` counter confirmed values of 10-11 for these clusters —
+well past the point where `Math.min(base * failures, base * 3)` caps at
+30000ms regardless of the exact counter value. The backoff logic was correct
+the entire time; Finding E's timer-reset bug had been preventing it from ever
+being observed correctly. Finding H is retracted — no separate defect existed.
+
+--- 4(d). The vitest fake-timer gap (FIXED, test-infra only) ---
+
+React Query schedules `refetchInterval` via `setInterval`. The project's
+vitest config only faked `Date`/`setTimeout`/`clearTimeout` — `setInterval`
+was never faked. This means NO test in the suite could ever have exercised
+real polling behavior, at any point before this investigation. This is why
+"unit tested" did not mean "polling verified" for this codebase.
+
+FIX: added `setInterval`/`clearInterval` to the global `fakeTimers.toFake`
+list in vitest config. Verified this did not silently break anything: full
+suite re-run showed identical totals before/after — meaning no existing test
+was exercising fake interval timing at all, confirming the coverage gap rather
+than fixing a hidden failure.
+
+--- 4(e). Finding G: 3-minute stale cache on the inside-cluster auth check (FIXED) ---
+
+The global QueryClient default (`queryClient.ts`, upstream/unmodified,
+`staleTime: 3 * 60_000`) is inherited by the one-shot AuthRoute query that
+runs when opening a cluster. VERIFIED live (logged-in session, real 201
+responses): navigating between 3 different internal routes (Namespaces,
+Nodes, Advanced Search) within a 3-minute window reused the cached auth
+result with ZERO new requests each time. If a permission were revoked in
+that window, the app would not detect it until the cache expired — up to
+3 minutes later.
+
+Also discovered while investigating this: the inside-cluster auth check is
+tied to the ROUTE (its query is keyed/remounted on `${routePath}-${cluster}`),
+not to a timer — so it DOES refire on every internal navigation, just
+subject to the 3-minute cache. This corrects the original, incomplete
+understanding of item 10 (see Section 4(f)).
+
+FIX: added `staleTime: 15_000` to ONLY this one query, in RouteSwitcher.tsx
+(a fork-modified file — zero new merge risk; the global 3-minute default in
+queryClient.ts, an upstream file, was left untouched).
+
+Why 15s and not 0: live testing showed a user can hit 3 different internal
+routes within ~4 seconds. staleTime:0 would fire a new request on EVERY
+route change, multiplied across all concurrent users — real backend load
+risk. 15s absorbs rapid navigation (proven: a 3-click burst within ~3 seconds
+produced only 1 new request, not 3) while cutting the detection gap from
+3 minutes to ~15-20 seconds (proven: waiting 20s+ before the next navigation
+reliably triggered a fresh request).
+
+VERIFIED: spaced navigation (20/25/30s apart) each triggered a fresh request;
+rapid burst (3 clicks in ~3s) produced only 1 request; 20s wait produced a
+fresh request; full regression suite unchanged (280/3426, same pre-existing
+failures); scope check confirmed only this one query was affected — the
+ global default and all other queries (including the All Clusters polls)
+remained on their original settings.
+
+--- 4(f). Finding L / Item 10 correction ---
+
+Original item 10 claimed: while sitting inside a cluster, a network blip
+would be absorbed by keep-last-good logic and shown as a "Reconnecting..."
+chip, escalating to the gate only after sustained failure — mirroring the
+All Clusters page's behavior.
+
+VERIFIED this does not exist: sitting still on ONE internal page for 60+
+seconds produces exactly ONE auth request (at mount) and zero repeats — there
+is no recurring poll to ever "blip."
+
+Further verified: the auth check DOES refire, but only on internal ROUTE
+CHANGE (navigating to a different page within the same cluster), because the
+component holding the query is keyed on the route path and remounts on
+navigation. This is different from a timer-based recurring check.
+
+This corrects the record but is not a P0 defect — this document's own
+Section 1 already excludes "auto-recovery of the auth state AFTER you are
+already inside a cluster" from P0 scope. Item 10 as originally written
+contradicted that stated scope. Moved to P1 (Section 5).
+
+==============================================================================
+5. P1 BACKLOG (explicitly out of P0 scope, per Section 1)
+==============================================================================
+
+P1-1: Inside-cluster periodic auth auto-recovery + ReconnectingChip activation
+  - Add a genuine recurring auth check while sitting on ONE page inside a
+    cluster (not just on route change), using the already-fixed
+    withStableJitter(interval, clusterName + ':insideAuth') to avoid
+    reintroducing Finding E's instability.
+  - Reuse STATUS_FAIL_THRESHOLD/KEEP_LAST_GOOD from resilience.ts (already
+    proven correct for the All Clusters view).
+  - Wire the blip state to the already-existing, already-imported
+    ReconnectingChip.tsx.
+  - On sustained failure, escalate to the same ClusterAccessGate states
+    (already built and verified).
+  - Open question to resolve before implementation: same ~10s/30s-cap cadence
+    as All Clusters, or a different interval appropriate for "actively working
+    inside a cluster"?
+
+P1-2: Live watch/WebSocket data freshness + reconnect
+  - resilience.ts already has WATCH_RECONNECT, WATCH_RECONNECT_BASE_MS,
+    WATCH_RECONNECT_CAP_MS, WATCH_FALLBACK_REFETCH_MS knobs defined for this,
+    unused by P0's scope. Implementation not started.
+
+==============================================================================
+6. CODE PROVENANCE (ours vs upstream — decides safe-to-patch vs merge-risk)
+==============================================================================
+Fork diverged from upstream Headlamp 0.45.0-rc, merge-base commit 6d2b42cc.
+
+SAFE — fork-only files, zero merge risk:
+  - frontend/src/lib/resilience.ts          (all P0 knobs; Finding E's fix)
+  - frontend/src/components/cluster/ClusterAccessGate.tsx
+  - frontend/src/components/cluster/ReconnectingChip.tsx (exists, unused — P1)
+
+MERGE-RISK — we modified these upstream files (expect conflicts on every
+upstream sync):
+  - frontend/src/lib/k8s/index.ts           (+352/-7 — backoff, keep-last-good,
+                                              jittered interval, auth-poll
+                                              'always'; item 7's version-poll
+                                              'always' setting is UPSTREAM's own
+                                              default, confirmed via B10 diff)
+  - frontend/src/components/App/RouteSwitcher.tsx (+104/-7 originally, +1 for
+                                              Finding G's staleTime fix —
+                                              open-gate retry, keep-last-good
+                                              chip, inside-cluster auth query)
+
+NEVER TOUCHED — genuinely upstream Headlamp behavior, not our bugs:
+  - frontend/src/lib/queryClient.ts (staleTime: 3min global default —
+    Finding G's ROOT CAUSE lives here, but we did not modify this file;
+    we overrode the one affected query locally instead)
+  - frontend/src/lib/k8s/api/v1/clusterRequests.ts (Finding F — the 502
+    masking behavior described below lives here, unmodified by us)
+
+==============================================================================
+7. FINDING F — 502 MASKING (UPSTREAM, NOT PATCHED, INQUIRY SENT)
+==============================================================================
+In clusterRequests.ts, `clusterRequest` pre-initializes the response to a
+generic 502 and only special-cases AbortError in its catch block:
+
+    let response = new Response(undefined, { status: 502, statusText: 'Unreachable' });
+    try { response = await fetch(url, requestData); }
+    catch (err) {
+      if (err.name === 'AbortError') { response = new Response(undefined, { status: 408, ... }); }
+    }
+
+Any OTHER fetch failure (CORS block, DNS failure, connection refused) is
+silently reported as this generic 502 with an empty body, which downstream
+code then fails to parse as JSON (`SyntaxError: Unexpected end of input`,
+observed repeatedly in live console captures whenever a cluster is
+unreachable for a reason other than a clean timeout).
+
+Confirmed this does NOT corrupt P0's decision logic: both a real 502 and a
+masked-CORS-502 fall into the same "not 401/403 -> increment failures"
+bucket, so backoff/keep-last-good behavior is unaffected. This is a
+diagnostic/observability issue, not a functional P0 defect.
+
+Decision: do not patch locally (upstream file, would create permanent merge
+friction). An inquiry was sent to upstream maintainers asking whether this
+is known/intentional and whether a PR distinguishing error types would be
+welcome. Awaiting response. If upstream confirms it's unaddressed and
+welcomes a fix, the minimal patch is: preserve `err.name`/`err.message` in
+the statusText instead of discarding it, without changing the response code
+contract (still 502, just with a more informative reason).
+
+==============================================================================
+8. RETRACTED FINDINGS (test artifacts, not product bugs — for the record)
+==============================================================================
+- Finding J ("gate auto-navigates unprompted"): misread a stale
+  `document.title` that had not updated since before the test started; no
+  actual hash or title change occurred during the observation window.
+- Finding K ("polling stops forever after a threshold breach"): caused by an
+  orphaned Playwright route handler surviving across a tool-call boundary,
+  hanging all subsequent requests indefinitely — a test-harness artifact, not
+  application behavior. Confirmed via a clean single-script re-test with the
+  route explicitly torn down before observation began.
+
+==============================================================================
+9. TEST METHODOLOGY NOTES (for whoever verifies this next)
+==============================================================================
+- Fresh browser tab for every test; never `location.reload()` (causes request
+  races that look identical to real bugs).
+- Verify listener/instrumentation counts (via before/after delta where an
+  absolute baseline isn't achievable) before trusting any capture.
+- Cross-check captured records against console output; a mismatch invalidates
+  the run.
+- Only `document.visibilityState` matters for TanStack Query's focus manager;
+  `document.hasFocus()` is not checked by the library and is not a valid gate.
+- Prefer offline simulators (real QueryClient/QueryObserver + fake timers)
+  over live browser automation for anything timing-related — simulators
+  proved far more reliable throughout this investigation than repeated
+  browser-automation attempts, which produced two fully retracted findings
+  (J, K) due to tooling artifacts alone.
