@@ -1,0 +1,136 @@
+p1.txt — P1: full scope, in detail (grounded in actual code)
+
+All statements below are read from the actual source in this branch, not memory.
+
+==============================================================================
+1. WHAT P1 IS
+==============================================================================
+Goal (one line): once you are INSIDE a cluster, everything must stay
+trustworthy — (A) the auth/permission state must update on its own (login,
+logout, permission change), and (B) the live resource data (pods, logs,
+deployments...) streamed over WebSocket must stay fresh; a dropped or silently
+dead socket must not leave a stale view.
+
+Boundary (how P0 / P1 / P2 split):
+  - P0 = "can I reach / enter the cluster": All Clusters status + the ONE-SHOT
+    auth check performed when opening a cluster + its gate screens.
+  - P1 = "everything AFTER I'm inside": auth-state auto-recovery + live
+    watch/WebSocket data trustworthiness.
+  - P2 = (not scoped yet).
+
+P1 has two buckets: A (auth-state recovery) and B (live watch data).
+
+==============================================================================
+2. BUCKET A — auth-state auto-recovery after entry  [STATUS: NOT BUILT]
+==============================================================================
+The problem: the inside-cluster auth check is the react-query one-shot
+`['auth', cluster]` in RouteSwitcher.tsx (AuthRoute). It has NO refetchInterval
+and does NOT override refetchOnWindowFocus (global default is false). So once
+you are inside, it only re-checks on navigation / component remount / manual
+refetch — never on a timer or on focus.
+
+Consequences (all currently unhandled on their own):
+  A1. Inside, session expires (401) -> the gate does not appear by itself;
+      only appears when you navigate to another page.
+  A2. Gate showing (expired), you sign in again -> the gate does not clear by
+      itself; you must navigate.
+  A3. Permission revoked (403) mid-session -> not reflected until navigation.
+  A4. A transient blip shows the "Reconnecting..." chip -> when the cluster
+      recovers, the chip does not clear by itself.
+
+Root cause (A5): the one-shot query has no recovery mechanism at all.
+
+Proposed direction (NOT yet implemented — needs design sign-off first):
+  - Prefer event-driven recovery over a wasteful poll:
+      * focus-recheck (re-run the auth check when the tab/window regains focus)
+        — instant and free; this is what the All Clusters polls already use.
+      * online-event recheck (re-run when the browser fires 'online' after a
+        network drop).
+  - Only if events are insufficient, add a LOW-frequency, auth-sensitive poll
+    (short interval, but mindful that a per-page auth poll adds load).
+This is the main open build item for P1.
+
+==============================================================================
+3. BUCKET B — live watch / WebSocket data trustworthiness  [STATUS: CODE PRESENT + WIRED]
+==============================================================================
+Config knobs in frontend/src/lib/resilience.ts (env-overridable):
+  - WATCH_RECONNECT              (default true)
+  - WATCH_RECONNECT_BASE_MS      (default 1000 = 1s)
+  - WATCH_RECONNECT_CAP_MS       (default 30000 = 30s)
+  - WATCH_FALLBACK_REFETCH_MS    (default 90000 = 90s; 0 disables)
+
+B1. Watch socket auto-reconnect  [wired]
+    frontend/src/lib/k8s/api/v2/webSocket.ts: when a live watch connection
+    drops and there are still listeners, it redials with EXPONENTIAL backoff +
+    jitter, capped:
+        base = min(WATCH_RECONNECT_BASE_MS * 2**attempt, WATCH_RECONNECT_CAP_MS)
+    Guarded by WATCH_RECONNECT and by "only reconnect if listeners remain".
+    (webSocket.ts lines ~277, ~284.)
+
+B2. Safety-net fallback refetch  [wired]
+    frontend/src/lib/k8s/api/v2/useKubeObjectList.ts (~line 737): for a watched
+    list, when WATCH_FALLBACK_REFETCH_MS > 0, it sets a low-frequency
+    refetchInterval via watchFallbackRefetchInterval(). This catches a socket
+    that died silently (no drop event). It is DISABLED for paginated lists
+    (a periodic refetch there would reset the user's loaded pages) — the helper
+    returns false when the list has a `continue` token.
+
+B3. Freshness indicator — WatchFreshnessChip  [wired + rendered]
+    frontend/src/components/cluster/WatchFreshnessChip.tsx, imported and
+    rendered in frontend/src/components/App/Layout.tsx (~line 334). Shows the
+    user whether the live view is fresh or stale/reconnecting (pinned so it
+    doesn't collide with the P0 open-gate ReconnectingChip).
+
+B4. BOOKMARK handling  [wired]
+    frontend/src/lib/k8s/api/v2/KubeList.ts: the watch event union includes
+    'BOOKMARK'; a BOOKMARK carries only an up-to-date resourceVersion, no item
+    change, so it advances the resourceVersion WITHOUT changing items or
+    logging noise. hooks.ts also guards setQueryData against BOOKMARK frames
+    (a BOOKMARK is not a watched-object update).
+
+B5. Watch ERROR frame handling  [wired]
+    hooks.ts: an ERROR watch frame triggers invalidateQueries (re-sync) rather
+    than corrupting the cached list.
+
+Tests present: webSocket.reconnect.test.tsx (reconnect + freshness),
+KubeList.test.ts (BOOKMARK advances RV without item change).
+
+Note: the legacy watch path is the active one (the multiplexer is OFF by
+default), and it is covered by the above.
+
+==============================================================================
+4. HONEST STATUS — built / verified
+==============================================================================
+| Item                                   | Built?        | Verified?                         |
+|----------------------------------------|---------------|-----------------------------------|
+| A. Inside auth auto-recovery           | NO (design open) | n/a                            |
+| B1 watch auto-reconnect (backoff)      | YES (wired)   | unit-tested; live E2E pending     |
+| B2 safety-net fallback refetch (90s)   | YES (wired)   | unit-tested; live E2E pending     |
+| B3 WatchFreshnessChip                  | YES (rendered)| unit-tested; live E2E pending     |
+| B4 BOOKMARK handling                    | YES (wired)   | unit-tested                       |
+| B5 ERROR-frame invalidate               | YES (wired)   | covered by tests                  |
+
+"Live E2E pending" = needs a real cluster in a browser (this code environment
+has no cluster); the P1 counterpart of the p22 live plan is not written yet.
+
+==============================================================================
+5. PROVENANCE / MERGE-RISK (per p25)
+==============================================================================
+- NEW fork-only (safe): resilience.ts (P1 knobs live here alongside P0),
+  WatchFreshnessChip.tsx.
+- MODIFIED upstream files (merge-risk on future upstream sync): webSocket.ts,
+  useKubeObjectList.ts, KubeList.ts, hooks.ts, multiplexer.ts.
+  These are Bucket B's home; expect conflicts when syncing upstream and keep
+  the diffs minimal/surgical.
+
+==============================================================================
+6. WHAT'S NEXT FOR P1
+==============================================================================
+1. Close P0 first (live verification per p22 + the login/logout root-cause).
+2. Bucket A: design the event-driven auth recovery (focus + online, poll only
+   if needed), get sign-off, then implement (plan-first; no code without
+   explicit go-ahead).
+3. Bucket B: write a live E2E verification plan (the P1 analogue of p22):
+   drop the socket, kill it silently, force an ERROR frame, watch reconnect
+   backoff + freshness chip + fallback refetch behave correctly on a real
+   cluster.
