@@ -18,11 +18,11 @@
 
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { afterEach, test, vi } from 'vitest';
+import { POLL_JITTER_PCT, withStableJitter } from './resilience';
+import { createRouteURL } from './router/createRouteURL';
 import { versionRefetchInterval } from './k8s';
 import { KubeObjectClass } from './k8s/KubeObject';
 import Namespace from './k8s/namespace';
-import { POLL_JITTER_PCT, withStableJitter } from './resilience';
-import { createRouteURL } from './router/createRouteURL';
 
 void createRouteURL;
 void KubeObjectClass;
