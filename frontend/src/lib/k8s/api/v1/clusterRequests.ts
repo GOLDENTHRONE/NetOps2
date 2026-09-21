@@ -183,6 +183,11 @@ export async function clusterRequest(
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
         response = new Response(undefined, { status: 408, statusText: 'Request timed-out' });
+      } else {
+        response = new Response(undefined, {
+          status: 502,
+          statusText: `Unreachable: ${err.name} - ${err.message}`,
+        });
       }
     }
   } finally {
@@ -228,7 +233,9 @@ export async function clusterRequest(
         url,
         { err },
         'with request data:',
-        requestData
+        requestData,
+        'message:',
+        message
       );
     }
 
