@@ -1,6 +1,6 @@
-=============================================================================
+==============================================================================
 p23.txt — P0: what it is, what was fixed, before vs after (FINAL, VERIFIED)
-=============================================================================
+==============================================================================
 Repo: NetOps2 (Headlamp fork) · Branch: GT_D_V1
 Fork diverged from upstream Headlamp 0.45.0-rc, merge-base commit 6d2b42cc.
 Scope of this doc: the "All Clusters" status + cluster-open (auth gate) flow.
@@ -44,7 +44,7 @@ Config knobs live in frontend/src/lib/resilience.ts and are env-overridable.
 | 2 | Auth timeout | 5s client timeout — a slow-but-OK check was aborted into a false "not responding" | AUTH_TIMEOUT_MS=15s. VERIFIED live: a 12s-delayed response succeeds (cluster opens, no gate); a 20s-delayed response aborts at exactly ~15000ms and shows the unreachable gate. Code and live behavior matched exactly. |
 | 3 | Opening a cluster on a transient blip | First blip -> straight to the error/redirect | OPEN_GATE_RETRY=1 — one jittered retry (~1s) before gating; a 401/403 is NEVER retried. VERIFIED live: aborting the first open-check request produces exactly 2 total attempts, ~1014ms apart, then the cluster opens successfully. |
 | 4 | Real auth error (401/403) | Could be debounced/delayed; auth poll backed off to ~60s so status lagged | 401/403 surfaces immediately; both polls RESET consecutiveFailures to 0 on 401/403 so they stay at the 10s base. VERIFIED live via a real `oc logout`: response was a clean 403 in ~1s, and poll gaps stayed at ~10s afterward — the original "logout feels slow" theory was WRONG. See Section 4(a) below — fully investigated and closed as a non-issue. |
-| 5 | Cluster-open screen | Blank page / jarring redirect to a generic auth screen | ClusterAccessGate: a clear centered screen with the real state (checking / unreachable / expired / forbidden), correct actions, and "Technical details" (real HTTP code). VERIFIED live for the forbidden (403) state: exact kicker/title/body text transcribed and matched the code. |
+| 5 | Cluster-open screen | Blank page / jarring redirect to a generic auth screen | ClusterAccessGate: a clear centered screen with the real state (checking / unreachable / expired / forbidden), correct actions, and "Technical details" (real HTTP code, and — after Finding F was fixed — the real underlying error reason too). VERIFIED live for the forbidden (403) state: exact kicker/title/body text transcribed and matched the code. |
 | 6 | Actions per state | Same generic path for every failure | expired(401) -> "Sign in again"; forbidden(403) -> Back only (NO retry button, permission won't self-change); unreachable -> "Retry now"; Back to All Clusters always. VERIFIED live: 403 gate showed only "Back to All Clusters", no Retry button, exactly as designed. |
 | 7 | Recovery after a tab was in the background | Waited for the next scheduled poll | refetchOnWindowFocus:'always' on the polls -> instant recheck when you return to the tab. VERIFIED live, twice independently: a poll fired 87ms and 124ms after visibility was restored from hidden, using a verified real state change (not just a dispatched event) confirmed via document.visibilityState before/after. |
 | 8 | Poll backoff curve + healthy cadence | Exponential, cap 6x = up to 60s between polls | Gentle linear 10 -> 10 -> 20 -> 30 (cap 3x = 30s); first failure stays at base 10s. VERIFIED via simulator (real QueryClient/QueryObserver, fake timers): counter incremented 0->7, interval climbed exactly 10000->20000->30000ms and held at the cap. VERIFIED live on genuinely-down clusters (minikube, docker-desktop, real 502s, 240s window): each cluster+query settled at its own stable interval near the 30s cap (25.5s-34.5s range, i.e. cap +/- jitter) — confirming both the cap AND the per-cluster jitter spread are working correctly together. See Section 4(c) for the full story of how this was verified. |
@@ -90,6 +90,10 @@ Corrected from the original doc (see Section 4 for full stories):
     auth check inherited a 3-minute cache from the global QueryClient default,
     meaning a revoked permission might not be detected for up to 3 minutes.
     Fixed to a 15-second override on that specific query only.
+  - A diagnostic/observability issue (Finding F) was found and partially fixed:
+    real fetch errors were being masked as a generic 502 with no visible cause.
+    See Section 7 for the full two-part breakdown of what was fixed and what
+    remains (moved to P1-3).
 
 ==============================================================================
 4. THE FINDINGS — full honest history
@@ -127,12 +131,12 @@ genuinely needs fresh randomness per attempt per standard "Full Jitter"
 retry practice). The new function derives a deterministic offset from a
 string hash of `key` (cluster name + query type), so the same cluster+query
 always resolves to the same interval — stable across renders, but still
- different across clusters (preserving item 9's anti-thundering-herd spread).
+different across clusters (preserving item 9's anti-thundering-herd spread).
 
 VERIFIED: simulator gaps became stable (18/18 in-band); 5 mock clusters kept
- distinct offsets; the retry-delay path was confirmed to still use genuine
- randomness (10 consecutive calls, 10 different values); live 180s capture on
- the real healthy cluster showed all gaps in the 8.5-11.5s band; full
+distinct offsets; the retry-delay path was confirmed to still use genuine
+randomness (10 consecutive calls, 10 different values); live 180s capture on
+the real healthy cluster showed all gaps in the 8.5-11.5s band; full
 regression suite showed zero new failures (280/3426, unchanged via git-stash
 comparison against the pre-fix state).
 
@@ -163,8 +167,8 @@ real polling behavior, at any point before this investigation. This is why
 FIX: added `setInterval`/`clearInterval` to the global `fakeTimers.toFake`
 list in vitest config. Verified this did not silently break anything: full
 suite re-run showed identical totals before/after — meaning no existing test
-was exercising fake interval timing at all, confirming the coverage gap rather
-than fixing a hidden failure.
+was exercising fake interval timing at all, confirming the coverage gap
+rather than fixing a hidden failure.
 
 --- 4(e). Finding G: 3-minute stale cache on the inside-cluster auth check (FIXED) ---
 
@@ -199,7 +203,7 @@ VERIFIED: spaced navigation (20/25/30s apart) each triggered a fresh request;
 rapid burst (3 clicks in ~3s) produced only 1 request; 20s wait produced a
 fresh request; full regression suite unchanged (280/3426, same pre-existing
 failures); scope check confirmed only this one query was affected — the
- global default and all other queries (including the All Clusters polls)
+global default and all other queries (including the All Clusters polls)
 remained on their original settings.
 
 --- 4(f). Finding L / Item 10 correction ---
@@ -247,6 +251,16 @@ P1-2: Live watch/WebSocket data freshness + reconnect
     WATCH_RECONNECT_CAP_MS, WATCH_FALLBACK_REFETCH_MS knobs defined for this,
     unused by P0's scope. Implementation not started.
 
+P1-3: V2 API path (fetch.ts) error-message enrichment
+  - Extend the same statusText-preservation pattern from Finding F's V1 fix
+    to the V2 API path (frontend/src/lib/k8s/api/v2/fetch.ts), OR formally
+    decide V2 stays generic and document why. See Section 7 for the full
+    detail on why V2 currently cannot benefit from the V1 fix.
+  - Blocked on: upstream response to the inquiry covering both parts of
+    Finding F (see Section 7). V2 has significantly more callers than V1's
+    single clusterRequests path, so this needs its own scoped decision
+    before touching it, to avoid a large regression surface.
+
 ==============================================================================
 6. CODE PROVENANCE (ours vs upstream — decides safe-to-patch vs merge-risk)
 ==============================================================================
@@ -268,44 +282,104 @@ upstream sync):
                                               Finding G's staleTime fix —
                                               open-gate retry, keep-last-good
                                               chip, inside-cluster auth query)
+  - frontend/src/lib/k8s/api/v1/clusterRequests.ts (small, scoped patch for
+                                              Finding F Part 1 and Part 2 —
+                                              see Section 7 for full detail)
 
 NEVER TOUCHED — genuinely upstream Headlamp behavior, not our bugs:
   - frontend/src/lib/queryClient.ts (staleTime: 3min global default —
     Finding G's ROOT CAUSE lives here, but we did not modify this file;
     we overrode the one affected query locally instead)
-  - frontend/src/lib/k8s/api/v1/clusterRequests.ts (Finding F — the 502
-    masking behavior described below lives here, unmodified by us)
+  - frontend/src/lib/k8s/api/v2/fetch.ts (V2 API path — never reads
+    response.statusText at all; see Finding F Part 3 / P1-3)
 
 ==============================================================================
-7. FINDING F — 502 MASKING (UPSTREAM, NOT PATCHED, INQUIRY SENT)
+7. FINDING F — 502 MASKING (PARTIALLY FIXED — full two-part breakdown)
 ==============================================================================
 In clusterRequests.ts, `clusterRequest` pre-initializes the response to a
-generic 502 and only special-cases AbortError in its catch block:
-
-    let response = new Response(undefined, { status: 502, statusText: 'Unreachable' });
-    try { response = await fetch(url, requestData); }
-    catch (err) {
-      if (err.name === 'AbortError') { response = new Response(undefined, { status: 408, ... }); }
-    }
-
-Any OTHER fetch failure (CORS block, DNS failure, connection refused) is
-silently reported as this generic 502 with an empty body, which downstream
-code then fails to parse as JSON (`SyntaxError: Unexpected end of input`,
-observed repeatedly in live console captures whenever a cluster is
-unreachable for a reason other than a clean timeout).
+generic 502 and only special-cased AbortError in its catch block, discarding
+any other real error name/message (CORS block, DNS failure, connection
+refused). Downstream code then fails to parse the empty 502 body as JSON,
+producing `SyntaxError: Unexpected end of input`, observed repeatedly in live
+console captures.
 
 Confirmed this does NOT corrupt P0's decision logic: both a real 502 and a
 masked-CORS-502 fall into the same "not 401/403 -> increment failures"
-bucket, so backoff/keep-last-good behavior is unaffected. This is a
-diagnostic/observability issue, not a functional P0 defect.
+bucket, so backoff/keep-last-good behavior was never affected. This was
+always a diagnostic/observability issue, not a functional P0 defect.
 
-Decision: do not patch locally (upstream file, would create permanent merge
-friction). An inquiry was sent to upstream maintainers asking whether this
-is known/intentional and whether a PR distinguishing error types would be
-welcome. Awaiting response. If upstream confirms it's unaddressed and
-welcomes a fix, the minimal patch is: preserve `err.name`/`err.message` in
-the statusText instead of discarding it, without changing the response code
-contract (still 502, just with a more informative reason).
+--- F Part 1 (FIXED): statusText now preserves the real cause ---
+
+clusterRequest's catch block was updated:
+
+    let response = new Response(undefined, { status: 502, statusText: 'Unreachable' });
+    try {
+      response = await fetch(url, requestData);
+    } catch (err) {
+      if (err instanceof Error) {
+        if (err.name === 'AbortError') {
+          response = new Response(undefined, { status: 408, statusText: 'Request timed-out' });
+        } else {
+          response = new Response(undefined, {
+            status: 502,
+            statusText: `Unreachable: ${err.name} - ${err.message}`,
+          });
+        }
+      }
+    }
+
+For any non-abort error, the 502 response's statusText now reads
+`Unreachable: {err.name} - {err.message}` instead of the bare word
+"Unreachable". Status code contract unchanged (502 for non-abort, 408 for
+AbortError). VERIFIED live: forced a genuine ERR_CONNECTION_REFUSED scenario,
+confirmed statusText now carries "Unreachable: TypeError - Failed to fetch".
+Regression suite unchanged (280/3426 pre-existing failures, nothing new
+broken).
+
+--- F Part 2 (FIXED): V1's parse-error console.error now prints the detail ---
+
+The constructed `message` variable (carrying the new statusText detail) was
+being built but never passed to the parse-error `console.error` call, so it
+never actually reached the developer console despite Part 1's fix. Added
+`message` as an argument to that console.error call. VERIFIED live: console
+now shows "Unreachable: TypeError - Failed to fetch" instead of just the
+generic parse error text. Regression suite unchanged.
+
+--- Technical Details UI (no fix needed, verified working) ---
+
+ClusterAccessGate's "Technical details" expandable section already read
+`error.message` before this investigation began — the code was already
+there, just never had rich data to display. VERIFIED live: after Parts 1 and
+2's fixes, the expanded Technical Details now shows both "HTTP code: 502"
+AND "Unreachable: TypeError - Failed to fetch" together, confirmed via
+accessibility snapshot. No code change was needed in ClusterAccessGate.tsx
+for this — the existing component simply started receiving richer data once
+Part 1 was fixed.
+
+--- F Part 3 (NOT FIXED, tracked as P1-3): V2 API path ignores statusText ---
+
+A separate, independent API-calling system
+(frontend/src/lib/k8s/api/v2/fetch.ts) constructs its own `ApiError` and
+never reads `response.statusText` at all:
+
+    throw new ApiError(maybeErrorMessage ?? 'Unreachable', { status: response.status });
+
+For an empty 502 body, `maybeErrorMessage` is always undefined, so
+`ApiError.message` is always the bare word "Unreachable" regardless of Part
+1's fix. This is why `useSidebarItems.tsx`'s "Failed to fetch CRDs:
+ApiError: Unreachable" console line does not improve, even after Parts 1
+and 2 were fixed.
+
+NOT fixed — deliberately deferred, larger scope than V1's fix. V2 likely has
+significantly more callers than V1's single clusterRequests path, meaning a
+bigger surface area for regressions. Moved to P1-3 (see Section 5).
+
+Decision: do not patch V1 (Part 1/2) locally without evidence it was safe —
+already done, verified, low risk, committed. Do not patch V2 without a
+separate, dedicated investigation first — folded into the same upstream
+inquiry as Part 1. An inquiry covering both the original masking behavior
+(Part 1) and V2's gap (Part 3) was sent to upstream maintainers; awaiting
+response.
 
 ==============================================================================
 8. RETRACTED FINDINGS (test artifacts, not product bugs — for the record)
