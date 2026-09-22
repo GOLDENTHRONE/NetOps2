@@ -1,0 +1,97 @@
+findinp1.txt — P1 (live watch / WebSocket) provenance findings
+
+Scope: determine which parts of the P1 "Bucket B" code (live watch / WebSocket
+reconnect + freshness) are the FORK's own additions vs inherited from the
+upstream open-source project this fork is based on. This matters because
+modifying an upstream file creates merge conflicts on every future upstream
+sync, while new fork-only files are safe.
+
+Method (read-only): the real upstream open-source project was added as a
+TEMPORARY read-only remote, fetched, compared with `git diff` / `git show`,
+then the remote was removed. Nothing was modified, committed, or pushed during
+the investigation, and the upstream project was never written to. All statements
+are from actual git output, not memory.
+
+Baseline: the fork diverged from upstream at the upstream 0.45.0 release
+candidate (merge-base commit 6d2b42cc, 2026-08-21). This matches the earlier
+provenance baseline, so those earlier conclusions remain valid.
+
+Note on the fork's own remote: the fork's `origin` is a downstream fork/mirror
+of the upstream open-source project, not the upstream itself and not diverged
+with custom code on its main branch (its main tracks upstream, slightly behind).
+Provenance here was checked directly against the REAL upstream project, NOT
+against the fork's own mirror — so these results do not depend on what the
+fork's origin points to.
+
+==============================================================================
+1. PER-FILE CLASSIFICATION (8 files, vs real upstream)
+==============================================================================
+| File                                              | Verdict                  |
+|---------------------------------------------------|--------------------------|
+| frontend/src/lib/resilience.ts                    | NEW (fork-only)          |
+| frontend/src/components/cluster/WatchFreshnessChip.tsx | NEW (fork-only)     |
+| frontend/src/lib/k8s/api/v2/webSocket.ts          | MODIFIED (ours) +155/-27 |
+| frontend/src/lib/k8s/api/v2/useKubeObjectList.ts  | MODIFIED (ours) +33/-3   |
+| frontend/src/lib/k8s/api/v2/KubeList.ts           | MODIFIED (ours) +13/-2   |
+| frontend/src/lib/k8s/api/v2/hooks.ts              | MODIFIED (ours) +12/-0   |
+| frontend/src/lib/k8s/api/v2/multiplexer.ts        | MODIFIED (ours) +11/-0 (comment-only) |
+| frontend/src/components/App/Layout.tsx            | MODIFIED (ours) +2/-0 (renders the chip) |
+
+Test files:
+| frontend/src/lib/k8s/api/v2/webSocket.reconnect.test.tsx | NEW (fork-only)    |
+| frontend/src/lib/k8s/api/v2/KubeList.test.ts      | MODIFIED (ours) +43/-0 (BOOKMARK test added to an existing upstream test file) |
+
+==============================================================================
+2. PER-MECHANISM (a-g) — all OURS; none pre-existed upstream
+==============================================================================
+(a) reconnect + exponential backoff (webSocket.ts) — OURS
+    Upstream webSocket.ts had NO reconnect logic at all. The fork added it.
+(b) watch tuning knobs (reconnect enable / base / cap / fallback-refetch ms) — OURS
+    resilience.ts is fork-only; the call sites live in the fork's webSocket.ts /
+    useKubeObjectList.ts changes.
+(c) watch fallback-refetch interval + pagination guard (useKubeObjectList.ts) — OURS
+(d) freshness indicator component + its reconnecting-state hook + the watch-state
+    map + external-store wiring (webSocket.ts) — OURS
+    None of this exists upstream. This is the entire user-visible freshness
+    feature.
+(e) BOOKMARK handling: watch-event union + apply-update BOOKMARK case
+    (KubeList.ts) + the BOOKMARK guard (hooks.ts) — OURS
+    Upstream does NOT handle BOOKMARK natively.
+(f) ERROR-frame invalidate/re-sync (hooks.ts) — OURS
+    Upstream has no invalidate on an ERROR watch frame.
+(g) test files — the reconnect test is NEW fork-only; the KubeList test is an
+    existing upstream test file the fork modified to add the BOOKMARK test.
+
+==============================================================================
+3. UPSTREAM COMMITS THE FORK DOESN'T HAVE (since baseline)
+==============================================================================
+Upstream commits since the baseline that touch these watch files = 0.
+Upstream has NOT changed anything in this area since the fork's baseline — there
+is no upstream watch/reconnect improvement or native BOOKMARK support to pull.
+
+==============================================================================
+4. MERGE-RISK ASSESSMENT (raw)
+==============================================================================
+Zero merge risk (NEW fork-only files):
+  - resilience.ts, WatchFreshnessChip.tsx, webSocket.reconnect.test.tsx
+
+Merge-conflict risk on every future upstream sync (MODIFIED upstream files):
+  - webSocket.ts (+155/-27) — LARGEST; highest conflict risk (substantial
+    reconnect + freshness addition inside an upstream file)
+  - useKubeObjectList.ts (+33/-3) — moderate
+  - KubeList.test.ts (+43/-0) — moderate (test additions)
+  - KubeList.ts (+13/-2), hooks.ts (+12/-0), multiplexer.ts (+11/-0, comment-only)
+    — small
+  - Layout.tsx (+2/-0) — trivial (one import + one render)
+
+==============================================================================
+5. CLEANUP / HONESTY CONFIRMATION
+==============================================================================
+- Temporary upstream remote: added read-only -> fetched -> removed. Only the
+  fork's own origin remains afterward.
+- git status clean; branch tip unchanged; nothing modified/committed/pushed
+  during the investigation. The upstream project was never written to.
+- Baseline commit confirmed correct, so the earlier provenance conclusions
+  remain valid.
+- Bottom line: every P1 Bucket B mechanism is the fork's own; upstream had none
+  of them, and there is nothing new upstream to pull in this area.
