@@ -107,6 +107,19 @@ class SimulatorWebSocket {
     this.emit('close', { code: 1006 });
   }
 
+  /**
+   * Model a "silent death": the underlying transport is dead but the browser
+   * never fires a 'close' (or any) event — e.g. a half-open TCP connection or a
+   * network partition where the FIN is never received. readyState flips to
+   * CLOSED to reflect the dead transport, but crucially NO event is emitted, so
+   * the reconnect path (which keys off the 'close' event) is never triggered.
+   * This is what makes "silently dead" distinct from "healthy and idle" (both
+   * emit no events, but the latter stays readyState OPEN).
+   */
+  goSilent() {
+    this.readyState = 3;
+  }
+
   static reset() {
     SimulatorWebSocket.instances = [];
   }
@@ -263,6 +276,10 @@ describe('WebSocket reconnect simulator', () => {
 
     const socket = SimulatorWebSocket.instances[0];
     socket.open();
+    // Silent death: the transport is now dead, but no 'close' event ever fires,
+    // so the reconnect path is never triggered. The 90s HTTP safety-net is the
+    // ONLY thing that can refresh the list from here.
+    socket.goSilent();
     const query = queryClient
       .getQueryCache()
       .getAll()
@@ -287,10 +304,10 @@ describe('WebSocket reconnect simulator', () => {
 
     console.log(
       JSON.stringify({
-        safetyIntervalMs: safetyInterval,
+        safetyIntervalMs: intervalMs,
         fetchTimestamps,
         fetchCountAfter90s: fetchTimestamps.length,
-        silentDeathReconnectAttempts: 0,
+        silentDeathReconnectAttempts: SimulatorWebSocket.instances.length - 1,
       })
     );
 
