@@ -251,6 +251,7 @@ describe('WebSocket reconnect simulator', () => {
       static apiVersion = 'v1';
       static apiName = 'configmaps';
       static kind = 'ConfigMap';
+      static apiEndpoint: { apiInfo: Array<{ version: string; resource: string }> };
 
       constructor(public jsonData: unknown) {}
     }
@@ -286,8 +287,8 @@ describe('WebSocket reconnect simulator', () => {
     const query = queryClient
       .getQueryCache()
       .getAll()
-      .find(candidate => typeof candidate.options.refetchInterval === 'function');
-    const refetchInterval = query?.options.refetchInterval;
+      .find(candidate => typeof (candidate.options as any).refetchInterval === 'function');
+    const refetchInterval = (query?.options as any)?.refetchInterval;
     expect(typeof refetchInterval).toBe('function');
     const intervalMs = (refetchInterval as (query: unknown) => number)({
       state: { data: { list: { metadata: {} } } },
