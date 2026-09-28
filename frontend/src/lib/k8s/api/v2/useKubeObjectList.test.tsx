@@ -273,7 +273,9 @@ describe('useWatchKubeObjectLists', () => {
 
     expect(spy.mock.calls[0][0].enabled).toBe(true);
     expect(spy.mock.calls[0][0].connections[0].cluster).toBe('default');
-    expect(spy.mock.calls[0][0].connections[0].url).toBe('api/v1/pods?watch=1&resourceVersion=1');
+    expect(spy.mock.calls[0][0].connections[0].url).toBe(
+      'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
+    );
   });
 
   it('should call useWebSockets when endpoint and 2 lists are provided', () => {
@@ -300,12 +302,12 @@ describe('useWatchKubeObjectLists', () => {
     expect(spy.mock.calls[0][0].enabled).toBe(true);
     expect(spy.mock.calls[0][0].connections[0].cluster).toBe('default');
     expect(spy.mock.calls[0][0].connections[0].url).toBe(
-      'api/v1/namespaces/a/pods?watch=1&resourceVersion=1'
+      'api/v1/namespaces/a/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
     );
 
     expect(spy.mock.calls[0][0].connections[1].cluster).toBe('default');
     expect(spy.mock.calls[0][0].connections[1].url).toBe(
-      'api/v1/namespaces/b/pods?watch=1&resourceVersion=1'
+      'api/v1/namespaces/b/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
     );
   });
 
@@ -915,7 +917,9 @@ describe('useKubeObjectList', () => {
     await waitFor(() =>
       expect(
         mockUseWebSockets.mock.calls.some(
-          ([call]) => call.connections[0]?.url === 'api/v1/pods?watch=1&resourceVersion=2'
+          ([call]) =>
+            call.connections[0]?.url ===
+            'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=2'
         )
       ).toBe(true)
     );
@@ -949,7 +953,9 @@ describe('useKubeObjectList', () => {
     await waitFor(() =>
       expect(
         mockUseWebSockets.mock.calls.some(
-          ([call]) => call.connections[0]?.url === 'api/v1/pods?watch=1&resourceVersion=1'
+          ([call]) =>
+            call.connections[0]?.url ===
+            'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
         )
       ).toBe(true)
     );
@@ -959,10 +965,57 @@ describe('useKubeObjectList', () => {
     await waitFor(() =>
       expect(
         mockUseWebSockets.mock.calls.some(
-          ([call]) => call.connections[0]?.url === 'api/v1/pods?watch=1&resourceVersion=2'
+          ([call]) =>
+            call.connections[0]?.url ===
+            'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=2'
         )
       ).toBe(true)
     );
+  });
+
+  it('does NOT mutate the cache or rebuild the watch when a BOOKMARK arrives (no churn) [#16]', async () => {
+    const queryClient = new QueryClient();
+    mockUseWebSockets.mockClear();
+    mockClusterFetch.mockResolvedValue({
+      json: () => Promise.resolve(makeListResponse({ resourceVersion: '1' })),
+    } as Response);
+
+    renderHook(
+      () => useKubeObjectList({ kubeObjectClass: mockClass, requests: [{ cluster: 'default' }] }),
+      { wrapper: queryClientWrapper(queryClient) }
+    );
+
+    // Initial watch established at resourceVersion=1.
+    await waitFor(() =>
+      expect(
+        mockUseWebSockets.mock.calls.some(
+          ([call]) =>
+            call.connections[0]?.url ===
+            'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
+        )
+      ).toBe(true)
+    );
+
+    // Deliver a BOOKMARK that advances the server resourceVersion to 999.
+    const lastCall = mockUseWebSockets.mock.calls.at(-1)![0];
+    const onMessage = lastCall.connections[0].onMessage;
+    const setSpy = vi.spyOn(queryClient, 'setQueryData');
+    act(() => {
+      onMessage({
+        type: 'BOOKMARK',
+        object: { kind: 'Pod', metadata: { resourceVersion: '999' } },
+      });
+    });
+
+    // A BOOKMARK must NOT write to the React Query cache...
+    expect(setSpy).not.toHaveBeenCalled();
+    // ...and must NOT rebuild the watch to the bookmark's resourceVersion — otherwise
+    // the socket would close/reopen every ~bookmark interval (60s churn).
+    await new Promise(r => setTimeout(r, 50));
+    const rebuiltToBookmarkRV = mockUseWebSockets.mock.calls.some(([call]) =>
+      call.connections?.[0]?.url?.includes('resourceVersion=999')
+    );
+    expect(rebuiltToBookmarkRV).toBe(false);
   });
 
   it('should split an opt-in limit across namespace requests', async () => {

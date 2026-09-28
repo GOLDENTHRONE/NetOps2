@@ -521,6 +521,11 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
       const url = makeUrl([KubeObjectEndpoint.toUrl(endpoint!, namespace)], {
         ...stableWatchQueryParams,
         watch: 1,
+        // P1 (#16): ask the API server for periodic BOOKMARK frames so a healthy
+        // watch is never truly silent — this is the heartbeat the silent-death
+        // liveness timer (webSocket.ts) relies on. Verified to travel end-to-end
+        // to the browser (WS_BOOKMARK_VERIFICATION.md).
+        allowWatchBookmarks: true,
         resourceVersion,
       });
 
@@ -542,6 +547,17 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
             client.invalidateQueries({ queryKey: key });
             return;
           }
+          // P1 (#16): a BOOKMARK is a liveness/transport signal only — it carries
+          // no item change. Its socket-level activity was already recorded in
+          // webSocket.ts. It must NOT mutate the cache: writing its
+          // resourceVersion would change the watched-list identity (the RV feeds
+          // the listsToWatch comparison) and rebuild the socket every ~bookmark
+          // interval — i.e. re-introduce reconnect churn. Resuming from the newest
+          // bookmark RV (listResourceVersion) is the separate #15 optimization and
+          // is intentionally out of scope here.
+          if ((update as any)?.type === 'BOOKMARK') {
+            return;
+          }
           client.setQueryData(key, (oldResponse: ListResponse<any> | undefined | null) => {
             if (!oldResponse) return oldResponse;
 
@@ -553,6 +569,33 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
             );
             return { ...oldResponse, list: newList };
           });
+        },
+        async confirmLiveness() {
+          // P1 (#16) confirm-before-reconnect: run ONE authoritative LIST refetch
+          // for THIS exact watched list and report whether it succeeded (fresh data
+          // arrived). We deliberately do NOT invent a resourceVersion comparison:
+          //  - if the refetch returns a NEWER resourceVersion, the existing
+          //    `listsToWatch` identity check (RV in the watch URL) rebuilds the
+          //    socket on its own → resync;
+          //  - if the RV is unchanged, the watch is healthy-but-quiet and stays.
+          // Success is defined as "the LIST reached the API and refreshed data"
+          // (react-query advances dataUpdatedAt only on a successful fetch;
+          // keep-last-good leaves it unchanged on failure).
+          const key = kubeObjectListQuery<K>(
+            kubeObjectClass,
+            endpoint,
+            namespace,
+            cluster,
+            stableQueryParams ?? {}
+          ).queryKey;
+          const before = client.getQueryState(key)?.dataUpdatedAt ?? 0;
+          try {
+            await client.refetchQueries({ queryKey: key, exact: true });
+          } catch {
+            return false;
+          }
+          const after = client.getQueryState(key)?.dataUpdatedAt ?? 0;
+          return after > before;
         },
       };
     });

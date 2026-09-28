@@ -124,6 +124,31 @@ export const WATCH_FALLBACK_REFETCH_MS = intEnvOrDefault(
   0
 );
 
+/**
+ * P1 (#16) — silent-death liveness timeout. A watch socket can die with no
+ * `close`/`error` event (half-open behind an idle L7 load balancer, OS sleep,
+ * NAT timeout, …); it then "looks open" while no frames arrive, which is
+ * indistinguishable from a healthy-but-quiet watch. With
+ * `allowWatchBookmarks=true` the API server emits periodic BOOKMARK frames
+ * (observed cadence ~60s while the cluster is quiet — this is server behaviour,
+ * NOT a Kubernetes timing guarantee), so a healthy watch is never truly silent.
+ * Kubernetes does NOT guarantee periodic BOOKMARKs (best-effort; etcd progress
+ * interval is cluster-config-dependent — see WS_BOOKMARK_PRODUCTION_DEPENDENCY_REVIEW.md),
+ * so silence alone is NOT treated as death. When NO frame (data OR bookmark)
+ * arrives on an open socket for this long, the watch layer runs ONE authoritative
+ * LIST refetch (confirm-before-reconnect): if it succeeds the watch is healthy
+ * (quiet, or resynced by the existing list→watch machinery) and is kept; only if
+ * the LIST fails is the socket closed so the EXISTING reconnect path recovers it.
+ * Default 180000 (~3x the observed ~60s cadence) tolerates a missed bookmark plus
+ * background-tab timer throttling. 0 disables the whole mechanism. Override:
+ * `REACT_APP_WATCH_LIVENESS_TIMEOUT_MS`.
+ */
+export const WATCH_LIVENESS_TIMEOUT_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_LIVENESS_TIMEOUT_MS,
+  180000,
+  0
+);
+
 /** Returns `ms` spread by +/-POLL_JITTER_PCT. Used for poll intervals and retry delay. */
 export function withJitter(ms: number, pct: number = POLL_JITTER_PCT): number {
   if (pct <= 0) {
