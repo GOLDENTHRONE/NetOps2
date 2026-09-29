@@ -14,3 +14,11 @@ node_modules
 plugins/headlamp-plugin/headlamp-myfancy/
 plugins/examples/*/dist/
 .DS_Store
+
+# Local throwaway WS test infra + results (not project code)
+.k8s-real/
+WS_TESTING_RESULTS.md
+WS_BOOKMARK_VERIFICATION.md
+WS_SILENT_DEATH_DESIGN.md
+WS_SILENT_DEATH_IMPL_REPORT.md
+WS_BOOKMARK_PRODUCTION_DEPENDENCY_REVIEW.md

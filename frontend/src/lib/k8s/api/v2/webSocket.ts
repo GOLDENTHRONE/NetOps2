@@ -21,6 +21,7 @@ import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfi
 import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { getCluster } from '../../../cluster';
 import {
+  WATCH_LIVENESS_TIMEOUT_MS,
   WATCH_RECONNECT,
   WATCH_RECONNECT_BASE_MS,
   WATCH_RECONNECT_CAP_MS,
@@ -65,6 +66,18 @@ export type WebSocketConnectionRequest<T> = {
    * @param data The message payload, typed as T (e.g., K8s Pod, Service, etc.)
    */
   onMessage: (data: T) => void;
+
+  /**
+   * P1 (#16): confirm-before-reconnect. When the liveness timer sees a prolonged
+   * silence, it does NOT assume the socket is dead (Kubernetes does not guarantee
+   * periodic BOOKMARKs — see WS_BOOKMARK_PRODUCTION_DEPENDENCY_REVIEW.md). Instead
+   * it calls this to run ONE authoritative LIST refetch for this watch and returns
+   * whether that fetch succeeded (fresh data arrived). `true` → healthy (quiet or
+   * resynced by the existing list→watch machinery, no forced close); `false` →
+   * the list itself failed → the socket is treated as stale and the existing
+   * reconnect path runs. Optional: if absent, liveness falls back to closing.
+   */
+  confirmLiveness?: () => Promise<boolean>;
 };
 
 /**
@@ -83,6 +96,16 @@ const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** Per-connection live/reconnecting state, for the freshness indicator (Item 3). */
 const watchStates = new Map<string, 'live' | 'reconnecting'>();
 const watchStateSubscribers = new Set<() => void>();
+
+// --- P1 (#16): silent-death liveness ---------------------------------------
+/** Last time ANY frame (data or BOOKMARK) arrived, per connection. */
+const lastActivity = new Map<string, number>();
+/** Pending liveness timers per connection, so we can cancel on close/cleanup. */
+const livenessTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Confirm-before-reconnect callback per connection (authoritative LIST refetch). */
+const livenessConfirm = new Map<string, () => Promise<boolean>>();
+/** Connections with a confirmation LIST currently in flight (at most one each). */
+const livenessConfirming = new Set<string>();
 
 function setWatchState(connectionKey: string, state: 'live' | 'reconnecting' | 'gone') {
   if (state === 'gone') {
@@ -116,6 +139,130 @@ export function useAnyWatchReconnecting(): boolean {
     isAnyWatchReconnecting,
     () => false
   );
+}
+
+// --- P1 (#16): silent-death detection --------------------------------------
+// A socket can die with NO close/error event (half-open behind an idle L7 LB,
+// OS sleep, NAT timeout). It then "looks open" while no frames arrive, which is
+// indistinguishable from a healthy-but-quiet watch. We request BOOKMARK frames
+// (allowWatchBookmarks, added on the watch URL) so a healthy watch is never
+// truly silent, and here we detect prolonged silence and synthesize a `close`
+// so the EXISTING reconnect/backoff/freshness machinery recovers it. We never
+// build a second reconnect system, and we never mark this close intentional (it
+// MUST redial). All decisions use real elapsed time (Date.now()), so a throttled
+// or coalesced timer in a background tab can only detect death LATER, never
+// produce a false positive.
+
+/** Cancel any pending liveness timer for a connection. */
+function clearLiveness(connectionKey: string) {
+  const timer = livenessTimers.get(connectionKey);
+  if (timer) {
+    clearTimeout(timer);
+    livenessTimers.delete(connectionKey);
+  }
+}
+
+/** (Re)arm the liveness timer to fire `afterMs` from now. */
+function armLiveness(connectionKey: string, socket: WebSocket, afterMs: number) {
+  if (WATCH_LIVENESS_TIMEOUT_MS <= 0) return;
+  clearLiveness(connectionKey);
+  const timer = setTimeout(() => {
+    livenessTimers.delete(connectionKey);
+    checkLiveness(connectionKey, socket);
+  }, Math.max(0, afterMs));
+  livenessTimers.set(connectionKey, timer);
+}
+
+/**
+ * On prolonged silence, CONFIRM before reconnecting (6a). Robust to throttled /
+ * coalesced timers: the verdict is based on real elapsed time, and a socket that
+ * has already been replaced/closed is ignored.
+ *
+ * Because Kubernetes does not guarantee periodic BOOKMARKs, silence alone does
+ * NOT mean the socket is dead. So instead of closing, we ask the watch layer to
+ * run ONE authoritative LIST refetch (`confirmLiveness`):
+ *  - refetch SUCCEEDS  → the watch is healthy (quiet), or the fresh list carried a
+ *    newer resourceVersion and the EXISTING list→watch machinery will rebuild the
+ *    socket on its own. Either way we do NOT force a close; we just re-arm.
+ *  - refetch FAILS     → the list itself is unreachable → treat as stale and use
+ *    the EXISTING reconnect path (synthesize a non-intentional close).
+ * At most one confirmation runs per connection; a result for a superseded socket
+ * is ignored.
+ */
+function checkLiveness(connectionKey: string, socket: WebSocket) {
+  if (WATCH_LIVENESS_TIMEOUT_MS <= 0) return;
+  // Stale timer from a socket that is no longer the current one — ignore.
+  if (sockets.get(connectionKey) !== socket) return;
+  const last = lastActivity.get(connectionKey) ?? Date.now();
+  const elapsed = Date.now() - last;
+  if (elapsed < WATCH_LIVENESS_TIMEOUT_MS) {
+    // A frame arrived since we armed (timer fired late / was throttled) — re-arm
+    // for the remaining time instead of declaring death.
+    armLiveness(connectionKey, socket, WATCH_LIVENESS_TIMEOUT_MS - elapsed);
+    return;
+  }
+
+  const confirm = livenessConfirm.get(connectionKey);
+  if (!confirm) {
+    // No confirmation available (e.g. multiplexer / non-list socket) — fall back
+    // to the original behavior: synthesize a close so the existing reconnect runs.
+    closeForLiveness(connectionKey, socket);
+    return;
+  }
+  // At most ONE confirmation LIST in flight per connection.
+  if (livenessConfirming.has(connectionKey)) return;
+  livenessConfirming.add(connectionKey);
+  confirm()
+    .then(healthy => {
+      livenessConfirming.delete(connectionKey);
+      // The socket may have been replaced/closed (real close, reconnect, or a
+      // list→watch rebuild) while the LIST was running — ignore a stale result.
+      if (sockets.get(connectionKey) !== socket) return;
+      if (healthy) {
+        // Healthy-but-quiet: do NOT close. Reset activity + re-arm so we don't
+        // immediately re-confirm (avoids a tight loop / churn).
+        markActivity(connectionKey);
+        armLiveness(connectionKey, socket, WATCH_LIVENESS_TIMEOUT_MS);
+      } else {
+        // Authoritative LIST failed → genuinely stale/unreachable → reconnect.
+        closeForLiveness(connectionKey, socket);
+      }
+    })
+    .catch(() => {
+      livenessConfirming.delete(connectionKey);
+      if (sockets.get(connectionKey) !== socket) return;
+      closeForLiveness(connectionKey, socket);
+    });
+}
+
+/** Synthesize a non-intentional close so the EXISTING reconnect + freshness chip
+ *  path runs. Clears our timer first so one silent socket triggers at most one. */
+function closeForLiveness(connectionKey: string, socket: WebSocket) {
+  clearLiveness(connectionKey);
+  try {
+    socket.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Record that a frame arrived (does not re-arm; the running timer re-checks the
+ *  timestamp when it fires — cheap even on a busy socket). */
+function markActivity(connectionKey: string) {
+  if (WATCH_LIVENESS_TIMEOUT_MS <= 0) return;
+  lastActivity.set(connectionKey, Date.now());
+}
+
+// When the tab becomes visible again, timers may have been throttled while
+// hidden — re-evaluate every open socket immediately so a genuinely dead one is
+// caught on return. Never a false positive (checkLiveness uses real elapsed time).
+if (typeof document !== 'undefined' && WATCH_LIVENESS_TIMEOUT_MS > 0) {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    for (const [key, sock] of sockets.entries()) {
+      if (typeof sock !== 'symbol') checkLiveness(key, sock);
+    }
+  });
 }
 
 /**
@@ -177,7 +324,15 @@ export async function openWebSocket<T>(
 
   const socket = new WebSocket(makeUrl([getBaseWsUrl(), ...path], {}), protocols);
   socket.binaryType = 'arraybuffer';
+  // P1 (#16): arm silent-death liveness when the socket opens.
+  socket.addEventListener('open', () => {
+    markActivity(connectionKey);
+    armLiveness(connectionKey, socket, WATCH_LIVENESS_TIMEOUT_MS);
+  });
   socket.addEventListener('message', (body: MessageEvent) => {
+    // P1 (#16): every incoming frame (data OR bookmark) counts as activity.
+    // Record it BEFORE parsing so even a malformed frame keeps the watch "alive".
+    markActivity(connectionKey);
     const data = type === 'json' ? JSON.parse(body.data) : body.data;
     const callbacks = listeners.get(connectionKey) ?? [onMessage];
     callbacks.forEach(callback => {
@@ -190,6 +345,11 @@ export async function openWebSocket<T>(
   });
   socket.addEventListener('error', error => {
     console.error('WebSocket error:', error);
+  });
+  // P1 (#16): a closing socket must not leave a liveness timer chasing it. The
+  // reconnect (if any) arms a fresh timer when its new socket opens.
+  socket.addEventListener('close', () => {
+    clearLiveness(connectionKey);
   });
 
   return socket;
@@ -316,11 +476,15 @@ export function useWebSockets<T>({
     }
 
     /** Open a connection to websocket */
-    function connect({ cluster, url, onMessage }: WebSocketConnectionRequest<T>) {
+    function connect({ cluster, url, onMessage, confirmLiveness }: WebSocketConnectionRequest<T>) {
       const connectionKey = cluster + url;
 
       // Always register the current listener, even when reusing an existing socket.
       listeners.set(connectionKey, [...(listeners.get(connectionKey) ?? []), onMessage]);
+      // P1 (#16): register the confirm-before-reconnect LIST for this connection.
+      if (confirmLiveness) {
+        livenessConfirm.set(connectionKey, confirmLiveness);
+      }
 
       if (!sockets.has(connectionKey)) {
         // Mark socket as pending, so we don't open more than one
@@ -345,6 +509,13 @@ export function useWebSockets<T>({
             reconnectTimers.delete(connectionKey);
           }
           reconnectAttempts.delete(connectionKey);
+          // P1 (#16): drop liveness state so no timer/confirmation outlives the
+          // connection (a pending confirmation's result is also ignored via the
+          // socket-identity guard in checkLiveness).
+          clearLiveness(connectionKey);
+          lastActivity.delete(connectionKey);
+          livenessConfirm.delete(connectionKey);
+          livenessConfirming.delete(connectionKey);
           const maybeExisting = sockets.get(connectionKey);
           if (maybeExisting) {
             if (typeof maybeExisting !== 'symbol') {
