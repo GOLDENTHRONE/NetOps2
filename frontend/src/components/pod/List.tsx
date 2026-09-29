@@ -576,6 +576,10 @@ export default function PodList() {
   const { items, errors, hasMore, remainingItemCount, loadMore } = Pod.useList({
     namespace: namespaces,
     limit: DEFAULT_LIST_LIMIT,
+    // P1 (#14, A1): keep the loaded Pods live even while the list is only partially
+    // paginated — a whole-collection watch filtered to loaded UIDs, with a fresh
+    // prefix re-baseline on each "Load more". Retained state stays O(loaded).
+    liveSubsetWatch: true,
   });
   const { items: podMetrics, loadMore: loadMoreMetrics } = PodMetrics.useList({
     namespace: namespaces,

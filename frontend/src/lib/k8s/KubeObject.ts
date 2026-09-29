@@ -383,6 +383,7 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
       clusters,
       namespace,
       refetchInterval,
+      liveSubsetWatch,
       ...queryParams
     }: {
       cluster?: string;
@@ -390,6 +391,9 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
       namespace?: string | string[];
       /** How often to refetch the list. Won't refetch by default. Disables watching if set. */
       refetchInterval?: number;
+      /** P1 (#14, A1): opt into live-subset watch for a client-paginated list (see
+       *  useKubeObjectList). Only meaningful together with a `limit`. */
+      liveSubsetWatch?: boolean;
     } & QueryParameters = {}
   ) {
     // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -441,6 +445,7 @@ export class KubeObject<T extends KubeObjectInterface | KubeEvent = any> {
       requests,
       emptyWhenNoRequests,
       refetchInterval,
+      liveSubsetWatch,
     });
 
     return result;

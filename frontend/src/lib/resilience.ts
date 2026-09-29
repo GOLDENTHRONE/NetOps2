@@ -180,15 +180,20 @@ export function isBlipStatus(status: number | undefined): boolean {
 
 /**
  * P1 safety-net refetch interval (ms) for a watched list, so a silently-dead
- * socket still refreshes on its own. Returns `false` (no auto-refetch) when the
- * feature is off, or when the list is paginated — a periodic refetch there would
- * reset the user's loaded pages. Otherwise a jittered interval.
+ * socket — or a large list that never watches while paginating (#14) — still
+ * refreshes on its own. Returns `false` (no auto-refetch) when the feature is off,
+ * or when `paused` is true. `paused` is passed by the caller when this query holds
+ * accumulated pagination pages (`metadata.paginated`) or a "Load more" is in flight:
+ * a periodic page-1 refetch would be wasted (the queryFn commit guard keeps the
+ * accumulated list anyway), so we skip scheduling it. This is an efficiency gate;
+ * correctness is enforced at the queryFn commit boundary, not here. Otherwise a
+ * jittered interval.
  */
-export function watchFallbackRefetchInterval(hasMorePages: boolean): number | false {
+export function watchFallbackRefetchInterval(paused: boolean): number | false {
   if (WATCH_FALLBACK_REFETCH_MS <= 0) {
     return false;
   }
-  if (hasMorePages) {
+  if (paused) {
     return false;
   }
   return withJitter(WATCH_FALLBACK_REFETCH_MS);

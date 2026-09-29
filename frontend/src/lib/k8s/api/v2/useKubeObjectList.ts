@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import type { QueryObserverOptions } from '@tanstack/react-query';
+import type { QueryFunctionContext, QueryObserverOptions } from '@tanstack/react-query';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -225,7 +225,7 @@ export function kubeObjectListQuery<K extends KubeObject>(
       namespace,
       queryParams,
     ],
-    queryFn: async () => {
+    queryFn: async (context?: QueryFunctionContext) => {
       // If no valid endpoint is passed, don't make the request
       if (!endpoint) return;
 
@@ -234,6 +234,12 @@ export function kubeObjectListQuery<K extends KubeObject>(
           makeUrl([KubeObjectEndpoint.toUrl(endpoint!, namespace)], queryParams),
           {
             cluster,
+            // P1 (#14): forward the query's AbortSignal so a superseded page-1 refetch
+            // can abort in flight. This is an optimization only — it is NOT the
+            // correctness mechanism (the paginated-marker guard below is). `context`
+            // is always provided by React Query in production; it is optional only so
+            // unit tests can invoke queryFn directly.
+            signal: context?.signal,
           }
         ).then(it => it.json());
         const kind = list.kind.replace(/List$/, '');
@@ -267,6 +273,24 @@ export function kubeObjectListQuery<K extends KubeObject>(
           namespace,
         };
 
+        // P1 (#14): commit-time correctness guard. This page-1 LIST could be a
+        // fallback/reconnect/mount/invalidate/refetchQueries refetch OR could have
+        // overlapped a "Load more". If, by the time this result is ready to commit,
+        // the cache for this exact query key already holds accumulated pagination
+        // pages (metadata.paginated === true), replacing it with a bare page 1 would
+        // silently destroy pages the user loaded. Re-read the CURRENT cache at the
+        // commit boundary (not at query start) and, when paginated, keep the existing
+        // accumulated list. The network round-trip still happened, so this doubles as
+        // a server-reachability check (#16 confirm-before-reconnect keeps its
+        // dataUpdatedAt/success semantics). Fresh page-1 replacement is allowed only
+        // when the cache is NOT paginated. See WS_PODS_FALLBACK_RACE_ANALYSIS.md.
+        if (context?.client && context.queryKey) {
+          const currentCached = context.client.getQueryData<ListResponse<K>>(context.queryKey);
+          if (currentCached?.list?.metadata?.paginated) {
+            return currentCached;
+          }
+        }
+
         return response;
       } catch (e) {
         // Rethrow error with cluster and namespace information
@@ -290,6 +314,7 @@ export function useWatchKubeObjectLists<K extends KubeObject>({
   lists,
   queryParams,
   watchQueryParams,
+  liveSubsetWatch = false,
 }: {
   /** KubeObject class of the watched resource list */
   kubeObjectClass: (new (...args: any) => K) & typeof KubeObject<any>;
@@ -301,6 +326,14 @@ export function useWatchKubeObjectLists<K extends KubeObject>({
   endpoint?: KubeObjectEndpoint | null;
   /** Which clusters and namespaces to watch */
   lists: Array<{ cluster: string; namespace?: string; resourceVersion: string }>;
+  /**
+   * P1 (#14, A1): live-subset mode. When true, the watch is a whole-collection
+   * watch but only events for objects CURRENTLY in the cache (the loaded prefix)
+   * are applied; ADDED and non-member MODIFIED/DELETED are ignored. This keeps
+   * retained state O(loaded) while a large list is only partially paginated. When
+   * false (default) the legacy behavior is unchanged. See WS_PODS_LIVE_SUBSET_ARCH.md.
+   */
+  liveSubsetWatch?: boolean;
 }) {
   const multiplexerEnabled = getWebsocketMultiplexerEnabled();
 
@@ -320,6 +353,7 @@ export function useWatchKubeObjectLists<K extends KubeObject>({
     queryParams: !multiplexerEnabled ? queryParams : undefined,
     watchQueryParams: !multiplexerEnabled ? watchQueryParams : undefined,
     enabled: !multiplexerEnabled,
+    liveSubsetWatch,
   });
 }
 
@@ -501,6 +535,7 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
   queryParams,
   watchQueryParams,
   enabled = true,
+  liveSubsetWatch = false,
 }: {
   /** KubeObject class of the watched resource list */
   kubeObjectClass: (new (...args: any) => K) & typeof KubeObject<any>;
@@ -513,8 +548,18 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
   /** Which clusters and namespaces to watch */
   lists: Array<{ cluster: string; namespace?: string; resourceVersion: string }>;
   enabled?: boolean;
+  /** P1 (#14, A1): apply only events for currently-loaded UIDs; ignore ADDED and
+   *  non-member MODIFIED/DELETED so retained state stays O(loaded). */
+  liveSubsetWatch?: boolean;
 }) {
   const client = useQueryClient();
+
+  // P1 (#14, A1): per-connection loaded-UID membership index for O(1) filtering.
+  // Rebuilt lazily only when the cached items array reference changes (a LIST, a
+  // Load-More re-baseline, or an applied member event), so a burst of out-of-page
+  // events costs O(1) each and never rebuilds it. Reading the live cache here keeps
+  // membership exact (no stale ref). Key = cluster + (namespace || '').
+  const membershipRef = useRef<Map<string, { items: unknown; uids: Set<string> }>>(new Map());
 
   const stableQueryParamsKey = enabled ? JSON.stringify(queryParams) : '__disabled__';
   const stableWatchQueryParamsKey = enabled
@@ -532,6 +577,7 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
     if (!enabled || !endpoint) return [];
 
     return lists.map(({ cluster, namespace, resourceVersion }) => {
+      const connectionMembershipKey = `${cluster}:${namespace || ''}`;
       const url = makeUrl([KubeObjectEndpoint.toUrl(endpoint!, namespace)], {
         ...stableWatchQueryParams,
         watch: 1,
@@ -571,6 +617,31 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
           // is intentionally out of scope here.
           if ((update as any)?.type === 'BOOKMARK') {
             return;
+          }
+          // P1 (#14, A1): live-subset membership filter. On a whole-collection watch
+          // for a partially-paginated list, apply MODIFIED/DELETED only to objects
+          // currently loaded (in the cache), and IGNORE ADDED entirely. This keeps
+          // retained state O(loaded): out-of-page events can never grow the cache.
+          // New in-range objects surface via the Load-More re-baseline, not the watch.
+          if (liveSubsetWatch) {
+            const cached = client.getQueryData<ListResponse<any>>(key);
+            // Nothing loaded yet (or gc'd) → nothing to update; never create state.
+            if (!cached?.list) return;
+            let m = membershipRef.current.get(connectionMembershipKey);
+            if (!m || m.items !== cached.list.items) {
+              m = {
+                items: cached.list.items,
+                uids: new Set(
+                  cached.list.items.map((it: any) => it?.metadata?.uid).filter(Boolean)
+                ),
+              };
+              membershipRef.current.set(connectionMembershipKey, m);
+            }
+            // ADDED (any) → ignore (bounded state; re-baseline surfaces new in-range pods).
+            if ((update as any)?.type === 'ADDED') return;
+            // MODIFIED/DELETED for a non-loaded UID → ignore (not displayed, no growth).
+            const uid = (update as any)?.object?.metadata?.uid;
+            if (!uid || !m.uids.has(uid)) return;
           }
           client.setQueryData(key, (oldResponse: ListResponse<any> | undefined | null) => {
             if (!oldResponse) return oldResponse;
@@ -738,6 +809,7 @@ export function useKubeObjectList<K extends KubeObject>({
   watch = true,
   refetchInterval,
   emptyWhenNoRequests = false,
+  liveSubsetWatch = false,
 }: {
   requests: Array<{ cluster: string; namespaces?: string[] }>;
   /** Class to instantiate the object with */
@@ -749,6 +821,17 @@ export function useKubeObjectList<K extends KubeObject>({
   refetchInterval?: number;
   /** Return an empty list instead of a loading state when requests were intentionally suppressed. */
   emptyWhenNoRequests?: boolean;
+  /**
+   * P1 (#14, A1): opt-in live-subset mode for large client-paginated lists. When
+   * true AND a client `limit` is set, the watch stays open WHILE the list is only
+   * partially paginated, but applies only events for currently-loaded objects
+   * (whole-collection watch + UID membership filter), and each "Load more"
+   * re-baselines the loaded prefix from a fresh LIST snapshot (fresh
+   * listResourceVersion → exactly one intentional watch restart). Retained state
+   * stays O(loaded). Default false = unchanged legacy behavior. Pods-only for now.
+   * See WS_PODS_LIVE_SUBSET_ARCH.md.
+   */
+  liveSubsetWatch?: boolean;
 }): [Array<K> | null, ApiError | null] &
   QueryListResponse<Array<ListResponse<K> | undefined | null>, K, ApiError> {
   const maybeNamespace = requests.find(it => it.namespaces)?.namespaces?.[0];
@@ -782,17 +865,42 @@ export function useKubeObjectList<K extends KubeObject>({
   const hasPendingListRequests = activeListRequests.length < listRequests.length;
   const perRequestQueryParams = getPerRequestQueryParams(cleanedUpQueryParams, requests);
 
-  // P1 safety-net refetch: when watching a NON-paginated list (no explicit poll
-  // interval and no client-side `limit`), run a low-frequency background refetch
-  // so a silently-dead socket still refreshes. It is disabled entirely for
-  // client-paginated lists (`limit` set): a refetch there re-fetches only page 1
-  // and would discard the pages the user loaded via "load more". As a second
-  // guard, the fallback also returns false while a `continue` token is present
-  // (server-side pagination in progress). react-query pauses it while hidden.
+  // P1 (#14, A1): live-subset mode is active only when the caller opted in AND a
+  // client `limit` is set (a paginated list). It enables watch-while-paginating +
+  // membership filtering + Load-More re-baseline, and turns OFF the Option C page-1
+  // fallback below (the live watch — not the fallback — provides freshness, and a
+  // fallback page-1 refetch would needlessly restart the watch).
+  //
+  // SAFETY (multiplexer): the A1 membership filter lives ONLY in the legacy watch
+  // path. If the multiplexer is enabled, a watch-while-paginating would route through
+  // the UNFILTERED multiplexed path and grow state unboundedly. So live-subset is hard
+  // OFF whenever the multiplexer is enabled — the list then falls back to the safe
+  // legacy behavior (no watch until fully paginated + page-1 fallback). Never the
+  // unfiltered path.
+  const liveSubsetActive = liveSubsetWatch && !!limit && !getWebsocketMultiplexerEnabled();
+
+  // Declared here (before effectiveRefetchInterval) so the fallback interval can read
+  // the in-flight "load more" state. Assigned/consumed by loadMore below.
+  const loadMorePromiseRef = useRef<Promise<void> | null>(null);
+
+  // P1 safety-net refetch: when watching a list with no explicit poll interval, run a
+  // low-frequency background refetch so a silently-dead socket — OR a large list that
+  // never watches at all while paginating (#14) — still refreshes.
+  //
+  // P1 (#14): this now applies to client-`limit`ed lists too (previously excluded).
+  // It is PAUSED per-query when that query has accumulated pagination pages
+  // (metadata.paginated) or a "Load more" is in flight for this hook — a page-1
+  // refetch there would re-fetch only page 1. This is an EFFICIENCY gate only: even if
+  // a refetch does fire, the queryFn commit-time guard (see kubeObjectListQuery) keeps
+  // the accumulated list, so correctness never depends on this pause. react-query also
+  // pauses the interval while the tab is hidden.
   const effectiveRefetchInterval =
     refetchInterval ??
-    (watch && !limit && WATCH_FALLBACK_REFETCH_MS > 0
-      ? (query: any) => watchFallbackRefetchInterval(!!query?.state?.data?.list?.metadata?.continue)
+    (watch && !liveSubsetActive && WATCH_FALLBACK_REFETCH_MS > 0
+      ? (query: any) =>
+          watchFallbackRefetchInterval(
+            !!query?.state?.data?.list?.metadata?.paginated || !!loadMorePromiseRef.current
+          )
       : undefined);
 
   const queries = useMemo(
@@ -868,7 +976,13 @@ export function useKubeObjectList<K extends KubeObject>({
 
   // Don't watch when results are paginated — the watch stream would deliver events
   // for resources outside our fetched page, causing the list to grow unboundedly.
-  const shouldWatch = watch && !refetchInterval && !query.isLoading && !query.hasMore;
+  // P1 (#14, A1): a client-paginated list normally does NOT watch until fully loaded
+  // (a whole-collection watch would grow the list past the fetched page). In
+  // live-subset mode we DO watch while partially paginated, because the membership
+  // filter (useWatchKubeObjectListsLegacy) applies only events for loaded objects and
+  // ignores ADDED — so the list can never grow past what was loaded.
+  const shouldWatch =
+    watch && !refetchInterval && !query.isLoading && (liveSubsetActive || !query.hasMore);
 
   const [listsToWatch, setListsToWatch] = useState<
     { cluster: string; namespace?: string; resourceVersion: string }[]
@@ -933,6 +1047,7 @@ export function useKubeObjectList<K extends KubeObject>({
     kubeObjectClass,
     queryParams: perRequestQueryParams,
     watchQueryParams: withoutPaginationParams(perRequestQueryParams),
+    liveSubsetWatch: liveSubsetActive,
   });
 
   const [paginationError, setPaginationError] = useState<ApiError | null>(null);
@@ -946,7 +1061,6 @@ export function useKubeObjectList<K extends KubeObject>({
   );
 
   const queryClient = useQueryClient();
-  const loadMorePromiseRef = useRef<Promise<void> | null>(null);
 
   const loadMore = useCallback(async () => {
     if (!endpoint) return;
@@ -997,12 +1111,110 @@ export function useKubeObjectList<K extends KubeObject>({
         return;
       }
 
-      const pageRequests = queries.map(q => ({
-        query: q,
-        cached: queryClient.getQueryData<ListResponse<K>>(q.queryKey!),
-      }));
+      // P1 (#14, A1): live-subset re-baseline. Instead of appending the next page
+      // from the pinned LIST snapshot (which would leave the newly-loaded pods stale
+      // by the events that streamed while they were unloaded — the §F event-gap),
+      // re-LIST each active query's loaded prefix + one more page at a FRESH snapshot
+      // and REPLACE its cache. A fresh listResourceVersion restarts the watch exactly
+      // once; the newly-loaded pods are current as of the new RV; the whole-collection
+      // watch then covers new-RV→now with no gap. Retained state stays O(loaded).
+      if (liveSubsetActive) {
+        const pageSize = getPositiveLimit(perRequestQueryParams) ?? DEFAULT_LIST_LIMIT;
+        const results = await Promise.allSettled(
+          queries.map(async q => {
+            const cached = queryClient.getQueryData<ListResponse<K>>(q.queryKey!);
+            if (!cached?.list) return;
+            // Nothing more to load for this query → leave it (and its watch) as is.
+            if (!cached.list.metadata?.continue) return;
+            const newLimit = cached.list.items.length + pageSize;
+            const fetchParams: QueryParameters = { ...perRequestQueryParams, limit: newLimit };
+            let raw: KubeList<any>;
+            try {
+              raw = await clusterFetch(
+                makeUrl([KubeObjectEndpoint.toUrl(endpoint, cached.namespace)], fetchParams),
+                { cluster: cached.cluster }
+              ).then(r => r.json());
+            } catch (e) {
+              const error =
+                e instanceof ApiError
+                  ? e
+                  : new ApiError(e instanceof Error ? e.message : 'Failed to load more resources');
+              error.cluster = cached.cluster;
+              error.namespace = cached.namespace;
+              // 410: the snapshot expired mid re-baseline. Invalidate → queryFn relists
+              // a fresh page 1 (existing recovery); the watch re-baselines from that.
+              if (error.status === 410) {
+                queryClient.invalidateQueries({ queryKey: q.queryKey! });
+              }
+              throw error;
+            }
+            const kind = raw.kind.replace(/List$/, '');
+            const apiVersion = raw.apiVersion;
+            const items: K[] = raw.items.map((item: any) => {
+              if (item.metadata?.managedFields) delete item.metadata.managedFields;
+              item.kind = kind;
+              item.apiVersion = apiVersion;
+              const obj = new kubeObjectClass(item) as K;
+              obj.cluster = cached.cluster;
+              return obj;
+            });
+            queryClient.setQueryData<ListResponse<K>>(q.queryKey!, old =>
+              old
+                ? {
+                    ...old,
+                    list: {
+                      ...old.list,
+                      // REPLACE (not append): a fresh consistent prefix snapshot.
+                      items,
+                      metadata: {
+                        resourceVersion: raw.metadata.resourceVersion,
+                        // Fresh LIST snapshot ⇒ this is the new watch identity (#15):
+                        // exactly one intentional watch restart per Load-More.
+                        listResourceVersion: raw.metadata.resourceVersion,
+                        continue: raw.metadata.continue,
+                        remainingItemCount: raw.metadata.remainingItemCount,
+                        // Still more beyond this prefix ⇒ keep the paginated guard set.
+                        paginated: !!raw.metadata.continue,
+                      },
+                    },
+                  }
+                : old
+            );
+          })
+        );
+        const rejected = results.find(r => r.status === 'rejected') as
+          | PromiseRejectedResult
+          | undefined;
+        if (rejected) {
+          const reason: any = rejected.reason;
+          setPaginationError(
+            toPaginationApiError(reason, reason?.cluster ?? '', reason?.namespace ?? '')
+          );
+        }
+        return;
+      }
+
+      const pageRequests = queries.map(q => {
+        const cached = queryClient.getQueryData<ListResponse<K>>(q.queryKey!);
+        return { query: q, cached, priorPaginated: !!cached?.list?.metadata?.paginated };
+      });
+
+      // P1 (#14): synchronously mark each to-be-appended query as `paginated` BEFORE
+      // any network await, so a page-1 refetch that resolves mid-load-more sees the
+      // marker at its commit boundary and keeps the accumulated list — closing the
+      // in-flight-overlap and cross-snapshot windows. Only keys with a continue token
+      // are appended, so only those are marked.
+      pageRequests.forEach(({ query: q, cached }) => {
+        if (!cached?.list?.metadata?.continue) return;
+        queryClient.setQueryData<ListResponse<K>>(q.queryKey!, old =>
+          old
+            ? { ...old, list: { ...old.list, metadata: { ...old.list.metadata, paginated: true } } }
+            : old
+        );
+      });
+
       const results = await Promise.allSettled(
-        pageRequests.map(async ({ query: q, cached }) => {
+        pageRequests.map(async ({ query: q, cached, priorPaginated }) => {
           const continueToken = cached?.list?.metadata?.continue;
           if (!continueToken || !cached) return;
 
@@ -1025,7 +1237,33 @@ export function useKubeObjectList<K extends KubeObject>({
             error.namespace = cached.namespace;
 
             if (error.status === 410) {
+              // P1 (#14): the paginated snapshot is gone. Clear the marker so the
+              // relist's fresh page 1 is allowed to replace the now-invalid accumulated
+              // list — matching the pre-#14 410 recovery behavior.
+              queryClient.setQueryData<ListResponse<K>>(q.queryKey!, old =>
+                old
+                  ? {
+                      ...old,
+                      list: { ...old.list, metadata: { ...old.list.metadata, paginated: false } },
+                    }
+                  : old
+              );
               queryClient.invalidateQueries({ queryKey: q.queryKey! });
+            } else {
+              // P1 (#14): no new page was appended for this key. Restore the marker to
+              // its value from before this load-more: previously-accumulated pages stay
+              // protected; a page-1-only list resumes fallback refresh.
+              queryClient.setQueryData<ListResponse<K>>(q.queryKey!, old =>
+                old
+                  ? {
+                      ...old,
+                      list: {
+                        ...old.list,
+                        metadata: { ...old.list.metadata, paginated: priorPaginated },
+                      },
+                    }
+                  : old
+              );
             }
 
             throw error;
@@ -1057,6 +1295,9 @@ export function useKubeObjectList<K extends KubeObject>({
                   listResourceVersion: raw.metadata.resourceVersion,
                   continue: raw.metadata.continue,
                   remainingItemCount: raw.metadata.remainingItemCount,
+                  // P1 (#14): this cache now holds accumulated pagination pages. Keep
+                  // the correctness marker set so no page-1 refetch can overwrite them.
+                  paginated: true,
                 },
                 items: [...old.list.items, ...newItems],
               },
