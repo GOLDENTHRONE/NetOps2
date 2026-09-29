@@ -215,4 +215,68 @@ describe('KubeList.applyUpdate', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith('Unknown update type', updateEvent);
     consoleErrorSpy.mockRestore();
   });
+
+  // P1 (#15): applyUpdate must bump the live resourceVersion but must NOT change
+  // listResourceVersion (the watch identity), so per-event RV bumps don't rebuild
+  // the watch socket.
+  describe('#15 listResourceVersion (watch identity) is preserved across events', () => {
+    const listWithGen: KubeList<any> = {
+      ...initialList,
+      metadata: { resourceVersion: '10', listResourceVersion: '10' },
+    };
+
+    it.each([
+      ['ADDED', { uid: '2', resourceVersion: '11' }],
+      ['MODIFIED', { uid: '1', resourceVersion: '11' }],
+      ['DELETED', { uid: '1', resourceVersion: '11' }],
+    ] as const)('%s bumps resourceVersion but keeps listResourceVersion', (type, meta) => {
+      const event = {
+        type,
+        object: { apiVersion: 'v1', kind: 'MockKubeObject', metadata: meta },
+      } as unknown as KubeListUpdateEvent<MockKubeObject>;
+
+      const updated = KubeList.applyUpdate(listWithGen, event, itemClass, cluster);
+
+      expect(updated.metadata.resourceVersion).toBe('11'); // live RV advances
+      expect(updated.metadata.listResourceVersion).toBe('10'); // identity unchanged
+    });
+
+    it('a burst of events never changes listResourceVersion', () => {
+      let list = listWithGen;
+      for (let i = 12; i < 27; i++) {
+        list = KubeList.applyUpdate(
+          list,
+          {
+            type: 'MODIFIED',
+            object: {
+              apiVersion: 'v1',
+              kind: 'MockKubeObject',
+              metadata: { uid: '1', resourceVersion: String(i) },
+            },
+          } as unknown as KubeListUpdateEvent<MockKubeObject>,
+          itemClass,
+          cluster
+        );
+      }
+      expect(list.metadata.resourceVersion).toBe('26'); // advanced through the burst
+      expect(list.metadata.listResourceVersion).toBe('10'); // identity stable across 15 events
+    });
+
+    it('a list without listResourceVersion stays without it (backward-safe)', () => {
+      const updated = KubeList.applyUpdate(
+        initialList, // no listResourceVersion
+        {
+          type: 'MODIFIED',
+          object: {
+            apiVersion: 'v1',
+            kind: 'MockKubeObject',
+            metadata: { uid: '1', resourceVersion: '2' },
+          },
+        } as unknown as KubeListUpdateEvent<MockKubeObject>,
+        itemClass,
+        cluster
+      );
+      expect(updated.metadata.listResourceVersion).toBeUndefined();
+    });
+  });
 });

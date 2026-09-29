@@ -22,7 +22,14 @@ export interface KubeList<T extends KubeObjectInterface> {
   apiVersion: string;
   items: T[];
   metadata: {
+    /** Live resourceVersion: the freshest RV known for this list. Bumped by every
+     *  applied watch event (applyUpdate) and used to resume/dedup the watch. */
     resourceVersion: string;
+    /** P1 (#15): the RV of the last committed LIST snapshot. Set only when a fresh
+     *  LIST is committed; deliberately NOT changed by applied ADDED/MODIFIED/DELETED
+     *  events. Used as the watch IDENTITY so per-event RV bumps no longer tear down
+     *  and recreate the WebSocket (churn). See WS_CHURN_DESIGN.md. */
+    listResourceVersion?: string;
     /** Continuation token — present when more results exist beyond this page. */
     continue?: string;
     /** Approximate count of remaining items beyond this page. */
@@ -102,6 +109,9 @@ export const KubeList = {
         // ERROR/Status event) — never clobber it to undefined, which would break
         // the next watch resume.
         resourceVersion: update.object.metadata?.resourceVersion ?? list.metadata.resourceVersion,
+        // P1 (#15): listResourceVersion is intentionally NOT set here — it is the
+        // watch identity and must change only on a fresh LIST, not per event. The
+        // `...list.metadata` spread above preserves it unchanged across updates.
       },
       items: newItems,
     };

@@ -167,7 +167,12 @@ function allowedNamespaceListQuery<K extends KubeObject>(
           items,
           kind: selectorList?.kind ?? 'NamespaceList',
           apiVersion: selectorList?.apiVersion ?? 'v1',
-          metadata: { resourceVersion: selectorList?.metadata?.resourceVersion ?? '0' },
+          metadata: {
+            resourceVersion: selectorList?.metadata?.resourceVersion ?? '0',
+            // P1 (#15): stamp the LIST-generation RV (this list is skipWatch, so it
+            // never drives a watch, but keep it consistent with other fresh LISTs).
+            listResourceVersion: selectorList?.metadata?.resourceVersion ?? '0',
+          },
         } as KubeList<K>,
         cluster,
         skipWatch: true,
@@ -246,6 +251,15 @@ export function kubeObjectListQuery<K extends KubeObject>(
           itm.cluster = cluster;
           return itm;
         });
+
+        // P1 (#15): stamp the LIST-generation RV. This is a freshly committed LIST,
+        // so its resourceVersion becomes the watch IDENTITY (listResourceVersion).
+        // Applied watch events (applyUpdate) bump `resourceVersion` but leave
+        // `listResourceVersion` untouched, so per-event RV changes no longer rebuild
+        // the watch socket. Only a fresh LIST (here) advances the identity.
+        if (list.metadata) {
+          list.metadata.listResourceVersion = list.metadata.resourceVersion;
+        }
 
         const response: ListResponse<K> = {
           list: list as KubeList<K>,
@@ -883,7 +897,16 @@ export function useKubeObjectList<K extends KubeObject>({
         .map(data => ({
           cluster: data!.cluster,
           namespace: data!.namespace,
-          resourceVersion: data!.list.metadata.resourceVersion,
+          // P1 (#15): use the LIST-generation RV (listResourceVersion) as the watch
+          // identity, NOT the per-event live resourceVersion. applyUpdate bumps
+          // resourceVersion on every ADDED/MODIFIED/DELETED but leaves
+          // listResourceVersion unchanged, so the identity (and thus the watch URL
+          // and the connections array reference) stays stable across events — the
+          // WebSocket is no longer torn down and recreated per event (churn). Only a
+          // fresh LIST advances listResourceVersion → an intentional resync.
+          // Fallback to resourceVersion keeps older/synthetic lists behaving as before.
+          resourceVersion:
+            data!.list.metadata.listResourceVersion ?? data!.list.metadata.resourceVersion,
         }));
 
       if (
@@ -1027,6 +1050,11 @@ export function useKubeObjectList<K extends KubeObject>({
                 ...old.list,
                 metadata: {
                   resourceVersion: raw.metadata.resourceVersion,
+                  // P1 (#15): keep the LIST-generation RV in sync. Paginated pages
+                  // share the same consistent snapshot resourceVersion, so this is
+                  // stable across "load more" and correctly becomes the watch
+                  // identity once pagination completes and the watch turns on.
+                  listResourceVersion: raw.metadata.resourceVersion,
                   continue: raw.metadata.continue,
                   remainingItemCount: raw.metadata.remainingItemCount,
                 },
