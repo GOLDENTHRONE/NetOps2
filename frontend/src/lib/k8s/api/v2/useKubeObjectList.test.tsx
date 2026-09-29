@@ -1018,6 +1018,55 @@ describe('useKubeObjectList', () => {
     expect(rebuiltToBookmarkRV).toBe(false);
   });
 
+  it('does NOT rebuild the watch on an applied ADDED/MODIFIED/DELETED event (no churn) [#15]', async () => {
+    const queryClient = new QueryClient();
+    mockUseWebSockets.mockClear();
+    mockClusterFetch.mockResolvedValue({
+      json: () => Promise.resolve(makeListResponse({ resourceVersion: '1' })),
+    } as Response);
+
+    renderHook(
+      () => useKubeObjectList({ kubeObjectClass: mockClass, requests: [{ cluster: 'default' }] }),
+      { wrapper: queryClientWrapper(queryClient) }
+    );
+
+    // Initial watch identity = listResourceVersion=1 (stamped from the fresh LIST).
+    await waitFor(() =>
+      expect(
+        mockUseWebSockets.mock.calls.some(
+          ([call]) =>
+            call.connections[0]?.url ===
+            'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
+        )
+      ).toBe(true)
+    );
+
+    // Apply a real ADDED event that bumps the LIVE resourceVersion to 2.
+    const onMessage = mockUseWebSockets.mock.calls.at(-1)![0].connections[0].onMessage;
+    act(() => {
+      onMessage({
+        type: 'ADDED',
+        object: {
+          kind: 'Pod',
+          metadata: { uid: 'p2', name: 'p2', namespace: 'default', resourceVersion: '2' },
+        },
+      });
+    });
+    await new Promise(r => setTimeout(r, 50));
+
+    // The watch identity is listResourceVersion (still 1) — applyUpdate bumped only
+    // the live resourceVersion. So NO watch URL with resourceVersion=2 is ever built:
+    // the socket is not torn down and recreated on the event.
+    const rebuiltToEventRV = mockUseWebSockets.mock.calls.some(([call]) =>
+      (call.connections?.[0]?.url ?? '').includes('resourceVersion=2')
+    );
+    expect(rebuiltToEventRV).toBe(false);
+    // The watch URL is still pinned to the LIST-generation RV (1).
+    expect(mockUseWebSockets.mock.calls.at(-1)![0].connections[0]?.url).toBe(
+      'api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion=1'
+    );
+  });
+
   it('should split an opt-in limit across namespace requests', async () => {
     mockClusterFetch
       .mockResolvedValueOnce({
