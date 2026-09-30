@@ -706,6 +706,15 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
           } catch {
             return false;
           }
+          // P1 (#18): a 401 during the confirm LIST is an AUTH failure, not a dead socket.
+          // The v2 fetch layer has already routed it into the re-auth gate (authExpiry);
+          // returning true keeps this socket (no synthetic close → no reconnect loop). The
+          // imminent gate/unmount tears the watch down cleanly. Any other failure keeps the
+          // existing "unhealthy → reconnect" behavior via the dataUpdatedAt check below.
+          const err = client.getQueryState(key)?.error as ApiError | undefined;
+          if (err?.status === 401) {
+            return true;
+          }
           const after = client.getQueryState(key)?.dataUpdatedAt ?? 0;
           return after > before;
         },
@@ -1442,6 +1451,11 @@ export function useKubeObjectList<K extends KubeObject>({
   const visibilityResumedRef = useRef(false);
   const throttleUntilRef = useRef(0);
   const pollInFlightRef = useRef(false);
+  // P1 (#18): set when a cluster-scoped 401 is seen; pauses all controller work so no
+  // POLL/TRIAL/watch is (re)issued while the re-auth gate takes over (no 401 storm). The
+  // gate replaces the page → this hook unmounts → effects clean up; the flag is a
+  // belt-and-suspenders for the brief interim.
+  const authPausedRef = useRef(false);
   const jankRef = useRef<{ ms: number; since: number } | null>(null);
   const queryLiveRef = useRef(query);
   queryLiveRef.current = query;
@@ -1473,10 +1487,16 @@ export function useKubeObjectList<K extends KubeObject>({
   // One background prefix poll (O(loaded), keep-last-good). Serialized against Load More
   // and against itself; on 429 it backs off (no thundering herd, I6).
   const runPoll = useCallback(async () => {
-    if (pollInFlightRef.current || loadMorePromiseRef.current) return;
+    if (authPausedRef.current || pollInFlightRef.current || loadMorePromiseRef.current) return;
     pollInFlightRef.current = true;
     try {
       const err = await rebaselineRef.current(false, false);
+      if (err && (err as ApiError).status === 401) {
+        // P1 (#18): session expired — the fetch layer already routed it to the re-auth
+        // gate (authExpiry). Pause the controller: no reschedule, no trial, no reopen.
+        authPausedRef.current = true;
+        return;
+      }
       if (err && (err as ApiError).status === 429) {
         // Back off: widen the effective poll gap. (Retry-After header parsing is a
         // follow-up if ApiError exposes it; exponential-ish backoff prevents a herd.)
@@ -1520,6 +1540,9 @@ export function useKubeObjectList<K extends KubeObject>({
     }
 
     const interval = setInterval(() => {
+      // P1 (#18): once a 401 paused the controller, issue no further work; the re-auth
+      // gate is taking over and this hook will unmount.
+      if (authPausedRef.current) return;
       const now = Date.now();
       const q = queryLiveRef.current;
 
