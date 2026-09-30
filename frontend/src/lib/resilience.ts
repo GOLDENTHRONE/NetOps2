@@ -161,6 +161,109 @@ export const WATCH_LIVENESS_TIMEOUT_MS = intEnvOrDefault(
  */
 export const WATCH_ACCOUNTING = boolEnvOrDefault(import.meta.env.REACT_APP_WATCH_ACCOUNTING, false);
 
+/**
+ * P1 (#14 C4) — Adaptive LIVE ⇄ POLL freshness controller (see
+ * WS_PODS_LIVE_RESILIENCE_FINAL_RESEARCH.md). MASTER SWITCH, default **false**:
+ * when off, a live-subset (Pods) list behaves exactly as A1 today (always LIVE while
+ * partially paginated). When on, the controller may degrade a live-subset list to a
+ * bounded prefix-POLL when the *measured* stream cost or main-thread jank exceeds
+ * budget, returning to LIVE via a trial watch. It NEVER changes correctness (#15/#16,
+ * gap-free baseline, keep-last-good, O(loaded) all hold in both modes) and applies
+ * ONLY when `liveSubsetWatch` is active. Override: `REACT_APP_WATCH_ADAPTIVE`.
+ */
+export const WATCH_ADAPTIVE = boolEnvOrDefault(import.meta.env.REACT_APP_WATCH_ADAPTIVE, false);
+
+/**
+ * Whether the adaptive controller is enabled. Read LAZILY (not as an eager const) so a
+ * runtime opt-in — `window.__HEADLAMP_WATCH_ADAPTIVE__ = true` set before the bundle
+ * loads (same escape hatch as the accountant) — is observed even though the flag is
+ * checked at module-eval time elsewhere. Default (env false + global unset) keeps exact
+ * A1 behavior.
+ */
+export function isWatchAdaptiveEnabled(): boolean {
+  return (
+    WATCH_ADAPTIVE ||
+    (typeof globalThis !== 'undefined' && (globalThis as any).__HEADLAMP_WATCH_ADAPTIVE__ === true)
+  );
+}
+
+/** Prefix-poll interval (ms) and the `T` in the LIVE→POLL cost projection. */
+export const WATCH_ADAPTIVE_POLL_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_POLL_MS,
+  10000,
+  1000
+);
+
+/**
+ * LIVE→POLL when measured live bytes/s > COST_MARGIN × projected prefix-poll bytes/s
+ * (loaded × bytesPerEvent / poll interval). This is a DERIVED comparison, not a fixed
+ * event-rate threshold. `×100` (parsed as int then /100) so it is env-tunable as a
+ * percentage-like value; default 150 = 1.5×.
+ */
+export const WATCH_ADAPTIVE_COST_MARGIN =
+  intEnvOrDefault(import.meta.env.REACT_APP_WATCH_ADAPTIVE_COST_MARGIN_PCT, 150, 100) / 100;
+
+/**
+ * TRIAL→LIVE keep threshold as a fraction of projected poll cost (`/100`, default 100 =
+ * 1.0×). Must be ≤ COST_MARGIN; the gap between them is the hysteresis band that stops
+ * flapping at the crossover. Return to LIVE only when the trial's measured cost is at or
+ * below the plain poll cost (LIVE genuinely no more expensive than polling).
+ */
+export const WATCH_ADAPTIVE_TRIAL_KEEP_MARGIN =
+  intEnvOrDefault(import.meta.env.REACT_APP_WATCH_ADAPTIVE_TRIAL_KEEP_MARGIN_PCT, 100, 1) / 100;
+
+/** A LIVE→POLL trigger must hold continuously this long before it commits (anti-flap). */
+export const WATCH_ADAPTIVE_DWELL_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_DWELL_MS,
+  15000,
+  1000
+);
+
+/** LIVE→POLL when the main-thread long-task ratio exceeds this fraction. `/100`. */
+export const WATCH_ADAPTIVE_JANK_BUDGET =
+  intEnvOrDefault(import.meta.env.REACT_APP_WATCH_ADAPTIVE_JANK_BUDGET_PCT, 20, 0) / 100;
+
+/** How long a POLL→LIVE trial watch runs before its measured cost is judged. */
+export const WATCH_ADAPTIVE_TRIAL_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_TRIAL_MS,
+  8000,
+  1000
+);
+
+/** After a LIVE→POLL switch or a failed trial, stay in POLL at least this long. */
+export const WATCH_ADAPTIVE_COOLDOWN_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_COOLDOWN_MS,
+  60000,
+  1000
+);
+
+/** How often the controller re-evaluates signals. */
+export const WATCH_ADAPTIVE_EVAL_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_EVAL_MS,
+  2000,
+  500
+);
+
+/**
+ * Sustained near-zero live-event window (ms) that counts as chronic staleness (only
+ * when the collection is independently observed to be progressing). 0 = disabled
+ * (default) — cost + jank are the primary flap-safe triggers and #16 confirm-LIST
+ * already gives periodic freshness at the delivery ceiling. Override:
+ * `REACT_APP_WATCH_ADAPTIVE_STALENESS_MS`.
+ */
+export const WATCH_ADAPTIVE_STALENESS_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_STALENESS_MS,
+  0,
+  0
+);
+
+/** Fallback bytes/event used for the poll-cost projection until the accountant measures. */
+export const WATCH_ADAPTIVE_FALLBACK_BYTES_PER_EVENT = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_ADAPTIVE_FALLBACK_BYTES_PER_EVENT,
+  1800,
+  1
+);
+
 /** Returns `ms` spread by +/-POLL_JITTER_PCT. Used for poll intervals and retry delay. */
 export function withJitter(ms: number, pct: number = POLL_JITTER_PCT): number {
   if (pct <= 0) {

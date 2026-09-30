@@ -38,6 +38,8 @@ const mockClusterFetch = vi.mocked(clusterFetch);
 vi.mock('./webSocket', () => ({
   useWebSockets: (...args: any[]) => mockUseWebSockets(...args),
   BASE_WS_URL: 'http://localhost:3000',
+  // P1 (#14 C4): the adaptive controller reads the global "reconnecting" signal.
+  useAnyWatchReconnecting: () => false,
 }));
 
 vi.mock('./multiplexer', () => ({

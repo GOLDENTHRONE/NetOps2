@@ -40,7 +40,7 @@
  * `window.__headlampWatchAccounting()`.
  */
 
-import { WATCH_ACCOUNTING } from '../../../resilience';
+import { isWatchAdaptiveEnabled, WATCH_ACCOUNTING } from '../../../resilience';
 
 /** A point-in-time cost snapshot for one watch connection. */
 export interface WatchAccountSnapshot {
@@ -96,7 +96,11 @@ export function isWatchAccountingEnabled(): boolean {
     const runtime =
       typeof globalThis !== 'undefined' &&
       (globalThis as any).__HEADLAMP_WATCH_ACCOUNTING__ === true;
-    enabled = WATCH_ACCOUNTING || runtime;
+    // The adaptive controller (C4) REQUIRES the accountant as its in-band cost signal,
+    // and the watch socket opens before the controller's effect runs — so accounting
+    // must be on from the very first frame whenever adaptive is enabled. Otherwise the
+    // initial `accountOpen` is skipped and no per-watch record is ever created.
+    enabled = WATCH_ACCOUNTING || isWatchAdaptiveEnabled() || runtime;
   }
   return enabled;
 }

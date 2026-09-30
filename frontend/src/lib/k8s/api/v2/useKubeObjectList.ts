@@ -21,7 +21,22 @@ import {
   hasAllowedNamespacesRestriction,
   loadClusterSettings,
 } from '../../../../helpers/clusterSettings';
-import { WATCH_FALLBACK_REFETCH_MS, watchFallbackRefetchInterval } from '../../../resilience';
+import {
+  isWatchAdaptiveEnabled,
+  WATCH_ADAPTIVE_COOLDOWN_MS,
+  WATCH_ADAPTIVE_COST_MARGIN,
+  WATCH_ADAPTIVE_DWELL_MS,
+  WATCH_ADAPTIVE_EVAL_MS,
+  WATCH_ADAPTIVE_FALLBACK_BYTES_PER_EVENT,
+  WATCH_ADAPTIVE_JANK_BUDGET,
+  WATCH_ADAPTIVE_POLL_MS,
+  WATCH_ADAPTIVE_STALENESS_MS,
+  WATCH_ADAPTIVE_TRIAL_KEEP_MARGIN,
+  WATCH_ADAPTIVE_TRIAL_MS,
+  WATCH_FALLBACK_REFETCH_MS,
+  watchFallbackRefetchInterval,
+  withJitter,
+} from '../../../resilience';
 import type { KubeObject, KubeObjectClass } from '../../KubeObject';
 import type { QueryParameters } from '../v1/queryParameters';
 import { ApiError } from './ApiError';
@@ -34,7 +49,19 @@ import { KubeObjectEndpoint } from './KubeObjectEndpoint';
 import { makeUrl } from './makeUrl';
 import { WebSocketManager } from './multiplexer';
 import { kubeRequestRetry } from './retry';
-import { BASE_WS_URL, useWebSockets } from './webSocket';
+import {
+  getWatchAccounting,
+  isWatchAccountingEnabled,
+  setWatchAccountingEnabled,
+} from './watchAccounting';
+import type {
+  FreshnessConfig,
+  FreshnessMode,
+  FreshnessSignals,
+  FreshnessState,
+} from './watchFreshnessController';
+import { createInitialFreshnessState, decide as freshnessDecide } from './watchFreshnessController';
+import { BASE_WS_URL, useAnyWatchReconnecting, useWebSockets } from './webSocket';
 
 /**
  * @returns true if the websocket multiplexer is enabled.
@@ -879,6 +906,15 @@ export function useKubeObjectList<K extends KubeObject>({
   // unfiltered path.
   const liveSubsetActive = liveSubsetWatch && !!limit && !getWebsocketMultiplexerEnabled();
 
+  // P1 (#14 C4): the adaptive LIVE⇄POLL controller is active only within an already
+  // live-subset list AND when explicitly enabled (default OFF → today's A1 behavior).
+  const adaptiveActive = liveSubsetActive && isWatchAdaptiveEnabled();
+  const [adaptiveMode, setAdaptiveMode] = useState<FreshnessMode>('LOADING');
+  // Global "any watch reconnecting" signal (from the existing #16/backoff machinery)
+  // — the controller uses it for the RECONNECTING state; the reconnect itself is driven
+  // by webSocket.ts, not here.
+  const watchReconnecting = useAnyWatchReconnecting();
+
   // Declared here (before effectiveRefetchInterval) so the fallback interval can read
   // the in-flight "load more" state. Assigned/consumed by loadMore below.
   const loadMorePromiseRef = useRef<Promise<void> | null>(null);
@@ -981,8 +1017,20 @@ export function useKubeObjectList<K extends KubeObject>({
   // live-subset mode we DO watch while partially paginated, because the membership
   // filter (useWatchKubeObjectListsLegacy) applies only events for loaded objects and
   // ignores ADDED — so the list can never grow past what was loaded.
+  // P1 (#14 C4): in adaptive mode the controller decides when the live watch is open
+  // (LIVE/TRIAL/RECONNECTING) vs. suspended for POLL. When adaptive is off this is
+  // always true, so behavior is identical to A1 today.
+  const adaptiveWatchAllowed =
+    !adaptiveActive ||
+    adaptiveMode === 'LIVE' ||
+    adaptiveMode === 'TRIAL' ||
+    adaptiveMode === 'RECONNECTING';
   const shouldWatch =
-    watch && !refetchInterval && !query.isLoading && (liveSubsetActive || !query.hasMore);
+    watch &&
+    !refetchInterval &&
+    !query.isLoading &&
+    (liveSubsetActive || !query.hasMore) &&
+    adaptiveWatchAllowed;
 
   const [listsToWatch, setListsToWatch] = useState<
     { cluster: string; namespace?: string; resourceVersion: string }[]
@@ -1062,6 +1110,115 @@ export function useKubeObjectList<K extends KubeObject>({
 
   const queryClient = useQueryClient();
 
+  // Monotonic generation for the re-baseline primitive; a later call supersedes earlier
+  // in-flight ones so a stale LIST cannot overwrite newer state (see rebaselinePrefix).
+  const rebaselineGenRef = useRef(0);
+
+  // P1 (#14): the gap-free prefix re-baseline primitive, shared by Load More and the
+  // adaptive POLL (C4). It runs ONE fresh, limit-based LIST of the loaded prefix (NO
+  // continue token, so it never depends on / expires a pinned snapshot) and REPLACES
+  // the cached items with that consistent snapshot, recording the LIST's RV as the new
+  // `listResourceVersion` (the #15 watch identity) so any subsequent watch opens from a
+  // fresh baseline — the "LIST-at-fresh-RV → replace → (watch-from-RV)" invariant (I1).
+  //  - grow=true   → extend by one page (Load More).
+  //  - grow=false  → re-list the same prefix size (POLL / trial baseline), O(loaded).
+  // On error the cache is left untouched (keep-last-good); `surfaceError` controls
+  // whether the error is shown (Load More: yes; background POLL: no, just retry).
+  // Returns the first ApiError encountered (for backoff / 429 handling), else undefined.
+  const rebaselinePrefix = useCallback(
+    async (grow: boolean, surfaceError: boolean): Promise<ApiError | undefined> => {
+      if (!endpoint) return undefined;
+      // Generation guard against stale-async overwrite: if a NEWER rebaseline (Load More,
+      // a later poll, or a trial baseline) starts while this one's LIST is in flight, this
+      // (now-superseded) call must NOT commit its older snapshot over the newer state. The
+      // in-flight guards below (Load More is serialized; the controller skips rebaselines
+      // while Load More runs) mean a Load-More append is never the superseded one.
+      const myGen = ++rebaselineGenRef.current;
+      const pageSize = getPositiveLimit(perRequestQueryParams) ?? DEFAULT_LIST_LIMIT;
+      const results = await Promise.allSettled(
+        queries.map(async q => {
+          const cached = queryClient.getQueryData<ListResponse<K>>(q.queryKey!);
+          if (!cached?.list) return;
+          // Load More needs a continue token; POLL re-lists whatever is loaded.
+          if (grow && !cached.list.metadata?.continue) return;
+          const currentCount = cached.list.items.length;
+          const newLimit = grow ? currentCount + pageSize : Math.max(currentCount, 1);
+          const fetchParams: QueryParameters = { ...perRequestQueryParams, limit: newLimit };
+          let raw: KubeList<any>;
+          try {
+            raw = await clusterFetch(
+              makeUrl([KubeObjectEndpoint.toUrl(endpoint, cached.namespace)], fetchParams),
+              { cluster: cached.cluster }
+            ).then(r => r.json());
+          } catch (e) {
+            const error =
+              e instanceof ApiError
+                ? e
+                : new ApiError(e instanceof Error ? e.message : 'Failed to load resources');
+            error.cluster = cached.cluster;
+            error.namespace = cached.namespace;
+            // 410: the fresh LIST's RV was too old (rare for a limit-based read) →
+            // invalidate so the queryFn relists a fresh page 1; the watch re-baselines.
+            if (error.status === 410) {
+              queryClient.invalidateQueries({ queryKey: q.queryKey! });
+            }
+            throw error;
+          }
+          const kind = raw.kind.replace(/List$/, '');
+          const apiVersion = raw.apiVersion;
+          const items: K[] = raw.items.map((item: any) => {
+            if (item.metadata?.managedFields) delete item.metadata.managedFields;
+            item.kind = kind;
+            item.apiVersion = apiVersion;
+            const obj = new kubeObjectClass(item) as K;
+            obj.cluster = cached.cluster;
+            return obj;
+          });
+          // A newer rebaseline superseded this one while its LIST was in flight → drop
+          // this stale result rather than overwrite the newer state (I1 / no stale write).
+          if (myGen !== rebaselineGenRef.current) return;
+          queryClient.setQueryData<ListResponse<K>>(q.queryKey!, old =>
+            old
+              ? {
+                  ...old,
+                  list: {
+                    ...old.list,
+                    // REPLACE (not append): a fresh consistent prefix snapshot.
+                    items,
+                    metadata: {
+                      resourceVersion: raw.metadata.resourceVersion,
+                      // Fresh LIST snapshot ⇒ new watch identity (#15): exactly one
+                      // intentional watch restart per re-baseline.
+                      listResourceVersion: raw.metadata.resourceVersion,
+                      continue: raw.metadata.continue,
+                      remainingItemCount: raw.metadata.remainingItemCount,
+                      // Still more beyond this prefix ⇒ keep the paginated guard set.
+                      paginated: !!raw.metadata.continue,
+                    },
+                  },
+                }
+              : old
+          );
+        })
+      );
+      const rejected = results.find(r => r.status === 'rejected') as
+        | PromiseRejectedResult
+        | undefined;
+      if (rejected) {
+        const reason: any = rejected.reason;
+        if (surfaceError) {
+          setPaginationError(
+            toPaginationApiError(reason, reason?.cluster ?? '', reason?.namespace ?? '')
+          );
+        }
+        return reason instanceof ApiError ? reason : toPaginationApiError(reason, '', '');
+      }
+      return undefined;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [endpoint, perRequestQueryParams, queries, queryClient, kubeObjectClass]
+  );
+
   const loadMore = useCallback(async () => {
     if (!endpoint) return;
 
@@ -1119,78 +1276,10 @@ export function useKubeObjectList<K extends KubeObject>({
       // once; the newly-loaded pods are current as of the new RV; the whole-collection
       // watch then covers new-RV→now with no gap. Retained state stays O(loaded).
       if (liveSubsetActive) {
-        const pageSize = getPositiveLimit(perRequestQueryParams) ?? DEFAULT_LIST_LIMIT;
-        const results = await Promise.allSettled(
-          queries.map(async q => {
-            const cached = queryClient.getQueryData<ListResponse<K>>(q.queryKey!);
-            if (!cached?.list) return;
-            // Nothing more to load for this query → leave it (and its watch) as is.
-            if (!cached.list.metadata?.continue) return;
-            const newLimit = cached.list.items.length + pageSize;
-            const fetchParams: QueryParameters = { ...perRequestQueryParams, limit: newLimit };
-            let raw: KubeList<any>;
-            try {
-              raw = await clusterFetch(
-                makeUrl([KubeObjectEndpoint.toUrl(endpoint, cached.namespace)], fetchParams),
-                { cluster: cached.cluster }
-              ).then(r => r.json());
-            } catch (e) {
-              const error =
-                e instanceof ApiError
-                  ? e
-                  : new ApiError(e instanceof Error ? e.message : 'Failed to load more resources');
-              error.cluster = cached.cluster;
-              error.namespace = cached.namespace;
-              // 410: the snapshot expired mid re-baseline. Invalidate → queryFn relists
-              // a fresh page 1 (existing recovery); the watch re-baselines from that.
-              if (error.status === 410) {
-                queryClient.invalidateQueries({ queryKey: q.queryKey! });
-              }
-              throw error;
-            }
-            const kind = raw.kind.replace(/List$/, '');
-            const apiVersion = raw.apiVersion;
-            const items: K[] = raw.items.map((item: any) => {
-              if (item.metadata?.managedFields) delete item.metadata.managedFields;
-              item.kind = kind;
-              item.apiVersion = apiVersion;
-              const obj = new kubeObjectClass(item) as K;
-              obj.cluster = cached.cluster;
-              return obj;
-            });
-            queryClient.setQueryData<ListResponse<K>>(q.queryKey!, old =>
-              old
-                ? {
-                    ...old,
-                    list: {
-                      ...old.list,
-                      // REPLACE (not append): a fresh consistent prefix snapshot.
-                      items,
-                      metadata: {
-                        resourceVersion: raw.metadata.resourceVersion,
-                        // Fresh LIST snapshot ⇒ this is the new watch identity (#15):
-                        // exactly one intentional watch restart per Load-More.
-                        listResourceVersion: raw.metadata.resourceVersion,
-                        continue: raw.metadata.continue,
-                        remainingItemCount: raw.metadata.remainingItemCount,
-                        // Still more beyond this prefix ⇒ keep the paginated guard set.
-                        paginated: !!raw.metadata.continue,
-                      },
-                    },
-                  }
-                : old
-            );
-          })
-        );
-        const rejected = results.find(r => r.status === 'rejected') as
-          | PromiseRejectedResult
-          | undefined;
-        if (rejected) {
-          const reason: any = rejected.reason;
-          setPaginationError(
-            toPaginationApiError(reason, reason?.cluster ?? '', reason?.namespace ?? '')
-          );
-        }
+        // P1 (#14): re-baseline the prefix + one more page at a FRESH snapshot (grow),
+        // closing the §F event-gap; exactly one intentional watch restart. Shared with
+        // the adaptive POLL (which calls the same primitive with grow=false).
+        await rebaselinePrefix(true, true);
         return;
       }
 
@@ -1333,6 +1422,227 @@ export function useKubeObjectList<K extends KubeObject>({
     perRequestQueryParams,
     refetchInterval,
   ]);
+
+  // ----------------------------------------------------------------------------
+  // P1 (#14 C4): adaptive LIVE ⇄ POLL controller wiring. Default OFF (WATCH_ADAPTIVE
+  // false) → none of this runs and behavior is identical to A1. When ON (only within a
+  // live-subset list) it reads the accountant + jank + visibility signals, runs the
+  // pure controller, and maps the mode to A1 primitives: LIVE/TRIAL keep the watch open
+  // (adaptiveWatchAllowed above); POLL suspends the watch and periodically re-baselines
+  // the prefix (gap-free, O(loaded)). It never changes correctness — #15/#16, keep-last-
+  // good, 410 recovery and the multiplexer guard all live in the shared primitives.
+  // ----------------------------------------------------------------------------
+  const adaptiveStateRef = useRef<FreshnessState | null>(null);
+  const adaptiveSampleRef = useRef<{
+    bytes: number;
+    dataEvents: number;
+    at: number;
+    lastChangeAt: number;
+  } | null>(null);
+  const visibilityResumedRef = useRef(false);
+  const throttleUntilRef = useRef(0);
+  const pollInFlightRef = useRef(false);
+  const jankRef = useRef<{ ms: number; since: number } | null>(null);
+  const queryLiveRef = useRef(query);
+  queryLiveRef.current = query;
+  const rebaselineRef = useRef(rebaselinePrefix);
+  rebaselineRef.current = rebaselinePrefix;
+  const watchReconnectingRef = useRef(watchReconnecting);
+  watchReconnectingRef.current = watchReconnecting;
+
+  const adaptiveConfig = useMemo<FreshnessConfig>(() => {
+    // Optional runtime overrides (test/tuning), merged over the env-configured defaults.
+    const runtime =
+      (typeof globalThis !== 'undefined' &&
+        ((globalThis as any).__HEADLAMP_WATCH_ADAPTIVE_CONFIG__ as Partial<FreshnessConfig>)) ||
+      {};
+    return {
+      pollIntervalMs: WATCH_ADAPTIVE_POLL_MS,
+      costMargin: WATCH_ADAPTIVE_COST_MARGIN,
+      trialKeepMargin: WATCH_ADAPTIVE_TRIAL_KEEP_MARGIN,
+      dwellMs: WATCH_ADAPTIVE_DWELL_MS,
+      jankBudget: WATCH_ADAPTIVE_JANK_BUDGET,
+      trialMs: WATCH_ADAPTIVE_TRIAL_MS,
+      cooldownMs: WATCH_ADAPTIVE_COOLDOWN_MS,
+      stalenessMs: WATCH_ADAPTIVE_STALENESS_MS,
+      fallbackBytesPerEvent: WATCH_ADAPTIVE_FALLBACK_BYTES_PER_EVENT,
+      ...runtime,
+    };
+  }, []);
+
+  // One background prefix poll (O(loaded), keep-last-good). Serialized against Load More
+  // and against itself; on 429 it backs off (no thundering herd, I6).
+  const runPoll = useCallback(async () => {
+    if (pollInFlightRef.current || loadMorePromiseRef.current) return;
+    pollInFlightRef.current = true;
+    try {
+      const err = await rebaselineRef.current(false, false);
+      if (err && (err as ApiError).status === 429) {
+        // Back off: widen the effective poll gap. (Retry-After header parsing is a
+        // follow-up if ApiError exposes it; exponential-ish backoff prevents a herd.)
+        throttleUntilRef.current = Date.now() + WATCH_ADAPTIVE_POLL_MS * 3;
+      }
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  }, []);
+
+  // Evaluation loop: gather signals → pure decide() → apply mode + one-shot actions.
+  useEffect(() => {
+    if (!adaptiveActive) return;
+    if (!isWatchAccountingEnabled()) setWatchAccountingEnabled(true);
+    if (!adaptiveStateRef.current) {
+      adaptiveStateRef.current = createInitialFreshnessState(Date.now());
+    }
+    adaptiveSampleRef.current = null;
+    jankRef.current = { ms: 0, since: Date.now() };
+
+    let po: PerformanceObserver | null = null;
+    try {
+      if (typeof PerformanceObserver !== 'undefined') {
+        po = new PerformanceObserver(list => {
+          for (const e of list.getEntries()) {
+            if (jankRef.current) jankRef.current.ms += e.duration;
+          }
+        });
+        po.observe({ entryTypes: ['longtask'] });
+      }
+    } catch {
+      /* longtask not supported — jankRatio stays null (cost trigger still works) */
+    }
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        visibilityResumedRef.current = true;
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const q = queryLiveRef.current;
+
+      // Dominant live watch = the whole-collection pods watch (most bytes).
+      const podsWatch =
+        getWatchAccounting()
+          .filter(e => /\?watch/.test(e.url))
+          .sort((a, b) => b.bytes - a.bytes)[0] ?? null;
+      let liveBytesPerSec: number | null = null;
+      let bytesPerEvent: number | null = null;
+      let silentMs: number | null = null;
+      if (podsWatch) {
+        bytesPerEvent = podsWatch.bytesPerEvent || null;
+        const prev = adaptiveSampleRef.current;
+        if (prev && now > prev.at) {
+          const dt = (now - prev.at) / 1000;
+          liveBytesPerSec = Math.max(0, (podsWatch.bytes - prev.bytes) / dt);
+          const changed = podsWatch.dataEvents !== prev.dataEvents;
+          const lastChangeAt = changed ? now : prev.lastChangeAt;
+          silentMs = now - lastChangeAt;
+          adaptiveSampleRef.current = {
+            bytes: podsWatch.bytes,
+            dataEvents: podsWatch.dataEvents,
+            at: now,
+            lastChangeAt,
+          };
+        } else {
+          adaptiveSampleRef.current = {
+            bytes: podsWatch.bytes,
+            dataEvents: podsWatch.dataEvents,
+            at: now,
+            lastChangeAt: now,
+          };
+        }
+      }
+
+      let jankRatio: number | null = null;
+      if (jankRef.current) {
+        const win = now - jankRef.current.since;
+        if (win > 0) jankRatio = Math.min(1, jankRef.current.ms / win);
+        jankRef.current = { ms: 0, since: now };
+      }
+
+      const loadedCount = q?.items?.length ?? 0;
+      const signals: FreshnessSignals = {
+        loaded: !!q && !q.isLoading && loadedCount > 0,
+        loadedCount,
+        liveBytesPerSec,
+        bytesPerEvent,
+        jankRatio,
+        silentMs,
+        // Detecting "cluster progressing while our watch is silent" cheaply from the
+        // client is out of scope here; left null so silence never forces POLL on its
+        // own (staleness trigger stays inert unless a caller supplies this). See report.
+        clusterProgressing: null,
+        watchReconnecting: watchReconnectingRef.current,
+        visibilityResumed: visibilityResumedRef.current,
+        backendThrottled: now < throttleUntilRef.current,
+      };
+      visibilityResumedRef.current = false;
+
+      const decision = freshnessDecide(adaptiveStateRef.current!, signals, adaptiveConfig, now);
+      adaptiveStateRef.current = decision.state;
+      // Diagnostic (adaptive-only): expose the controller's live view for validation
+      // drivers. Harmless; only written while the adaptive controller is running.
+      if (typeof globalThis !== 'undefined') {
+        (globalThis as any).__headlampAdaptive = {
+          mode: decision.state.mode,
+          liveBytesPerSec,
+          bytesPerEvent,
+          loadedCount,
+          pollCost:
+            bytesPerEvent && loadedCount
+              ? (loadedCount * bytesPerEvent) / (adaptiveConfig.pollIntervalMs / 1000)
+              : null,
+          reason: decision.reason,
+        };
+      }
+      setAdaptiveMode(prev => (prev === decision.state.mode ? prev : decision.state.mode));
+      // Gap-free (I1): take a fresh prefix baseline BEFORE the watch (re)opens. Skip while
+      // a Load More is in flight — it is already taking a fresh (larger) baseline, and a
+      // concurrent grow=false re-list must not race the grow=true append.
+      if (decision.freshBaselineNeeded && !loadMorePromiseRef.current) {
+        void rebaselineRef.current(false, false);
+      }
+      if (decision.pollNow) void runPoll();
+    }, WATCH_ADAPTIVE_EVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      if (po) {
+        try {
+          po.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis);
+      }
+      // Leave the accountant enabled (other lists may rely on it); it is opt-in anyway.
+    };
+  }, [adaptiveActive, adaptiveConfig, runPoll]);
+
+  // While in POLL, run the periodic prefix re-baseline (jittered; honors backoff).
+  useEffect(() => {
+    if (!adaptiveActive || adaptiveMode !== 'POLL') return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const schedule = () => {
+      const base = Math.max(WATCH_ADAPTIVE_POLL_MS, throttleUntilRef.current - Date.now());
+      timer = setTimeout(async () => {
+        if (cancelled) return;
+        await runPoll();
+        if (!cancelled) schedule();
+      }, withJitter(base));
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [adaptiveActive, adaptiveMode, runPoll]);
 
   // @ts-ignore - TS compiler gets confused with iterators
   return {
