@@ -149,6 +149,18 @@ export const WATCH_LIVENESS_TIMEOUT_MS = intEnvOrDefault(
   0
 );
 
+/**
+ * MEASUREMENT ONLY (no gating) — enable the observational watch accountant
+ * (watchAccounting.ts), which records per-watch event rate, exact wire bytes,
+ * parse cost, reconnects and lifetime so a future fallback/gating decision can
+ * be grounded in real evidence. Default false: when off, the watch hot path pays
+ * only a single cached boolean read. This flag NEVER changes watch behaviour
+ * (#15/#16/multiplexer are untouched). Override: `REACT_APP_WATCH_ACCOUNTING`.
+ * For ad-hoc measurement without a rebuild, set
+ * `window.__HEADLAMP_WATCH_ACCOUNTING__ = true` before the app bundle loads.
+ */
+export const WATCH_ACCOUNTING = boolEnvOrDefault(import.meta.env.REACT_APP_WATCH_ACCOUNTING, false);
+
 /** Returns `ms` spread by +/-POLL_JITTER_PCT. Used for poll intervals and retry delay. */
 export function withJitter(ms: number, pct: number = POLL_JITTER_PCT): number {
   if (pct <= 0) {
