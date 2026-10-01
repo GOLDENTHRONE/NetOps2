@@ -30,6 +30,15 @@ export interface KubeList<T extends KubeObjectInterface> {
      *  events. Used as the watch IDENTITY so per-event RV bumps no longer tear down
      *  and recreate the WebSocket (churn). See WS_CHURN_DESIGN.md. */
     listResourceVersion?: string;
+    /** P1 (#14): Headlamp-local client state (NOT a Kubernetes field). True once this
+     *  query's cache holds pages accumulated via "Load more" (continue-token / M2
+     *  pagination). It is the CORRECTNESS marker that forbids a page-1 LIST refetch
+     *  (fallback, reconnect, mount, invalidate, refetchQueries, in-flight overlap)
+     *  from overwriting the accumulated multi-page list: the queryFn checks it at the
+     *  commit boundary and, when set, keeps the existing cache instead of replacing it.
+     *  Distinct from `continue` (server-side "more pages exist"). See
+     *  WS_PODS_FALLBACK_RACE_ANALYSIS.md. */
+    paginated?: boolean;
     /** Continuation token — present when more results exist beyond this page. */
     continue?: string;
     /** Approximate count of remaining items beyond this page. */

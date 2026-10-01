@@ -28,6 +28,12 @@ import {
   withJitter,
 } from '../../../resilience';
 import { makeUrl } from './makeUrl';
+import {
+  accountFrame,
+  accountOpen,
+  accountTeardown,
+  isWatchAccountingEnabled,
+} from './watchAccounting';
 
 /**
  * Get the WebSocket base URL dynamically to support runtime port configuration
@@ -327,13 +333,30 @@ export async function openWebSocket<T>(
   // P1 (#16): arm silent-death liveness when the socket opens.
   socket.addEventListener('open', () => {
     markActivity(connectionKey);
+    // Accounting (measurement only): first open starts the lifetime, a later open
+    // for the same connection is a reconnect. No-op when accounting is disabled.
+    accountOpen(connectionKey, url);
     armLiveness(connectionKey, socket, WATCH_LIVENESS_TIMEOUT_MS);
   });
   socket.addEventListener('message', (body: MessageEvent) => {
     // P1 (#16): every incoming frame (data OR bookmark) counts as activity.
     // Record it BEFORE parsing so even a malformed frame keeps the watch "alive".
     markActivity(connectionKey);
-    const data = type === 'json' ? JSON.parse(body.data) : body.data;
+    // Accounting (measurement only): when enabled, time the parse we already do
+    // (no second parse) and record exact wire bytes; classify from the parsed
+    // `type`. When disabled this is a single cached boolean read, nothing else.
+    const acct = isWatchAccountingEnabled();
+    let data: T;
+    if (acct && type === 'json') {
+      const started = performance.now();
+      data = JSON.parse(body.data);
+      accountFrame(connectionKey, body.data, (data as any)?.type, performance.now() - started);
+    } else {
+      data = type === 'json' ? JSON.parse(body.data) : body.data;
+      if (acct && typeof body.data === 'string') {
+        accountFrame(connectionKey, body.data, (data as any)?.type, 0);
+      }
+    }
     const callbacks = listeners.get(connectionKey) ?? [onMessage];
     callbacks.forEach(callback => {
       try {
@@ -516,6 +539,9 @@ export function useWebSockets<T>({
           lastActivity.delete(connectionKey);
           livenessConfirm.delete(connectionKey);
           livenessConfirming.delete(connectionKey);
+          // Accounting (measurement only): full teardown ends this watch's
+          // lifetime; a later re-subscribe starts fresh (not a reconnect).
+          accountTeardown(connectionKey);
           const maybeExisting = sockets.get(connectionKey);
           if (maybeExisting) {
             if (typeof maybeExisting !== 'symbol') {

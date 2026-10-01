@@ -20,6 +20,7 @@ import { getHeadlampAPIHeaders } from '../../../../helpers/getHeadlampAPIHeaders
 import { findKubeconfigByClusterName } from '../../../../stateless/findKubeconfigByClusterName';
 import { getUserIdFromLocalStorage } from '../../../../stateless/getUserIdFromLocalStorage';
 import { ApiError } from './ApiError';
+import { noteClusterAuthSuccess, reportClusterAuthFailure } from './authExpiry';
 import { makeUrl } from './makeUrl';
 
 // @deprecated BASE_HTTP_URL is deprecated for Electron apps with custom ports.
@@ -78,7 +79,15 @@ export async function backendFetch(url: string | URL, init: RequestInit = {}) {
  *
  * @returns fetch Response
  */
-export async function clusterFetch(url: string | URL, init: RequestInit & { cluster: string }) {
+export async function clusterFetch(
+  url: string | URL,
+  init: RequestInit & { cluster: string; autoLogoutOnAuthError?: boolean }
+) {
+  // P1 (#18): mirror v1's `autoLogoutOnAuthError` (default true). A cluster-scoped 401
+  // routes into the existing re-auth flow (see authExpiry.ts). Callers that must NOT
+  // trigger re-auth (e.g. login/set-token) pass false; but note set-token uses
+  // backendFetch (no cluster), so it is naturally excluded regardless.
+  const autoLogoutOnAuthError = init.autoLogoutOnAuthError !== false;
   init.headers = new Headers(init.headers);
   if (init.cluster) {
     for (const [name, value] of Object.entries(getHeadlampAPIHeaders())) {
@@ -99,10 +108,21 @@ export async function clusterFetch(url: string | URL, init: RequestInit & { clus
   try {
     const response = await backendFetch(makeUrl(urlParts), init);
 
+    // P1 (#18): a successful cluster response ends any auth-failure episode for it, so a
+    // later genuine expiry can re-fire the gate.
+    if (init.cluster) {
+      noteClusterAuthSuccess(init.cluster);
+    }
     return response;
   } catch (e) {
     if (e instanceof ApiError) {
       e.cluster = init.cluster;
+      // P1 (#18): ONLY a 401 (authentication failure — evaluated before RBAC) proves the
+      // session is unusable. 403/410/429/network/timeout are NOT auth failures and never
+      // trigger re-auth. Cluster-scoped only; de-duplicated per cluster (authExpiry.ts).
+      if (autoLogoutOnAuthError && e.status === 401 && init.cluster) {
+        reportClusterAuthFailure(init.cluster);
+      }
     }
     throw e;
   }
