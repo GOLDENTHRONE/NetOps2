@@ -25,6 +25,7 @@ import {
   WATCH_RECONNECT,
   WATCH_RECONNECT_BASE_MS,
   WATCH_RECONNECT_CAP_MS,
+  WATCH_UNSUBSCRIBE_GRACE_MS,
   withJitter,
 } from '../../../resilience';
 import { makeUrl } from './makeUrl';
@@ -99,6 +100,12 @@ const intentionalClose = new WeakSet<WebSocket>();
 const reconnectAttempts = new Map<string, number>();
 /** Pending reconnect timers per connection, so we can cancel on unsubscribe. */
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/**
+ * P1 (#17): pending grace-delayed teardown timers per connection. When the last
+ * listener leaves, teardown is scheduled here instead of running immediately; a
+ * re-subscribe to the same key cancels it (socket reused). At most one per key.
+ */
+const pendingUnsubscribes = new Map<string, ReturnType<typeof setTimeout>>();
 /** Per-connection live/reconnecting state, for the freshness indicator (Item 3). */
 const watchStates = new Map<string, 'live' | 'reconnecting'>();
 const watchStateSubscribers = new Set<() => void>();
@@ -122,6 +129,45 @@ function setWatchState(connectionKey: string, state: 'live' | 'reconnecting' | '
     watchStates.set(connectionKey, state);
   }
   watchStateSubscribers.forEach(fn => fn());
+}
+
+/**
+ * P1 (#17): complete, one-shot teardown of a connection by key. Closes the live
+ * socket (if any), cancels/clears every per-connection timer and state, ends
+ * accounting, and marks the watch gone. Idempotent and safe when the socket is
+ * already closed/superseded/absent. Used both for immediate teardown (grace=0)
+ * and when the grace window expires with no re-subscribe.
+ */
+function performTeardown(connectionKey: string) {
+  const pendingTeardown = pendingUnsubscribes.get(connectionKey);
+  if (pendingTeardown) {
+    clearTimeout(pendingTeardown);
+    pendingUnsubscribes.delete(connectionKey);
+  }
+  const timer = reconnectTimers.get(connectionKey);
+  if (timer) {
+    clearTimeout(timer);
+    reconnectTimers.delete(connectionKey);
+  }
+  reconnectAttempts.delete(connectionKey);
+  // P1 (#16): drop liveness state so no timer/confirmation outlives the connection
+  // (a pending confirmation's result is also ignored via the socket-identity guard).
+  clearLiveness(connectionKey);
+  lastActivity.delete(connectionKey);
+  livenessConfirm.delete(connectionKey);
+  livenessConfirming.delete(connectionKey);
+  // Accounting (measurement only): full teardown ends this watch's lifetime; a
+  // later re-subscribe starts fresh (not a reconnect).
+  accountTeardown(connectionKey);
+  const maybeExisting = sockets.get(connectionKey);
+  if (maybeExisting) {
+    if (typeof maybeExisting !== 'symbol') {
+      intentionalClose.add(maybeExisting);
+      maybeExisting.close();
+    }
+    sockets.delete(connectionKey);
+  }
+  setWatchState(connectionKey, 'gone');
 }
 
 /** True while any watch connection is currently reconnecting after a drop. */
@@ -502,6 +548,16 @@ export function useWebSockets<T>({
     function connect({ cluster, url, onMessage, confirmLiveness }: WebSocketConnectionRequest<T>) {
       const connectionKey = cluster + url;
 
+      // P1 (#17): a (re)subscribe cancels any pending grace teardown for this key, so the
+      // still-live socket is reused (no duplicate open) and its #16 liveness + accounting
+      // state are preserved. The `!sockets.has(connectionKey)` check below then sees the
+      // existing socket and skips opening a new one.
+      const pendingTeardown = pendingUnsubscribes.get(connectionKey);
+      if (pendingTeardown) {
+        clearTimeout(pendingTeardown);
+        pendingUnsubscribes.delete(connectionKey);
+      }
+
       // Always register the current listener, even when reusing an existing socket.
       listeners.set(connectionKey, [...(listeners.get(connectionKey) ?? []), onMessage]);
       // P1 (#16): register the confirm-before-reconnect LIST for this connection.
@@ -523,35 +579,34 @@ export function useWebSockets<T>({
         const newListeners = listeners.get(connectionKey)?.filter(it => it !== onMessage) ?? [];
         listeners.set(connectionKey, newListeners);
 
-        // No one is listening to the connection so we can close it and cancel any
-        // pending reconnect (this close is intentional — it must NOT redial).
-        if (newListeners.length === 0) {
-          const timer = reconnectTimers.get(connectionKey);
-          if (timer) {
-            clearTimeout(timer);
-            reconnectTimers.delete(connectionKey);
-          }
-          reconnectAttempts.delete(connectionKey);
-          // P1 (#16): drop liveness state so no timer/confirmation outlives the
-          // connection (a pending confirmation's result is also ignored via the
-          // socket-identity guard in checkLiveness).
-          clearLiveness(connectionKey);
-          lastActivity.delete(connectionKey);
-          livenessConfirm.delete(connectionKey);
-          livenessConfirming.delete(connectionKey);
-          // Accounting (measurement only): full teardown ends this watch's
-          // lifetime; a later re-subscribe starts fresh (not a reconnect).
-          accountTeardown(connectionKey);
-          const maybeExisting = sockets.get(connectionKey);
-          if (maybeExisting) {
-            if (typeof maybeExisting !== 'symbol') {
-              intentionalClose.add(maybeExisting);
-              maybeExisting.close();
-            }
-            sockets.delete(connectionKey);
-          }
-          setWatchState(connectionKey, 'gone');
+        // Other listeners remain — never tear down (unchanged).
+        if (newListeners.length !== 0) return;
+
+        // P1 (#17): the LAST listener left. Instead of closing immediately, defer the
+        // complete teardown by a grace window so a shared watch (namespaces/CRDs/…) whose
+        // consumer re-mounts on the next route re-subscribes to the SAME cluster+url and
+        // REUSES this live socket (see connect() above) — eliminating per-navigation
+        // close+reopen churn. If no one re-subscribes within the window, performTeardown
+        // runs exactly once (deferred). grace<=0 restores the previous immediate-close.
+        const graceMs = WATCH_UNSUBSCRIBE_GRACE_MS;
+        if (graceMs <= 0) {
+          performTeardown(connectionKey);
+          return;
         }
+        // One pending teardown per key; a fresh last-unsubscribe re-arms it.
+        const existing = pendingUnsubscribes.get(connectionKey);
+        if (existing) {
+          clearTimeout(existing);
+        }
+        const timer = setTimeout(() => {
+          pendingUnsubscribes.delete(connectionKey);
+          // A re-subscribe during the window cancels this timer, but guard anyway:
+          // only tear down if there are still no listeners for the key.
+          if ((listeners.get(connectionKey)?.length ?? 0) === 0) {
+            performTeardown(connectionKey);
+          }
+        }, graceMs);
+        pendingUnsubscribes.set(connectionKey, timer);
       };
     }
 
