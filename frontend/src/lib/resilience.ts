@@ -149,6 +149,33 @@ export const WATCH_UNSUBSCRIBE_GRACE_MS = intEnvOrDefault(
 );
 
 /**
+ * P1 (#19) — resume (tab becomes visible) freshness horizon. When a hidden tab is shown
+ * again, each mounted watched connection whose last authoritative activity (a data frame OR
+ * a BOOKMARK, tracked by #16 `lastActivity`) is OLDER than this window gets exactly ONE
+ * bounded `confirmLiveness` LIST, so the user never returns to last-known data presented as
+ * definitely-live without a prompt revalidation. A connection that received a frame/bookmark
+ * within the window (actively fresh) is skipped — no needless LIST, no reconnect. A
+ * successful confirm records activity, so rapid hidden⇄visible flapping within the window
+ * coalesces to a single confirm (no separate debounce timer needed). On a failed confirm the
+ * existing #16 recovery (close→reconnect) runs. This does NOT change the 180 s silent-death
+ * timeout, add background polling, or enable `refetchOnWindowFocus`.
+ *
+ * Sized below the ~60 s apiserver BOOKMARK cadence and the 180 s liveness timeout so any
+ * non-trivial hidden period revalidates on return, while quick tab toggles (< H) and
+ * actively-delivering sockets skip. Too low → a confirm on nearly every resume (still bounded
+ * and harmless). Too high → a watch that died < H before resume is not caught promptly
+ * (degrades toward the pre-#19 gap, never worse). Default OFF under test so existing suites
+ * stay deterministic; the dedicated resume test sets a positive value. 0 disables (exact
+ * pre-#19 resume behaviour — the one-switch rollback).
+ * Override: REACT_APP_WATCH_RESUME_FRESHNESS_HORIZON_MS.
+ */
+export const WATCH_RESUME_FRESHNESS_HORIZON_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_RESUME_FRESHNESS_HORIZON_MS,
+  import.meta.env.UNDER_TEST === 'true' ? 0 : 10000,
+  0
+);
+
+/**
  * P1 (#16) — silent-death liveness timeout. A watch socket can die with no
  * `close`/`error` event (half-open behind an idle L7 load balancer, OS sleep,
  * NAT timeout, …); it then "looks open" while no frames arrive, which is
