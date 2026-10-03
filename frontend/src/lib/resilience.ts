@@ -125,6 +125,30 @@ export const WATCH_FALLBACK_REFETCH_MS = intEnvOrDefault(
 );
 
 /**
+ * P1 (#17) — navigation grace for shared watches. When the LAST listener of a
+ * watch connection (keyed by cluster+url) unsubscribes, delay the socket teardown
+ * by this window instead of closing immediately. A shared watch (namespaces, CRDs,
+ * …) whose consumer re-mounts on the next page re-subscribes to the SAME
+ * cluster+url within the window and REUSES the still-live socket, so navigation no
+ * longer closes+reopens shared watches on every route change (needless apiserver
+ * watch churn). If nobody re-subscribes within the window, the normal teardown runs
+ * exactly once, just deferred. The window only DELAYS teardown; it never skips it.
+ *
+ * Sized above the measured worst-case unmount→remount gap (~1.1s on fast loopback
+ * with cached lists; larger on remote/slow/heavy). 0 restores the previous
+ * immediate-close behaviour (and is the one-switch rollback).
+ * Override: REACT_APP_WATCH_UNSUBSCRIBE_GRACE_MS.
+ */
+export const WATCH_UNSUBSCRIBE_GRACE_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_UNSUBSCRIBE_GRACE_MS,
+  // Default OFF under test so the existing immediate-teardown suites stay deterministic
+  // (mirrors `kubeRequestRetry` being disabled under test); the dedicated grace test sets
+  // a positive value explicitly. Production default is 3000 ms.
+  import.meta.env.UNDER_TEST === 'true' ? 0 : 3000,
+  0
+);
+
+/**
  * P1 (#16) — silent-death liveness timeout. A watch socket can die with no
  * `close`/`error` event (half-open behind an idle L7 load balancer, OS sleep,
  * NAT timeout, …); it then "looks open" while no frames arrive, which is
