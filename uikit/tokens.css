@@ -1,0 +1,216 @@
+/* Structural design tokens: spacing, radius, elevation, materials, motion and
+   type.
+
+   The COLOUR layer is not here. It is generated from tokens.ts and inlined
+   into <head> by vitePluginBrand.ts, so colours have a single source of truth,
+   are customizable at build time, and land before the first paint rather than
+   after it. Edit tokens.ts to reskin; edit this file to change the SHAPE of
+   the design system.
+
+   Everything here is shared by every tool that copies this folder. Nothing in
+   it names a product. */
+
+:root {
+  /* Spacing: an engineered 4px scale. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 28px;
+  --sp-8: 32px;
+
+  --shell-nav-width: 236px;
+  --shell-nav-collapsed-width: 64px;
+  --shell-nav-item-height: 34px;
+  --shell-topbar-height: 56px;
+  --shell-nav-brand-padding: 18px 20px 18px;
+  --shell-nav-brand-collapsed-padding: 14px 0 10px;
+  --shell-nav-items-padding: 4px 12px;
+  --shell-nav-foot-padding: 8px 12px 12px;
+
+  /* Radius. Generous, and the whole ramp moved up together: a 4px corner on a
+     card next to an 8px corner on the button inside it is what makes a layout
+     read as assembled. Pills are for status only.
+
+     The values are the platform's own: 6 on a small control, 8 on a button or
+     an input, 14 on a card, 20 on a sheet or a dialog. */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* --- elevation ----------------------------------------------------------
+     Three resting levels, and every one of them is the same three ingredients:
+     a HAIRLINE that gives the surface an edge at any zoom, a tight contact
+     shadow directly under it, and a wide ambient cast. That is how a physical
+     material sits on a page, and it is why these read as depth where a single
+     large blur reads as a glow.
+
+     The hairline is a 0.5px spread rather than a border, so it costs no layout
+     and stays one device pixel on a retina display - which is the difference
+     between a crisp edge and a grey line drawn around everything. */
+  --el-1:
+    0 0 0 0.5px rgba(16, 35, 50, 0.04), 0 1px 2px rgba(16, 35, 50, 0.04),
+    0 4px 12px -4px rgba(16, 35, 50, 0.06);
+  --el-2:
+    0 0 0 0.5px rgba(16, 35, 50, 0.05), 0 1px 2px rgba(16, 35, 50, 0.05),
+    0 12px 28px -8px rgba(16, 35, 50, 0.11);
+  --el-3:
+    0 0 0 0.5px rgba(16, 35, 50, 0.06), 0 2px 4px rgba(16, 35, 50, 0.05),
+    0 28px 56px -16px rgba(16, 35, 50, 0.18);
+
+  /* The one soft-UI token that survived, and it earns its place: a single
+     hairline of light along a surface's TOP edge is what a real bevel looks
+     like, and it is what keeps a control from reading as a flat rectangle.
+     Used on inputs, wells and pressed states. */
+  --el-inset:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7), inset 0 0 0 0.5px rgba(16, 24, 40, 0.07);
+
+  /* Overlay elevation: a floating surface (a menu, a modal, a popover) is a
+     SHEET above the page, so it takes the same three ingredients pushed
+     further, and the mask behind it dims rather than blacks out - the page
+     stays legible underneath, which is what makes a sheet feel like it is over
+     the page rather than instead of it. */
+  --el-overlay:
+    0 0 0 0.5px rgba(16, 24, 40, 0.08), 0 8px 20px -6px rgba(16, 24, 40, 0.14),
+    0 32px 64px -24px rgba(16, 24, 40, 0.24);
+  --overlay-seat: 0 0 0 0.5px var(--border);
+  --overlay-mask: rgba(0, 0, 0, 0.28);
+
+  /* --- materials ----------------------------------------------------------
+     A material is a translucent surface that takes its colour from whatever is
+     behind it. It is the platform's own idiom for chrome - the navigation, the
+     bar above the page, a popover - and the reason it reads as depth rather
+     than as transparency is the SATURATION boost: blur alone turns the page
+     behind into grey mush, and pushing saturation back up is what makes the
+     colour bleed through as light rather than as dirt.
+
+     Two weights, and they are used for two different distances: `material` for
+     chrome that sits on the page, `thin` for something that skims just above
+     it. Both degrade to plain opacity where backdrop-filter is unsupported,
+     which is why every surface using them also states a background. */
+  --blur-material: saturate(180%) blur(20px);
+  --blur-thin: saturate(180%) blur(10px);
+
+  /* The bar above the page, as a material: the page's own surface, thinned. */
+  --material-bar: color-mix(in srgb, var(--surface) 72%, transparent);
+
+  /* THE GROUND A PROPORTIONAL BAR IS DRAWN ON.
+     Its own token, because a meter track was being drawn in `--surface-2`
+     everywhere - a fill chosen to sit a shade off white, which on white is a
+     track nobody can see. A bar with an invisible track is a bar with no
+     denominator: 3 of 4 and 3 of 40 draw the same picture. */
+  --track: color-mix(in srgb, var(--border-strong) 70%, transparent);
+
+  /* A tooltip is the one surface that is dark in both themes - it is a label
+     ON the interface, not a part of it. */
+  --tooltip-bg: rgba(28, 28, 30, 0.88);
+  --tooltip-fg: #ffffff;
+
+  /* --- motion -------------------------------------------------------------
+     State change only, never decoration. The curve is the platform's: almost
+     all of the movement happens immediately and the last few pixels take their
+     time, which is what makes an interface feel answered rather than animated.
+     `--ease-out` is the gentler cousin for things that arrive. */
+  --dur-hover: 140ms;
+  --dur-panel: 260ms;
+  --dur-view: 380ms;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Typography. The families are repeated from tokens.ts because a stylesheet
+     cannot import a module; they are the same two stacks. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    Inter, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+    Consolas, "Liberation Mono", monospace;
+  /* ThemeProvider fills the semantic variables from typography.ts before
+     paint. These aliases keep the kit's existing CSS on that central scale. */
+  --fs-11: var(--text-caption);
+  --fs-12: var(--text-small);
+  --fs-13: var(--text-body);
+  --fs-14: var(--text-label);
+  --fs-15: var(--text-subtitle);
+  --fs-16: var(--text-emphasis);
+  --fs-18: var(--text-title);
+  --fs-20: var(--text-heading);
+  --fs-24: var(--text-display);
+
+  /* Tracking, as a scale rather than a number typed at each call site. Type
+     tightens as it gets bigger - that is optical, not stylistic: the same
+     letter spacing that keeps 11px legible makes a 24px title look loose. */
+  --tr-tight: -0.022em;
+  --tr-snug: -0.014em;
+  --tr-normal: -0.006em;
+  --tr-wide: 0.04em;
+}
+
+/* Elevation and the materials are the structural tokens that change with the
+   theme: a light source falling on a pale surface is not a light source
+   falling on a dark one, and a shadow the colour of the page is no shadow. */
+[data-theme="dark"] {
+  --el-1:
+    0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 1px 1px rgba(0, 0, 0, 0.4),
+    0 3px 8px -2px rgba(0, 0, 0, 0.45);
+  --el-2:
+    0 0 0 0.5px rgba(255, 255, 255, 0.07), 0 1px 2px rgba(0, 0, 0, 0.45),
+    0 10px 24px -6px rgba(0, 0, 0, 0.55);
+  --el-3:
+    0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 2px 4px rgba(0, 0, 0, 0.5),
+    0 28px 56px -16px rgba(0, 0, 0, 0.62);
+  /* The bevel highlight inverts: on a dark material the light along the top
+     edge is a whisper, not a shine. */
+  --el-inset:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --el-overlay:
+    0 0 0 0.5px rgba(255, 255, 255, 0.09), 0 8px 20px -6px rgba(0, 0, 0, 0.55),
+    0 32px 64px -24px rgba(0, 0, 0, 0.7);
+  --overlay-mask: rgba(0, 0, 0, 0.5);
+  /* On a dark ground the track has to come UP from the surface rather than
+     down from it, or it disappears into the card. */
+  --track: color-mix(in srgb, var(--border-strong) 85%, transparent);
+  --tooltip-bg: rgba(58, 58, 60, 0.92);
+}
+
+/* --- "graphite" preset elevation -------------------------------------------
+   The accent is taken out of the chrome in this preset, so the surfaces have to
+   do more of the separating: hierarchy comes from the hairline and from value
+   contrast, and elevation is kept for things that genuinely lift (a menu, a
+   drawer, a hover). Scoped to the attribute the brand plugin stamps, so the
+   default look is untouched. */
+:root[data-preset="graphite"] {
+  --el-1: 0 0 0 0.5px rgba(16, 24, 40, 0.08);
+  --el-2: 0 0 0 0.5px rgba(16, 24, 40, 0.08), 0 8px 20px -6px rgba(16, 24, 40, 0.12);
+  --el-3: 0 0 0 0.5px rgba(16, 24, 40, 0.08), 0 24px 48px -14px rgba(16, 24, 40, 0.2);
+}
+:root[data-preset="graphite"][data-theme="dark"] {
+  --el-1: 0 0 0 0.5px rgba(255, 255, 255, 0.09);
+  --el-2: 0 0 0 0.5px rgba(255, 255, 255, 0.09), 0 8px 20px -6px rgba(0, 0, 0, 0.5);
+  --el-3: 0 0 0 0.5px rgba(255, 255, 255, 0.09), 0 24px 48px -14px rgba(0, 0, 0, 0.62);
+}
+
+/* --- comfort ---------------------------------------------------------------
+   Density and font scale are stamped on <html> by ThemeProvider, so the
+   hand-rolled surfaces answer to the same two controls as the component
+   library rather than staying at one size while everything around them moves. */
+:root[data-density="compact"] {
+  --sp-2: 6px;
+  --sp-3: 10px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 18px;
+  --sp-7: 22px;
+  --sp-8: 26px;
+  --shell-nav-width: 200px;
+  --shell-nav-collapsed-width: 56px;
+  --shell-nav-item-height: 30px;
+  --shell-topbar-height: 42px;
+  --shell-nav-brand-padding: 10px 12px 8px;
+  --shell-nav-brand-collapsed-padding: 10px 0 8px;
+  --shell-nav-items-padding: 2px 6px;
+  --shell-nav-foot-padding: 2px 6px 6px;
+}
