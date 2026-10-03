@@ -25,6 +25,7 @@ import {
   WATCH_RECONNECT,
   WATCH_RECONNECT_BASE_MS,
   WATCH_RECONNECT_CAP_MS,
+  WATCH_RESUME_FRESHNESS_HORIZON_MS,
   WATCH_UNSUBSCRIBE_GRACE_MS,
   withJitter,
 } from '../../../resilience';
@@ -254,6 +255,18 @@ function checkLiveness(connectionKey: string, socket: WebSocket) {
     return;
   }
 
+  confirmOrRecover(connectionKey, socket);
+}
+
+/**
+ * Run ONE authoritative confirmation LIST for a connection and act on the result:
+ *  - healthy (fresh data arrived / RV current) → keep the socket, record activity, re-arm;
+ *  - not fresh / unreachable → the EXISTING reconnect path (synthetic close).
+ * At most one confirmation in flight per connection; a result for a superseded socket is
+ * ignored. Shared by #16 silent-death (`checkLiveness`, 180 s) and #19 resume (`resumeCheck`,
+ * the shorter freshness horizon) so there is exactly one confirm mechanism, never two.
+ */
+function confirmOrRecover(connectionKey: string, socket: WebSocket) {
   const confirm = livenessConfirm.get(connectionKey);
   if (!confirm) {
     // No confirmation available (e.g. multiplexer / non-list socket) — fall back
@@ -272,7 +285,9 @@ function checkLiveness(connectionKey: string, socket: WebSocket) {
       if (sockets.get(connectionKey) !== socket) return;
       if (healthy) {
         // Healthy-but-quiet: do NOT close. Reset activity + re-arm so we don't
-        // immediately re-confirm (avoids a tight loop / churn).
+        // immediately re-confirm (avoids a tight loop / churn). Recording activity
+        // also coalesces rapid resume flapping (#19): a second resume within the
+        // horizon sees fresh activity and skips.
         markActivity(connectionKey);
         armLiveness(connectionKey, socket, WATCH_LIVENESS_TIMEOUT_MS);
       } else {
@@ -285,6 +300,35 @@ function checkLiveness(connectionKey: string, socket: WebSocket) {
       if (sockets.get(connectionKey) !== socket) return;
       closeForLiveness(connectionKey, socket);
     });
+}
+
+/**
+ * P1 (#19): resume-time freshness check for one connection when the tab becomes visible.
+ * Reuses the #16 confirm primitive with a SHORTER threshold (the resume freshness horizon)
+ * so a tab that was hidden long enough that its data is no longer provably current is
+ * revalidated promptly instead of showing last-known state as definitely-live. When the
+ * horizon is 0 (disabled / under test) this is exactly the prior resume behaviour
+ * (`checkLiveness`): re-arm if < 180 s silent, confirm/recover at ≥ 180 s.
+ */
+function resumeCheck(connectionKey: string, socket: WebSocket) {
+  if (WATCH_LIVENESS_TIMEOUT_MS <= 0) return;
+  if (sockets.get(connectionKey) !== socket) return; // not the current socket
+  // #17 interaction: a listener-less socket is in its unsubscribe grace — leave it to #17;
+  // do NOT revalidate or reopen it.
+  if ((listeners.get(connectionKey)?.length ?? 0) === 0) return;
+  const threshold =
+    WATCH_RESUME_FRESHNESS_HORIZON_MS > 0
+      ? Math.min(WATCH_RESUME_FRESHNESS_HORIZON_MS, WATCH_LIVENESS_TIMEOUT_MS)
+      : WATCH_LIVENESS_TIMEOUT_MS;
+  const elapsed = Date.now() - (lastActivity.get(connectionKey) ?? Date.now());
+  if (elapsed < threshold) {
+    // Fresh enough (recent frame/bookmark, or a recent confirm) — nothing to do, but re-arm
+    // the real 180 s liveness timer for its remaining window (it may have been throttled
+    // while hidden). Never shortens the silent-death timeout.
+    armLiveness(connectionKey, socket, Math.max(0, WATCH_LIVENESS_TIMEOUT_MS - elapsed));
+    return;
+  }
+  confirmOrRecover(connectionKey, socket);
 }
 
 /** Synthesize a non-intentional close so the EXISTING reconnect + freshness chip
@@ -305,14 +349,18 @@ function markActivity(connectionKey: string) {
   lastActivity.set(connectionKey, Date.now());
 }
 
-// When the tab becomes visible again, timers may have been throttled while
-// hidden — re-evaluate every open socket immediately so a genuinely dead one is
-// caught on return. Never a false positive (checkLiveness uses real elapsed time).
+// When the tab becomes visible again, timers may have been throttled while hidden, so
+// re-evaluate every open socket immediately. P1 (#19): `resumeCheck` uses the resume
+// freshness horizon — a connection whose data is no longer provably current (no frame/
+// bookmark within the horizon) is revalidated with ONE bounded confirm, so returning to a
+// tab never presents stale data as definitely-live; an actively-fresh connection is left
+// alone. All decisions use real elapsed time (never a false positive), symbol/reconnecting
+// slots are skipped, and listener-less (#17 grace) sockets are left to their teardown.
 if (typeof document !== 'undefined' && WATCH_LIVENESS_TIMEOUT_MS > 0) {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     for (const [key, sock] of sockets.entries()) {
-      if (typeof sock !== 'symbol') checkLiveness(key, sock);
+      if (typeof sock !== 'symbol') resumeCheck(key, sock);
     }
   });
 }
