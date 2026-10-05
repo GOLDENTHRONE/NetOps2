@@ -33,6 +33,7 @@ import {
   WATCH_ADAPTIVE_STALENESS_MS,
   WATCH_ADAPTIVE_TRIAL_KEEP_MARGIN,
   WATCH_ADAPTIVE_TRIAL_MS,
+  WATCH_COALESCE_MAX_MS,
   WATCH_FALLBACK_REFETCH_MS,
   watchFallbackRefetchInterval,
   withJitter,
@@ -588,6 +589,26 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
   // membership exact (no stale ref). Key = cluster + (namespace || '').
   const membershipRef = useRef<Map<string, { items: unknown; uids: Set<string> }>>(new Map());
 
+  // P2: per-connection coalescing buffer for live-subset events (see
+  // WS_P2_LOADED_CHURN_DESIGN.md). Keyed by `${cluster}:${namespace||''}`. `buffer` holds
+  // at most one pending event per LOADED uid (members only — the membership filter runs
+  // BEFORE insertion, so |buffer| ≤ loaded and out-of-page/ADDED uids never enter it).
+  // `raf`/`timer` are the pending visible/fallback flush handles. The map persists across
+  // renders; entries are cancelled+dropped on connections change (re-baseline / cluster
+  // switch), on unmount, and on a 410/ERROR for that connection.
+  const coalesceRef = useRef<
+    Map<
+      string,
+      {
+        buffer: Map<string, KubeListUpdateEvent<K>>;
+        raf: number | null;
+        timer: ReturnType<typeof setTimeout> | null;
+        /** Bound flush for this connection; let the teardown effect drain pending work. */
+        flush: () => void;
+      }
+    >
+  >(new Map());
+
   const stableQueryParamsKey = enabled ? JSON.stringify(queryParams) : '__disabled__';
   const stableWatchQueryParamsKey = enabled
     ? JSON.stringify(watchQueryParams ?? queryParams)
@@ -616,21 +637,103 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
         resourceVersion,
       });
 
+      // Shared query key for this connection (used by onMessage, the P2 flush, and
+      // confirmLiveness). Stable for the connection's lifetime.
+      const key = kubeObjectListQuery<K>(
+        kubeObjectClass,
+        endpoint,
+        namespace,
+        cluster,
+        stableQueryParams ?? {}
+      ).queryKey;
+
+      // P2: coalescing is active ONLY on the A1 live-subset path and only when the knob
+      // is positive. When off (knob 0, the default under test), events apply synchronously
+      // exactly as A1 does today — the one-switch rollback.
+      const coalesceActive = liveSubsetWatch && WATCH_COALESCE_MAX_MS > 0;
+
+      // Fold one-or-more already-filtered (loaded-member) events into a SINGLE cache
+      // write. Events are applied via the existing KubeList.applyUpdate, which keeps its
+      // pre-existing resourceVersion guard — P2 adds no new RV comparison or sorting.
+      const applyEvents = (events: Iterable<KubeListUpdateEvent<K>>) => {
+        client.setQueryData(key, (oldResponse: ListResponse<any> | undefined | null) => {
+          if (!oldResponse) return oldResponse;
+          let list = oldResponse.list;
+          for (const ev of events) {
+            list = KubeList.applyUpdate(list, ev, kubeObjectClass, cluster);
+          }
+          // applyUpdate returns the same ref for a no-op (RV guard / DELETE miss), so an
+          // all-no-op batch produces no new object and no render.
+          return list === oldResponse.list ? oldResponse : { ...oldResponse, list };
+        });
+      };
+
+      // P2: cancel any pending flush handles for this connection (used on flush, on a
+      // 410/ERROR, and on teardown/re-baseline via the cleanup effect below).
+      const cancelCoalesce = (cs: {
+        raf: number | null;
+        timer: ReturnType<typeof setTimeout> | null;
+      }) => {
+        if (cs.raf !== null && typeof cancelAnimationFrame === 'function') {
+          cancelAnimationFrame(cs.raf);
+        }
+        if (cs.timer !== null) {
+          clearTimeout(cs.timer);
+        }
+        cs.raf = null;
+        cs.timer = null;
+      };
+
+      // P2: flush this connection's buffer in WATCH-ARRIVAL order (the Map is kept in
+      // last-arrival order via delete+set on overwrite, so folding never applies a lower
+      // resourceVersion after a higher one — no event is dropped by applyUpdate's guard).
+      const flush = () => {
+        const cs = coalesceRef.current.get(connectionMembershipKey);
+        if (!cs) return;
+        cancelCoalesce(cs);
+        if (cs.buffer.size === 0) return;
+        const batch = cs.buffer;
+        cs.buffer = new Map();
+        applyEvents(batch.values());
+      };
+
+      // P2: arm the flush. Visible → next animation frame (opportunistic, earlier than the
+      // deadline). Always also arm the deadline timer as the hidden/rAF-starved fallback;
+      // whichever fires first flushes (flush cancels the other).
+      const scheduleFlush = (cs: {
+        buffer: Map<string, KubeListUpdateEvent<K>>;
+        raf: number | null;
+        timer: ReturnType<typeof setTimeout> | null;
+      }) => {
+        const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+        if (!hidden && cs.raf === null && typeof requestAnimationFrame === 'function') {
+          cs.raf = requestAnimationFrame(() => {
+            cs.raf = null;
+            flush();
+          });
+        }
+        if (cs.timer === null) {
+          cs.timer = setTimeout(() => {
+            cs.timer = null;
+            flush();
+          }, WATCH_COALESCE_MAX_MS);
+        }
+      };
+
       return {
         cluster,
         url,
         onMessage(update: KubeListUpdateEvent<K>) {
-          const key = kubeObjectListQuery<K>(
-            kubeObjectClass,
-            endpoint,
-            namespace,
-            cluster,
-            stableQueryParams ?? {}
-          ).queryKey;
           // P1: a watch ERROR (typically 410 Gone) can't be applied as data —
           // re-list for a fresh snapshot + resourceVersion instead of swallowing
-          // it and leaving the list permanently stale.
+          // it and leaving the list permanently stale. P2: any buffered events for this
+          // connection predate the fresh snapshot, so drop them (and their timers) first.
           if ((update as any)?.type === 'ERROR') {
+            const cs = coalesceRef.current.get(connectionMembershipKey);
+            if (cs) {
+              cancelCoalesce(cs);
+              cs.buffer = new Map();
+            }
             client.invalidateQueries({ queryKey: key });
             return;
           }
@@ -650,6 +753,8 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
           // currently loaded (in the cache), and IGNORE ADDED entirely. This keeps
           // retained state O(loaded): out-of-page events can never grow the cache.
           // New in-range objects surface via the Load-More re-baseline, not the watch.
+          // P2: this filter runs BEFORE buffering, so only loaded-member events ever enter
+          // the coalescing buffer — |buffer| ≤ loaded (bounded-memory invariant).
           if (liveSubsetWatch) {
             const cached = client.getQueryData<ListResponse<any>>(key);
             // Nothing loaded yet (or gc'd) → nothing to update; never create state.
@@ -669,18 +774,23 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
             // MODIFIED/DELETED for a non-loaded UID → ignore (not displayed, no growth).
             const uid = (update as any)?.object?.metadata?.uid;
             if (!uid || !m.uids.has(uid)) return;
-          }
-          client.setQueryData(key, (oldResponse: ListResponse<any> | undefined | null) => {
-            if (!oldResponse) return oldResponse;
 
-            const newList = KubeList.applyUpdate(
-              oldResponse.list,
-              update,
-              kubeObjectClass,
-              cluster
-            );
-            return { ...oldResponse, list: newList };
-          });
+            // P2: coalesce loaded-member events into one batched write per frame/deadline.
+            if (coalesceActive) {
+              let cs = coalesceRef.current.get(connectionMembershipKey);
+              if (!cs) {
+                cs = { buffer: new Map(), raf: null, timer: null, flush };
+                coalesceRef.current.set(connectionMembershipKey, cs);
+              }
+              // Move-to-end so iteration order == last-arrival order (see flush). A later
+              // event for the same uid supersedes the earlier one (last-write-wins).
+              cs.buffer.delete(uid);
+              cs.buffer.set(uid, update);
+              scheduleFlush(cs);
+              return;
+            }
+          }
+          applyEvents([update]);
         },
         async confirmLiveness() {
           // P1 (#16) confirm-before-reconnect: run ONE authoritative LIST refetch
@@ -692,14 +802,8 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
           //  - if the RV is unchanged, the watch is healthy-but-quiet and stays.
           // Success is defined as "the LIST reached the API and refreshed data"
           // (react-query advances dataUpdatedAt only on a successful fetch;
-          // keep-last-good leaves it unchanged on failure).
-          const key = kubeObjectListQuery<K>(
-            kubeObjectClass,
-            endpoint,
-            namespace,
-            cluster,
-            stableQueryParams ?? {}
-          ).queryKey;
+          // keep-last-good leaves it unchanged on failure). Reuses the connection's
+          // shared `key` computed above.
           const before = client.getQueryState(key)?.dataUpdatedAt ?? 0;
           try {
             await client.refetchQueries({ queryKey: key, exact: true });
@@ -729,6 +833,29 @@ function useWatchKubeObjectListsLegacy<K extends KubeObject>({
     stableWatchQueryParams,
     client,
   ]);
+
+  // P2: drain pending coalesced work when the set of connections changes (a Load-More /
+  // POLL re-baseline advances listResourceVersion → new `lists` → new `connections`; a
+  // cluster/namespace switch likewise) and on unmount. We FLUSH (not silently drop) each
+  // pending buffer, then clear. Flushing is safe and more correct than dropping:
+  //  - for a connection that re-baselined, its buffered events were filtered against the
+  //    OLD snapshot; applyUpdate's resourceVersion guard no-ops any event the fresh LIST
+  //    already supersedes, so the fold collapses to nothing (no double-apply);
+  //  - for a connection that PERSISTS across the change (e.g. multi-cluster Load More that
+  //    grows only one cluster — the #15 identity keeps the other socket, which does NOT
+  //    resume/re-deliver), flushing applies its still-valid loaded-member events instead
+  //    of losing them. The query key does not depend on resourceVersion, so each bound
+  //    flush still targets the correct query. flush() also cancels the connection's rAF /
+  //    timer, so this doubles as leak-free teardown and guarantees no stray write fires
+  //    after unmount. A transient socket reconnect does NOT change `connections` (stable
+  //    identity), so an in-window buffer simply survives it and flushes to the same query.
+  useEffect(() => {
+    const coalesceMap = coalesceRef.current;
+    return () => {
+      coalesceMap.forEach(cs => cs.flush());
+      coalesceMap.clear();
+    };
+  }, [connections]);
 
   useWebSockets<KubeListUpdateEvent<K>>({
     enabled: enabled && !!endpoint,

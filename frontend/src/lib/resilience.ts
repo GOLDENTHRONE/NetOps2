@@ -201,6 +201,34 @@ export const WATCH_LIVENESS_TIMEOUT_MS = intEnvOrDefault(
 );
 
 /**
+ * P2 — live-subset watch event COALESCING (see WS_P2_LOADED_CHURN_DESIGN.md). While a
+ * list is in A1 live-subset mode, loaded-member MODIFIED/DELETED events are collapsed
+ * into one batched cache write instead of one write (and one React render) per event,
+ * cutting main-thread churn on a high-churn large list. ADDED and non-member events are
+ * still filtered out BEFORE buffering (bounded O(loaded) memory invariant preserved), so
+ * this NEVER changes which events are applied — only how many cache writes carry them.
+ *
+ * This value is the maximum staleness DEADLINE a buffered event may wait before it is
+ * flushed. While the tab is visible the flush actually happens on the next animation
+ * frame (requestAnimationFrame — earlier than the deadline, and not separately tunable
+ * because frame cadence is environmental); while the tab is hidden or rAF is starved
+ * this setTimeout deadline is the flush trigger. So one knob cleanly expresses both the
+ * visible rAF batching and the hidden/starved fallback: "flush at the next frame OR at
+ * COALESCE_MAX_MS, whichever comes first".
+ *
+ * 0 = DISABLED → events apply synchronously, exactly as A1 does today (the one-switch
+ * rollback; also the default under test so the existing synchronous watch suites stay
+ * deterministic). >0 = coalescing enabled; production default 100 ms. Applies ONLY on the
+ * A1 live-subset legacy path (never the unfiltered multiplexed path). Override:
+ * `REACT_APP_WATCH_COALESCE_MAX_MS`.
+ */
+export const WATCH_COALESCE_MAX_MS = intEnvOrDefault(
+  import.meta.env.REACT_APP_WATCH_COALESCE_MAX_MS,
+  import.meta.env.UNDER_TEST === 'true' ? 0 : 100,
+  0
+);
+
+/**
  * MEASUREMENT ONLY (no gating) — enable the observational watch accountant
  * (watchAccounting.ts), which records per-watch event rate, exact wire bytes,
  * parse cost, reconnects and lifetime so a future fallback/gating decision can
