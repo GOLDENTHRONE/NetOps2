@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-// UI-level test for the p17 Status column body + p18 evidence popover.
-// Mounts <LocalHealthCell /> in isolation, with useLocalHealthItems mocked
-// to return fabricated KubeObject arrays from __fixtures__/healthScenarios.
-// See p18.txt on branch GT_D_V1.
+// UI-level test for the Applications List Status column body + evidence popover,
+// on the FROZEN page-level design: <LocalHealthCell /> receives a pre-computed
+// `health` badge + `liveItems` (it does NO fetching), and the popover body fetches
+// on-demand data via useApplicationPopoverData (mocked here).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -25,37 +25,26 @@ import { ThemeProvider } from '@mui/material/styles';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./useLocalHealthItems', () => ({
-  useLocalHealthItems: vi.fn(),
-}));
-
-// The Applications tab's data hook is mocked so its shared code path
-// (which drags in Deployment / ReplicaSet / etc. classes and their
-// cross-file circular imports) never executes in this UI test.
-vi.mock('./useProjectResources', () => ({
-  useProjectItems: () => ({ items: [], isLoading: false, errors: [] }),
+// On-demand popover data path is mocked so the UI test never drags in the live
+// resource classes / network. Each test can override the return value.
+vi.mock('./useApplicationPopoverData', () => ({
+  useApplicationPopoverData: vi.fn(() => ({
+    items: [],
+    truncatedKinds: [],
+    isLoading: false,
+    hasErrors: false,
+  })),
 }));
 
 import App from '../../App';
-import { ApiError } from '../../lib/k8s/api/v2/ApiError';
-import { ApiResource } from '../../lib/k8s/api/v2/ApiResource';
 import { createMuiTheme } from '../../lib/themes';
 import { TestContext } from '../../test';
 import * as F from './__fixtures__/healthScenarios';
+import { getApplicationBadge, getUnavailableHealth, LiveObservation } from './localHealth';
 import { LocalHealthCell } from './ProjectList';
-import { useLocalHealthItems } from './useLocalHealthItems';
-
-// Same resource shape useKubeLists.ts actually returns per failed kind.
-const PODS_RESOURCE: ApiResource = {
-  apiVersion: 'v1',
-  version: 'v1',
-  pluralName: 'pods',
-  singularName: 'pod',
-  kind: 'Pod',
-  isNamespaced: true,
-};
+import { useApplicationPopoverData } from './useApplicationPopoverData';
 
 // cyclic imports fix — same trick ProjectList.test.tsx uses.
 // eslint-disable-next-line no-unused-vars
@@ -67,57 +56,73 @@ const fakeProject: any = {
   clusters: ['test-cluster'],
 };
 
-function mountWith(items: any[]) {
-  (useLocalHealthItems as any).mockReturnValue({
-    items,
-    isLoading: false,
-    errors: [],
-  });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
-      <ThemeProvider theme={createMuiTheme('light')}>
-        <TestContext>
-          <LocalHealthCell project={fakeProject} />
-        </TestContext>
-      </ThemeProvider>
-    </QueryClientProvider>
-  );
-}
+const OK_OBS: LiveObservation = {
+  loading: false,
+  allLiveFailed: false,
+  someLiveFailed: false,
+  failed: [],
+  truncatedKinds: [],
+  cluster: 'test-cluster',
+};
 
-// Mounts with the real { resource, errors: ApiError[] }[] shape useKubeLists.ts
-// produces, so the unavailable popover is exercised through its actual data path.
-function mountWithFetchErrors(apiErrors: ApiError[], onRank?: (id: string, rank: number) => void) {
-  (useLocalHealthItems as any).mockReturnValue({
+beforeEach(() => {
+  (useApplicationPopoverData as any).mockReturnValue({
     items: [],
+    truncatedKinds: [],
     isLoading: false,
-    errors: [{ resource: PODS_RESOURCE, errors: apiErrors }],
+    hasErrors: false,
   });
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+});
+
+// Mount with the given items as the live set; badge computed via the real
+// getApplicationBadge. The popover merges liveItems ⊕ on-demand, so on-demand
+// defaults to [] here (disjoint) to avoid double-counting the same objects.
+function mountWith(items: any[], onDemand: any[] = []) {
+  const health = getApplicationBadge(items, OK_OBS);
+  (useApplicationPopoverData as any).mockReturnValue({
+    items: onDemand,
+    truncatedKinds: [],
+    isLoading: false,
+    hasErrors: false,
   });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <ThemeProvider theme={createMuiTheme({ name: 'light', base: 'light' })}>
         <TestContext>
-          <LocalHealthCell project={fakeProject} onRank={onRank} />
+          <LocalHealthCell project={fakeProject} health={health} liveItems={items} />
         </TestContext>
       </ThemeProvider>
     </QueryClientProvider>
   );
 }
 
-describe('LocalHealthCell — p18 evidence popover', () => {
-  it('renders "Healthy" for all-healthy items', () => {
+// Mount an Unavailable badge (page-level decided it; the cell just renders it).
+function mountUnavailable(httpCode?: number, errorMessage?: string) {
+  const health = getUnavailableHealth({ cluster: 'test-cluster', httpCode, errorMessage });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ThemeProvider theme={createMuiTheme({ name: 'light', base: 'light' })}>
+        <TestContext>
+          <LocalHealthCell project={fakeProject} health={health as any} liveItems={[]} />
+        </TestContext>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+}
+
+describe('LocalHealthCell — frozen page-level badge + popover', () => {
+  it('renders "Healthy" for an all-healthy app (has a controller)', () => {
     mountWith(F.allHealthySingleCluster.items);
     expect(screen.getByText('Healthy')).toBeInTheDocument();
   });
 
-  it('renders "No Resources" when items is empty', () => {
+  it('renders "Unknown" (not "No Resources") when the live set is empty', () => {
+    // Frozen design: controller-less / empty live observation is never "No Resources".
     mountWith([]);
-    expect(screen.getByText('No Resources')).toBeInTheDocument();
+    expect(screen.getByText('Unknown')).toBeInTheDocument();
+    expect(screen.queryByText('No Resources')).not.toBeInTheDocument();
   });
 
   it('renders "Degraded" when only warnings are present', () => {
@@ -138,7 +143,7 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     await waitFor(() => expect(screen.getByText('Click to see')).toBeInTheDocument());
   });
 
-  it('opens popover on click and lists CrashLoopBackOff evidence', async () => {
+  it('opens popover on click and lists CrashLoopBackOff evidence (from on-demand pods)', async () => {
     const u = userEvent.setup();
     mountWith(F.podCrashLoopBackOff.items);
     const trigger = screen.getByRole('button', { name: /Unhealthy/i });
@@ -170,10 +175,10 @@ describe('LocalHealthCell — p18 evidence popover', () => {
     expect(screen.getByText(/3\/3 ready/)).toBeInTheDocument();
   });
 
-  describe('unavailable popover — truthful wording regression', () => {
-    it('HTTP 401: shows neutral summary + code + reported error, no cluster row, no old wording', async () => {
+  describe('unavailable popover — truthful wording', () => {
+    it('HTTP 401: neutral summary + code + reported error, no cluster row, no old wording', async () => {
       const u = userEvent.setup();
-      mountWithFetchErrors([new ApiError('Authentication required', { status: 401 })]);
+      mountUnavailable(401, 'Authentication required');
       expect(screen.getByText('Unavailable')).toBeInTheDocument();
       await u.click(screen.getByRole('button', { name: /Unavailable/i }));
 
@@ -186,12 +191,11 @@ describe('LocalHealthCell — p18 evidence popover', () => {
       expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/Retry when connectivity is restored/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/Reachable/i)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Not reachable/i)).not.toBeInTheDocument();
     });
 
-    it('HTTP 403: shows neutral summary + code + reported error, no cluster row / old caption', async () => {
+    it('HTTP 403: neutral summary + code + reported error, no cluster row / old caption', async () => {
       const u = userEvent.setup();
-      mountWithFetchErrors([new ApiError('Access denied', { status: 403 })]);
+      mountUnavailable(403, 'Access denied');
       await u.click(screen.getByRole('button', { name: /Unavailable/i }));
 
       expect(
@@ -200,12 +204,11 @@ describe('LocalHealthCell — p18 evidence popover', () => {
       expect(screen.getByText('403')).toBeInTheDocument();
       expect(screen.getByText('Access denied')).toBeInTheDocument();
       expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
-      expect(screen.queryByText(/could not be reached/i)).not.toBeInTheDocument();
     });
 
-    it('HTTP 5xx: shows neutral summary + raw code + reported error, no reachability conclusion', async () => {
+    it('HTTP 5xx: neutral summary + raw code + reported error, no reachability conclusion', async () => {
       const u = userEvent.setup();
-      mountWithFetchErrors([new ApiError('Bad Gateway', { status: 502 })]);
+      mountUnavailable(502, 'Bad Gateway');
       await u.click(screen.getByRole('button', { name: /Unavailable/i }));
 
       expect(
@@ -214,12 +217,11 @@ describe('LocalHealthCell — p18 evidence popover', () => {
       expect(screen.getByText('502')).toBeInTheDocument();
       expect(screen.getByText('Bad Gateway')).toBeInTheDocument();
       expect(screen.queryByText(/Reachable/i)).not.toBeInTheDocument();
-      expect(screen.queryByText(/Not reachable/i)).not.toBeInTheDocument();
     });
 
-    it('no HTTP code: shows neutral summary + reported error, HTTP code and Cluster rows absent', async () => {
+    it('no HTTP code: neutral summary + reported error, HTTP code and Cluster rows absent', async () => {
       const u = userEvent.setup();
-      mountWithFetchErrors([new ApiError('Failed to fetch')]);
+      mountUnavailable(undefined, 'Failed to fetch');
       await u.click(screen.getByRole('button', { name: /Unavailable/i }));
 
       expect(
@@ -230,9 +232,9 @@ describe('LocalHealthCell — p18 evidence popover', () => {
       expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
     });
 
-    it('no HTTP code and no message: shows only the neutral summary, no blank detail rows', async () => {
+    it('no HTTP code and no message: only the neutral summary, no blank detail rows', async () => {
       const u = userEvent.setup();
-      mountWithFetchErrors([new ApiError('')]);
+      mountUnavailable(undefined, undefined);
       await u.click(screen.getByRole('button', { name: /Unavailable/i }));
 
       expect(
@@ -243,13 +245,11 @@ describe('LocalHealthCell — p18 evidence popover', () => {
       expect(screen.queryByText('Cluster')).not.toBeInTheDocument();
     });
 
-    it('regression: badge stays "Unavailable", rank is reported, popover opens and closes', async () => {
+    it('badge stays "Unavailable"; popover opens and closes', async () => {
       const u = userEvent.setup();
-      const onRank = vi.fn();
-      mountWithFetchErrors([new ApiError('Bad Gateway', { status: 502 })], onRank);
+      mountUnavailable(502, 'Bad Gateway');
 
       expect(screen.getByText('Unavailable')).toBeInTheDocument();
-      await waitFor(() => expect(onRank).toHaveBeenCalledWith('demo', 5));
 
       const trigger = screen.getByRole('button', { name: /Unavailable/i });
       await u.click(trigger);

@@ -38,7 +38,8 @@ export type LocalHealthBadge =
   | LocalHealthSeverity
   | 'empty' // no resources at all
   | 'passive' // resources present but no runnable workload (dormant app)
-  | 'unavailable'; // couldn't reach the cluster to know the truth
+  | 'unavailable' // couldn't reach the cluster to know the truth
+  | 'checking'; // observation in flight, no complete snapshot yet
 
 export interface LocalHealthEvidence {
   severity: 'error' | 'warning' | 'progressing' | 'info' | 'unknown';
@@ -74,9 +75,24 @@ export interface LocalHealthResult {
     | 'Unknown'
     | 'No Resources'
     | 'No Workloads'
-    | 'Unavailable';
-  /** 0 = empty/passive/healthy, 1 = unknown, 2 = progressing, 3 = degraded, 4 = unhealthy, 5 = unavailable */
-  rank: 0 | 1 | 2 | 3 | 4 | 5;
+    | 'Unavailable'
+    | 'Checking'
+    | 'Partial';
+  /**
+   * Sorting rank (higher = more attention; sorts first when descending).
+   * getLocalHealth keeps the legacy 0–5 scale; getApplicationBadge (the List's
+   * entry point) re-ranks onto the frozen scale:
+   *   8 unavailable · 7 checking · 6 unhealthy · 5 degraded · 4 partial(standalone)
+   *   · 3 progressing · 2 unknown · 1 healthy · 0 no-workloads/no-resources.
+   */
+  rank: number;
+  /**
+   * Partial-observation qualifier (R2 error matrix). True when the verdict was
+   * computed from an incomplete-but-non-empty live set (one/more live kinds failed
+   * or were truncated). Never upgrades a verdict to Healthy; layered on top of the
+   * computed status as a "· Partial" qualifier. See getApplicationBadge.
+   */
+  partial?: boolean;
   icon: string;
   reasons: string[];
   evidence: LocalHealthEvidence[];
@@ -137,7 +153,7 @@ function evidenceCategory(kind: string): LocalHealthEvidence['category'] {
   ) {
     return 'workload';
   }
-  if (['Endpoints', 'Ingress'].includes(kind)) return 'reachability';
+  if (['Endpoints', 'EndpointSlice', 'Service', 'Ingress'].includes(kind)) return 'reachability';
   return undefined;
 }
 
@@ -150,6 +166,58 @@ function get(o: KubeObject, path: string): any {
   return path
     .split('.')
     .reduce<any>((v, k) => (v === null || v === undefined ? v : v[k]), o as any);
+}
+
+/**
+ * Raw JSON view of a KubeObject. Resource-class getters (e.g. `.subsets`,
+ * `.endpoints`, `.spec`) are not uniform across kinds, so the EndpointSlice /
+ * Service reachability logic below reads from `jsonData` to stay robust for both
+ * real KubeObject instances (which carry `jsonData`) and the plain objects used in
+ * unit tests (which carry the fields directly).
+ */
+function rawOf(o: KubeObject): any {
+  return (o as any)?.jsonData ?? o;
+}
+
+/**
+ * EndpointSlices that back a given Service, matched by the standard
+ * `kubernetes.io/service-name` label or a Service ownerReference, scoped to the
+ * same cluster + namespace. (discovery.k8s.io/v1)
+ */
+function endpointSlicesForService(service: KubeObject, items: KubeObject[]): KubeObject[] {
+  const sm = rawOf(service).metadata ?? {};
+  const svcCluster = (service as any).cluster;
+  return items.filter(o => {
+    if (o.kind !== 'EndpointSlice') return false;
+    if ((o as any).cluster !== svcCluster) return false;
+    const m = rawOf(o).metadata ?? {};
+    if (m.namespace !== sm.namespace) return false;
+    const byLabel = m.labels?.['kubernetes.io/service-name'];
+    if (byLabel && byLabel === sm.name) return true;
+    const refs = m.ownerReferences;
+    return (
+      Array.isArray(refs) && refs.some((r: any) => r?.kind === 'Service' && r?.name === sm.name)
+    );
+  });
+}
+
+/**
+ * Count ready vs not-ready endpoints across a set of EndpointSlices. An endpoint
+ * with `conditions.ready === false` is not ready; a missing `conditions.ready`
+ * (older/edge serializations) is treated as ready, matching kube-proxy's
+ * backward-compatible interpretation.
+ */
+function sliceEndpointReadiness(slices: KubeObject[]): { ready: number; notReady: number } {
+  let ready = 0;
+  let notReady = 0;
+  for (const s of slices) {
+    const eps: any[] = rawOf(s).endpoints ?? [];
+    for (const e of eps) {
+      if (e?.conditions?.ready === false) notReady += 1;
+      else ready += 1;
+    }
+  }
+  return { ready, notReady };
 }
 
 function isDeploymentOwnedReplicaSet(o: KubeObject): boolean {
@@ -849,6 +917,43 @@ export function localGetItemStatus(o: KubeObject, allItems: KubeObject[]): ItemV
     };
   }
 
+  // EndpointSlice (discovery.k8s.io/v1) — individual slices are not scored on
+  // their own (a Service fans out to several slices; reachability is judged at the
+  // Service level below, aggregating all of a Service's slices). Counting each
+  // slice independently would double-warn. Being explicit here is also the P0-4
+  // fix: EndpointSlice previously had no branch and fell through to default
+  // success silently.
+  if (kind === 'EndpointSlice') {
+    return { severity: 'success' };
+  }
+
+  // Service — reachability source of truth is EndpointSlice (modern; Endpoints v1
+  // is deprecated/truncating). We warn ONLY when: the Service has a selector, a
+  // live workload targets it, EndpointSlices for it exist, and none of their
+  // endpoints are ready. When no slices are present we stay success and let the
+  // Endpoints(v1) fallback branch handle reachability (so Endpoints-based unit
+  // tests and pre-EndpointSlice clusters are unaffected — no double warning).
+  if (kind === 'Service') {
+    const spec = rawOf(o).spec ?? {};
+    if (spec.type === 'ExternalName') return { severity: 'success' };
+    if (spec.clusterIP === 'None') return { severity: 'success' }; // headless
+    const selector = spec.selector ?? {};
+    if (Object.keys(selector).length === 0) return { severity: 'success' };
+    if (selector['statefulset.kubernetes.io/pod-name']) return { severity: 'success' };
+    const slices = endpointSlicesForService(o, allItems);
+    if (slices.length === 0) return { severity: 'success' }; // fallback → Endpoints branch
+    if (!workloadTargetsService(o, allItems)) return { severity: 'success' };
+    const { ready, notReady } = sliceEndpointReadiness(slices);
+    if (ready > 0) return { severity: 'success' };
+    if (notReady > 0) {
+      return {
+        severity: 'warning',
+        message: `no ready endpoints yet (0/${notReady}) behind this Service`,
+      };
+    }
+    return { severity: 'warning', message: 'no endpoints behind this Service' };
+  }
+
   if (kind === 'HorizontalPodAutoscaler') {
     const conds: any[] = anyObj.status?.conditions ?? [];
     const bad = conds.find(
@@ -955,23 +1060,35 @@ function sumWorkload(items: KubeObject[], kind: string): LocalHealthStat | undef
 function sumPods(items: KubeObject[]): LocalHealthStat | undefined {
   const pods = items.filter(p => p.kind === 'Pod');
   if (pods.length === 0) return undefined;
-  const buckets = { running: 0, pending: 0, failed: 0, succeeded: 0, other: 0 };
+  // P2-2: a Running Pod whose Ready condition is False (e.g. CrashLoopBackOff
+  // between restarts) must NOT read as "Running" — bucket it as "Not Ready" so the
+  // inventory line matches the badge instead of masking the failure.
+  const buckets = { running: 0, notReady: 0, pending: 0, failed: 0, succeeded: 0, other: 0 };
   for (const p of pods) {
     const phase = get(p, 'status.phase');
-    if (phase === 'Running') buckets.running++;
-    else if (phase === 'Pending') buckets.pending++;
+    if (phase === 'Running') {
+      const conds: any[] = get(p, 'status.conditions') ?? [];
+      const ready = conds.find(c => c?.type === 'Ready');
+      if (ready && ready.status !== 'True') buckets.notReady++;
+      else buckets.running++;
+    } else if (phase === 'Pending') buckets.pending++;
     else if (phase === 'Failed') buckets.failed++;
     else if (phase === 'Succeeded') buckets.succeeded++;
     else buckets.other++;
   }
   const parts: string[] = [];
   if (buckets.running) parts.push(`${buckets.running} Running`);
+  if (buckets.notReady) parts.push(`${buckets.notReady} Not Ready`);
   if (buckets.pending) parts.push(`${buckets.pending} Pending`);
   if (buckets.failed) parts.push(`${buckets.failed} Failed`);
   if (buckets.succeeded) parts.push(`${buckets.succeeded} Succeeded`);
   if (buckets.other) parts.push(`${buckets.other} Other`);
   const tone: LocalHealthStat['tone'] =
-    buckets.failed > 0 ? 'error' : buckets.pending > 0 ? 'warning' : 'success';
+    buckets.failed > 0 || buckets.notReady > 0
+      ? 'error'
+      : buckets.pending > 0
+      ? 'warning'
+      : 'success';
   return { kind: 'Pod', total: pods.length, state: parts.join(', '), tone };
 }
 
@@ -1302,4 +1419,175 @@ export function getLocalHealth(items: KubeObject[] | undefined): LocalHealthResu
     stats,
     needsAttention,
   };
+}
+
+// ─── Applications-List badge orchestration (frozen design) ──────────────────
+// getApplicationBadge wraps the pure getLocalHealth() engine with the List's
+// Checking / Unavailable / Unknown(controller-less) / Partial semantics and the
+// frozen sort ranks. Only the Applications List uses this; getLocalHealth stays
+// unchanged for any other caller. No I/O, no React.
+
+/** Live-kind observation context for one application (one cluster/namespace). */
+export interface LiveObservation {
+  /** Still loading and no complete snapshot yet → Checking. */
+  loading: boolean;
+  /** NO health-bearing observation succeeded for this cluster (unreachable / auth /
+   *  every live kind failed) → Unavailable. */
+  allLiveFailed: boolean;
+  /** ≥1 but not all live kinds failed → computed verdict · Partial. */
+  someLiveFailed: boolean;
+  /** The live-kind failures (first drives the Unavailable HTTP code/message). */
+  failed?: Array<{ kind: string; status?: number; message?: string }>;
+  /** Live kinds whose cluster list was truncated for this app → Partial. */
+  truncatedKinds?: string[];
+  /** Cluster name (for the Unavailable body). */
+  cluster?: string;
+}
+
+const CONTROLLER_KINDS = new Set(['Deployment', 'StatefulSet', 'DaemonSet']);
+
+/** Frozen sort ranks: higher sorts first (descending). */
+function badgeRank(status: LocalHealthBadge, partialStandalone: boolean): number {
+  if (status === 'unavailable') return 8;
+  if (status === 'checking') return 7;
+  if (status === 'error') return 6;
+  if (status === 'warning') return 5;
+  if (partialStandalone) return 4;
+  if (status === 'progressing') return 3;
+  if (status === 'unknown') return 2;
+  if (status === 'success') return 1;
+  return 0; // passive / empty
+}
+
+function checkingHealth(): LocalHealthResult {
+  return {
+    status: 'checking',
+    label: 'Checking',
+    rank: badgeRank('checking', false),
+    icon: 'mdi:timer-sand',
+    reasons: [],
+    evidence: [],
+    progressing: [],
+    unknownItems: [],
+    details: [],
+    stats: [],
+    needsAttention: [],
+  };
+}
+
+/** Controller-less namespace: live set has no workload controller, so bare Pods
+ *  may exist and have NOT been evaluated. Never Healthy / No Workloads here. */
+function unknownNotEvaluated(
+  stats: LocalHealthStat[],
+  needsAttention: LocalHealthEvidence[]
+): LocalHealthResult {
+  return {
+    status: 'unknown',
+    label: 'Unknown',
+    rank: badgeRank('unknown', false),
+    icon: 'mdi:help-circle-outline',
+    reasons: [],
+    evidence: [],
+    progressing: [],
+    unknownItems: [],
+    details: [],
+    stats,
+    needsAttention,
+  };
+}
+
+/**
+ * Compute the Applications-List badge for one app from its LIVE-kind items plus
+ * the observation context. Order (frozen):
+ *   Checking → Unavailable → ⟨getLocalHealth verdict⟩ → controller-less override
+ *   → Partial qualifier. Never emits Healthy/No Workloads/No Resources while the
+ *   observation is incomplete or while a controller-less namespace's Pods are
+ *   unverified.
+ */
+export function getApplicationBadge(
+  items: KubeObject[] | undefined,
+  obs: LiveObservation
+): LocalHealthResult {
+  if (obs.loading) return checkingHealth();
+
+  if (obs.allLiveFailed) {
+    const first = obs.failed?.[0];
+    return {
+      ...getUnavailableHealth({
+        cluster: obs.cluster,
+        httpCode: first?.status,
+        errorMessage: first?.message,
+      }),
+      rank: badgeRank('unavailable', false),
+    };
+  }
+
+  const base = getLocalHealth(items);
+  const list = items ?? [];
+  const hasController = list.some(i => CONTROLLER_KINDS.has(i.kind));
+  const partial = obs.someLiveFailed || (obs.truncatedKinds?.length ?? 0) > 0;
+
+  let result: LocalHealthResult = base;
+
+  // Controller-less → never Healthy / No Workloads / No Resources on the List
+  // (bare Pods may exist, unobserved). The popover resolves it on demand.
+  if (
+    !hasController &&
+    (base.status === 'success' || base.status === 'passive' || base.status === 'empty')
+  ) {
+    result = unknownNotEvaluated(base.stats, base.needsAttention);
+  }
+
+  // Partial qualifier. A verdict that found nothing wrong but is incomplete must
+  // not read as Healthy/empty — downgrade to standalone Partial. Any real
+  // problem verdict keeps its status and just gains the "· Partial" qualifier.
+  if (partial) {
+    if (result.status === 'success' || result.status === 'passive' || result.status === 'empty') {
+      result = {
+        status: 'unknown',
+        label: 'Partial',
+        rank: badgeRank('unknown', true),
+        icon: 'mdi:alert-circle-check-outline',
+        reasons: [],
+        evidence: [],
+        progressing: [],
+        unknownItems: [],
+        details: [],
+        stats: base.stats,
+        needsAttention: base.needsAttention,
+        partial: true,
+      };
+    } else {
+      result = { ...result, partial: true };
+    }
+  }
+
+  // Re-rank onto the frozen scale (getLocalHealth used the legacy 0–5 scale).
+  const standalone = result.label === 'Partial';
+  return { ...result, rank: badgeRank(result.status, standalone) };
+}
+
+// ─── Resources COUNT (frozen semantics) ─────────────────────────────────────
+// User-facing count = distinct operator-authored objects observed in the LIVE
+// set, de-duplicated by ownership. EXCLUDES Pods, Deployment-owned ReplicaSets,
+// and endpoint plumbing (Endpoints + EndpointSlice). Of the live kinds, the
+// counted ones are: Deployment, StatefulSet, DaemonSet, Service, PVC. Bare
+// ReplicaSets (on-demand) are added by the popover path, never Pods.
+const COUNTED_LIVE_KINDS = new Set([
+  'Deployment',
+  'StatefulSet',
+  'DaemonSet',
+  'Service',
+  'PersistentVolumeClaim',
+]);
+
+/**
+ * Count of user-facing Resources for an application from its LIVE items.
+ * Deployment-owned ReplicaSets never appear in the live set, Pods and endpoint
+ * objects are excluded by definition, so this is simply the number of counted
+ * author kinds observed.
+ */
+export function countApplicationResources(items: KubeObject[] | undefined): number {
+  if (!items || items.length === 0) return 0;
+  return items.filter(i => COUNTED_LIVE_KINDS.has(i.kind)).length;
 }
